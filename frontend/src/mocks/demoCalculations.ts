@@ -1,0 +1,143 @@
+import { DashboardCard, EmploymentType, ResultCenter } from "../types";
+import { demoEmploymentTypes, demoResultCenters } from "./demoData";
+import { DemoEmployee, DemoMovement, IndicatorSummary, PayrollRow } from "./demoTypes";
+
+export function payrollRows(employees: DemoEmployee[], competency = "2026-06"): PayrollRow[] {
+  const monthFactor = Number(competency.slice(5, 7)) / 100;
+  return employees.filter(item => item.status !== "INACTIVE").map(employee => {
+    const salary = employee.employment_type.name === "CLT" ? employee.salary_base : 0;
+    const proLabore = employee.employment_type.name === "Pró-labore" ? employee.salary_base : 0;
+    const profit = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
+    const costAid = employee.employment_type.name !== "CLT" ? Math.round(employee.salary_base * 0.08) : 320;
+    const meal = employee.employment_type.name === "CLT" ? 620 : 0;
+    const health = employee.employment_type.name === "CLT" ? 480 : employee.result_center.code === "DIR" ? 900 : 0;
+    const insurance = employee.employment_type.name === "CLT" ? 65 : 0;
+    const dental = employee.employment_type.name === "CLT" ? 42 : 0;
+    const charges = employee.employment_type.has_charges ? Math.round(salary * 0.353) : 0;
+    const provisions = employee.employment_type.has_charges ? Math.round(salary * (0.18 + monthFactor)) : 0;
+    const gross = salary + proLabore + profit + costAid;
+    const net = Math.round(gross * (employee.employment_type.has_charges ? 0.78 : 0.92));
+    const total = gross + meal + health + insurance + dental + charges + provisions;
+    return {
+      employee_id: employee.id,
+      employee_name: employee.employee.full_name,
+      result_center: employee.result_center,
+      employment_type: employee.employment_type,
+      salary,
+      pro_labore: proLabore,
+      profit_distribution: profit,
+      cost_aid: costAid,
+      meal,
+      health,
+      insurance,
+      dental,
+      charges,
+      provisions,
+      gross_payroll: gross,
+      net_payroll: net,
+      total_cost: total
+    };
+  });
+}
+
+export function centerSummary(rows: PayrollRow[], centers: ResultCenter[] = demoResultCenters) {
+  return centers.map(center => {
+    const scoped = rows.filter(row => row.result_center.id === center.id);
+    return {
+      center,
+      employees: scoped.length,
+      gross: sum(scoped, "gross_payroll"),
+      net: sum(scoped, "net_payroll"),
+      total: sum(scoped, "total_cost")
+    };
+  });
+}
+
+export function dashboardCards(employees: DemoEmployee[], movements: DemoMovement[], competency = "2026-06"): DashboardCard[] {
+  const rows = payrollRows(employees, competency);
+  return demoResultCenters.map(center => {
+    const centerEmployees = employees.filter(item => item.result_center.id === center.id && item.status !== "INACTIVE");
+    const centerRows = rows.filter(row => row.result_center.id === center.id);
+    const centerMovements = movements.filter(item => item.competency === competency && item.result_center.id === center.id);
+    const byType = demoEmploymentTypes.reduce<Record<string, number>>((acc, type) => {
+      const count = centerEmployees.filter(employee => employee.employment_type.id === type.id).length;
+      if (count) acc[type.name] = count;
+      return acc;
+    }, {});
+    const admissions = centerMovements.filter(item => item.type === "admissão").length;
+    const terminations = centerMovements.filter(item => item.type === "desligamento").length;
+    const nonProductiveHours = centerMovements.filter(item => ["falta", "atestado", "afastamento"].includes(item.type)).reduce((acc, item) => acc + item.hour_impact, 0);
+    const plannedHours = Math.max(centerEmployees.length * 22 * 8.8, 1);
+    const previous = Math.max(centerEmployees.length - admissions + terminations - (center.code === "IND" ? 1 : 0), 0);
+    const average = (previous + centerEmployees.length) / 2;
+    return {
+      id: center.id,
+      code: center.code,
+      name: center.name,
+      color: center.color,
+      active_employees: centerEmployees.length,
+      by_employment_type: byType,
+      admissions,
+      terminations,
+      absenteeism: safeDivide(nonProductiveHours, plannedHours),
+      turnover: safeDivide((admissions + terminations) / 2, average),
+      gross_payroll: sum(centerRows, "gross_payroll"),
+      net_payroll: sum(centerRows, "net_payroll"),
+      total_cost: sum(centerRows, "total_cost"),
+      previous_active_employees: previous
+    };
+  });
+}
+
+export function consolidatedIndicators(employees: DemoEmployee[], movements: DemoMovement[], competency = "2026-06"): IndicatorSummary {
+  const rows = payrollRows(employees, competency);
+  const active = employees.filter(item => item.status !== "INACTIVE").length;
+  const competencyMovements = movements.filter(item => item.competency === competency);
+  const admissions = competencyMovements.filter(item => item.type === "admissão").length;
+  const terminations = competencyMovements.filter(item => item.type === "desligamento").length;
+  const initial = Math.max(active - admissions + terminations, 0);
+  const average = (initial + active) / 2;
+  const nonProductiveHours = competencyMovements.filter(item => ["falta", "atestado", "afastamento", "férias"].includes(item.type)).reduce((acc, item) => acc + item.hour_impact, 0);
+  const programmedHours = Math.max(active * 22 * 8.8, 1);
+  return {
+    initial_headcount: initial,
+    admissions,
+    terminations,
+    final_headcount: active,
+    average_headcount: average,
+    absenteeism: safeDivide(nonProductiveHours, programmedHours),
+    turnover: safeDivide((admissions + terminations) / 2, average),
+    gross_payroll: sum(rows, "gross_payroll"),
+    net_payroll: sum(rows, "net_payroll"),
+    salary_per_capita: safeDivide(sum(rows, "gross_payroll"), active),
+    total_cost: sum(rows, "total_cost"),
+    productive_days: 22,
+    non_productive_hours: nonProductiveHours
+  };
+}
+
+export function topCostsByCenter(rows: PayrollRow[]) {
+  return demoResultCenters.reduce<Record<string, { employee: string; cost: number }[]>>((acc, center) => {
+    acc[center.code] = rows
+      .filter(row => row.result_center.id === center.id)
+      .sort((a, b) => b.total_cost - a.total_cost)
+      .slice(0, 3)
+      .map(row => ({ employee: row.employee_name, cost: row.total_cost }));
+    return acc;
+  }, {});
+}
+
+export const demoAlerts = [
+  "Absenteísmo acima do mês anterior em IND",
+  "Custo total de COM reduziu em relação ao mês anterior",
+  "DIR possui nova admissão no mês",
+  "Existem competências abertas para fechamento"
+];
+
+function sum<T>(items: T[], key: keyof T): number {
+  return items.reduce((acc, item) => acc + Number(item[key] ?? 0), 0);
+}
+
+function safeDivide(value: number, denominator: number): number {
+  return denominator ? value / denominator : 0;
+}
