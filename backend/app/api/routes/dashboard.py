@@ -1,15 +1,16 @@
 import calendar
 from datetime import date
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from app.api.dependencies import CurrentUser, DbSession
+from app.models.company import Company
 from app.models.employment import Employment
 from app.models.enums import EmploymentStatus
 from app.models.result_center import ResultCenter
-from app.schemas.dashboard import DashboardCard, DashboardResponse
+from app.schemas.dashboard import DashboardCard, DashboardCompany, DashboardResponse
 from app.services.indicators import turnover
 
 router = APIRouter()
@@ -31,6 +32,7 @@ def get_dashboard(
     _: CurrentUser,
     month: int = Query(ge=1, le=12),
     year: int = Query(ge=2000, le=2100),
+    company_id: int = 1,
     result_center_id: int | None = None,
     employment_type_id: int | None = None,
 ) -> DashboardResponse:
@@ -38,12 +40,19 @@ def get_dashboard(
     previous_end = start.fromordinal(start.toordinal() - 1)
     previous_start = previous_end.replace(day=1)
 
+    company = db.get(Company, company_id) if company_id != 0 else None
+    if company_id != 0 and not company:
+        raise HTTPException(status_code=404, detail="Empresa não encontrada")
     centers_query = select(ResultCenter).where(ResultCenter.active.is_(True)).order_by(ResultCenter.code)
+    if company_id != 0:
+        centers_query = centers_query.where(ResultCenter.company_id == company_id)
     if result_center_id:
         centers_query = centers_query.where(ResultCenter.id == result_center_id)
     centers = list(db.scalars(centers_query))
 
     employment_query = select(Employment).options(joinedload(Employment.employment_type))
+    if company_id != 0:
+        employment_query = employment_query.where(Employment.company_id == company_id)
     if employment_type_id:
         employment_query = employment_query.where(Employment.employment_type_id == employment_type_id)
     employments = list(db.scalars(employment_query))
@@ -76,12 +85,16 @@ def get_dashboard(
                 admissions=admissions,
                 terminations=terminations,
                 absenteeism=0,
-                turnover=turnover(admissions, terminations, average),
+                turnover=turnover(admissions, terminations, len(active)),
                 gross_payroll=0,
                 net_payroll=0,
                 total_cost=0,
                 previous_active_employees=len(previous_active),
             )
         )
-    return DashboardResponse(month=month, year=year, cards=cards)
-
+    return DashboardResponse(
+        company=None if company_id == 0 else DashboardCompany(id=company.id, code=company.code, name=company.name, kind=company.kind, group_name=company.group_name),
+        month=month,
+        year=year,
+        cards=cards,
+    )

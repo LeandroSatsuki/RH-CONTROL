@@ -1,10 +1,11 @@
 import { DashboardCard, EmploymentType, ResultCenter } from "../types";
-import { demoEmploymentTypes, demoResultCenters } from "./demoData";
+import { demoCompanies, demoEmploymentTypes, demoResultCenters } from "./demoData";
 import { DemoEmployee, DemoMovement, IndicatorSummary, PayrollRow } from "./demoTypes";
 
 export function payrollRows(employees: DemoEmployee[], competency = "2026-06"): PayrollRow[] {
   const monthFactor = Number(competency.slice(5, 7)) / 100;
   return employees.filter(item => item.status !== "INACTIVE").map(employee => {
+    const familyAllowance = currentFamilyAllowance(employee);
     const salary = employee.employment_type.name === "CLT" ? employee.salary_base : 0;
     const proLabore = employee.employment_type.name === "Pró-labore" ? employee.salary_base : 0;
     const profit = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
@@ -15,7 +16,7 @@ export function payrollRows(employees: DemoEmployee[], competency = "2026-06"): 
     const dental = employee.employment_type.name === "CLT" ? 42 : 0;
     const charges = employee.employment_type.has_charges ? Math.round(salary * 0.353) : 0;
     const provisions = employee.employment_type.has_charges ? Math.round(salary * (0.18 + monthFactor)) : 0;
-    const gross = salary + proLabore + profit + costAid;
+    const gross = salary + familyAllowance + proLabore + profit + costAid;
     const net = Math.round(gross * (employee.employment_type.has_charges ? 0.78 : 0.92));
     const total = gross + meal + health + insurance + dental + charges + provisions;
     return {
@@ -24,6 +25,7 @@ export function payrollRows(employees: DemoEmployee[], competency = "2026-06"): 
       result_center: employee.result_center,
       employment_type: employee.employment_type,
       salary,
+      family_allowance: familyAllowance,
       pro_labore: proLabore,
       profit_distribution: profit,
       cost_aid: costAid,
@@ -55,6 +57,7 @@ export function centerSummary(rows: PayrollRow[], centers: ResultCenter[] = demo
 
 export function dashboardCards(employees: DemoEmployee[], movements: DemoMovement[], competency = "2026-06"): DashboardCard[] {
   const rows = payrollRows(employees, competency);
+  const [year, month] = competency.split("-").map(Number);
   return demoResultCenters.map(center => {
     const centerEmployees = employees.filter(item => item.result_center.id === center.id && item.status !== "INACTIVE");
     const centerRows = rows.filter(row => row.result_center.id === center.id);
@@ -66,8 +69,8 @@ export function dashboardCards(employees: DemoEmployee[], movements: DemoMovemen
     }, {});
     const admissions = centerMovements.filter(item => item.type === "admissão").length;
     const terminations = centerMovements.filter(item => item.type === "desligamento").length;
-    const nonProductiveHours = centerMovements.filter(item => ["falta", "atestado", "afastamento"].includes(item.type)).reduce((acc, item) => acc + item.hour_impact, 0);
-    const plannedHours = Math.max(centerEmployees.length * 22 * 8.8, 1);
+  const nonProductiveHours = centerEmployees.reduce((acc, employee) => acc + nonProductiveHoursForEmployee(employee, centerMovements, year, month), 0);
+    const plannedHours = Math.max(centerEmployees.reduce((acc, employee) => acc + scheduledHoursForEmployee(employee, year, month), 0), 1);
     const previous = Math.max(centerEmployees.length - admissions + terminations - (center.code === "IND" ? 1 : 0), 0);
     const average = (previous + centerEmployees.length) / 2;
     return {
@@ -80,7 +83,7 @@ export function dashboardCards(employees: DemoEmployee[], movements: DemoMovemen
       admissions,
       terminations,
       absenteeism: safeDivide(nonProductiveHours, plannedHours),
-      turnover: safeDivide((admissions + terminations) / 2, average),
+      turnover: safeDivide((admissions + terminations) / 2, centerEmployees.length),
       gross_payroll: sum(centerRows, "gross_payroll"),
       net_payroll: sum(centerRows, "net_payroll"),
       total_cost: sum(centerRows, "total_cost"),
@@ -97,8 +100,9 @@ export function consolidatedIndicators(employees: DemoEmployee[], movements: Dem
   const terminations = competencyMovements.filter(item => item.type === "desligamento").length;
   const initial = Math.max(active - admissions + terminations, 0);
   const average = (initial + active) / 2;
-  const nonProductiveHours = competencyMovements.filter(item => ["falta", "atestado", "afastamento", "férias"].includes(item.type)).reduce((acc, item) => acc + item.hour_impact, 0);
-  const programmedHours = Math.max(active * 22 * 8.8, 1);
+  const [year, month] = competency.split("-").map(Number);
+  const nonProductiveHours = employees.reduce((acc, employee) => acc + nonProductiveHoursForEmployee(employee, competencyMovements, year, month), 0);
+  const programmedHours = Math.max(employees.reduce((acc, employee) => acc + scheduledHoursForEmployee(employee, year, month), 0), 1);
   return {
     initial_headcount: initial,
     admissions,
@@ -140,4 +144,83 @@ function sum<T>(items: T[], key: keyof T): number {
 
 function safeDivide(value: number, denominator: number): number {
   return denominator ? value / denominator : 0;
+}
+
+function currentFamilyAllowance(employee: DemoEmployee) {
+  return [...employee.salary_history]
+    .sort((a, b) => b.date.localeCompare(a.date))[0]?.family_allowance ?? 0;
+}
+
+function scheduledHoursForEmployee(employee: DemoEmployee, year: number, month: number) {
+  const company = demoCompanies.find(item => item.id === employee.company_id) ?? demoCompanies[0];
+  const workingDays = workingDaysInMonth(year, month, company.settings);
+  return Number(employee.daily_hours) * workingDays;
+}
+
+function nonProductiveHoursForEmployee(employee: DemoEmployee, movements: DemoMovement[], year: number, month: number) {
+  const competencyPrefix = `${year}-${String(month).padStart(2, "0")}`;
+  const movementHours = movements
+    .filter(item => item.employee_id === employee.id && item.competency === competencyPrefix && ["falta", "atestado", "afastamento"].includes(item.type))
+    .reduce((acc, item) => acc + item.hour_impact, 0);
+  const vacationHours = employee.vacations.reduce((acc, vacation) => acc + vacationHoursForPeriod(vacation.period, employee, year, month), 0);
+  const leaveHours = employee.leaves.reduce((acc, leave) => acc + leaveHoursForPeriod(leave.period, employee, year, month, leave.days), 0);
+  return movementHours + vacationHours + leaveHours;
+}
+
+function vacationHoursForPeriod(period: string, employee: DemoEmployee, year: number, month: number) {
+  const match = period.match(/(\d{2}\/\d{2}\/\d{4})\s+a\s+(\d{2}\/\d{2}\/\d{4})/);
+  if (!match) return 0;
+  const { days } = overlapDaysInMonth(parseBrDate(match[1]), parseBrDate(match[2]), year, month);
+  if (!days) return 0;
+  return days * Number(employee.daily_hours);
+}
+
+function leaveHoursForPeriod(period: string, employee: DemoEmployee, year: number, month: number, fallbackDays: number) {
+  const match = period.match(/(\d{2}\/\d{2}\/\d{4})\s+a\s+(\d{2}\/\d{2}\/\d{4})/);
+  if (match) {
+    const { days } = overlapDaysInMonth(parseBrDate(match[1]), parseBrDate(match[2]), year, month);
+    return days * Number(employee.daily_hours);
+  }
+  return fallbackDays * Number(employee.daily_hours);
+}
+
+function overlapDaysInMonth(start: Date | null, end: Date | null, year: number, month: number) {
+  if (!start || !end || end < start) return { days: 0 };
+  const monthStart = new Date(year, month - 1, 1);
+  const monthEnd = new Date(year, month, 0);
+  const effectiveStart = start > monthStart ? start : monthStart;
+  const effectiveEnd = end < monthEnd ? end : monthEnd;
+  if (effectiveEnd < effectiveStart) return { days: 0 };
+  const days = Math.floor((effectiveEnd.getTime() - effectiveStart.getTime()) / 86400000) + 1;
+  return { days };
+}
+
+function workingDaysInMonth(year: number, month: number, settings: { include_saturdays: boolean; include_sundays: boolean; holidays: string[] }) {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const holidays = new Set(settings.holidays.map(normalizeBrDate));
+  let count = 0;
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const current = new Date(year, month - 1, day);
+    const dayOfWeek = current.getDay();
+    if (dayOfWeek === 6 && !settings.include_saturdays) continue;
+    if (dayOfWeek === 0 && !settings.include_sundays) continue;
+    if (holidays.has(formatBrDate(current))) continue;
+    count += 1;
+  }
+  return count;
+}
+
+function parseBrDate(value: string) {
+  const [day, month, year] = value.split("/").map(Number);
+  if (!day || !month || !year) return null;
+  return new Date(year, month - 1, day);
+}
+
+function formatBrDate(date: Date) {
+  return [String(date.getDate()).padStart(2, "0"), String(date.getMonth() + 1).padStart(2, "0"), date.getFullYear()].join("/");
+}
+
+function normalizeBrDate(value: string) {
+  const parsed = parseBrDate(value);
+  return parsed ? formatBrDate(parsed) : value.trim();
 }

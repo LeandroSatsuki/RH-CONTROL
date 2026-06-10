@@ -1,3 +1,4 @@
+from app.models.company import Company
 from app.models.employment import Employee, Employment, SalaryHistory
 from app.models.employment_type import EmploymentType
 from app.models.result_center import ResultCenter
@@ -8,9 +9,9 @@ __all__ = [
     "Employee",
     "Employment",
     "EmploymentType",
+    "Company",
     "ResultCenter",
     "SalaryHistory",
     "SystemSetting",
     "User",
 ]
-

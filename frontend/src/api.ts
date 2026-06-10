@@ -2,6 +2,7 @@ import { demoApi } from "./demoApi";
 
 export const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 export const IS_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
+const COMPANY_KEY = "indicadores-selected-company-id";
 const REQUEST_TIMEOUT_MS = 8000;
 const isDev = import.meta.env.DEV;
 
@@ -25,28 +26,66 @@ function devLog(message: string, details: Record<string, unknown>) {
   if (isDev) console.debug(`[api] ${message}`, details);
 }
 
+function readSelectedCompanyId() {
+  const raw = localStorage.getItem(COMPANY_KEY);
+  if (!raw) return null;
+  const stored = Number(raw);
+  return Number.isFinite(stored) ? stored : null;
+}
+
+function shouldScopePath(path: string) {
+  return !path.startsWith("/auth")
+    && !path.startsWith("/setup")
+    && !path.startsWith("/companies")
+    && !path.startsWith("/health");
+}
+
+function injectCompanyId(path: string, options: RequestInit, companyId: number | null) {
+  if (companyId === null || !shouldScopePath(path)) return { path, body: options.body };
+  const scopedPath = `${path}${path.includes("?") ? "&" : "?"}company_id=${companyId}`;
+  if (!options.body) return { path: scopedPath, body: options.body };
+  if (typeof options.body !== "string") return { path: scopedPath, body: options.body };
+  try {
+    const parsed = JSON.parse(options.body) as Record<string, unknown>;
+    return {
+      path: scopedPath,
+      body: JSON.stringify({ ...parsed, company_id: companyId })
+    };
+  } catch {
+    return { path: scopedPath, body: options.body };
+  }
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit = {},
   token?: string | null
 ): Promise<T> {
-  const url = `${API_URL}${path}`;
   const method = options.method ?? "GET";
+  const companyId = readSelectedCompanyId();
+  const scoped = injectCompanyId(path, options, companyId);
+  const scopedPath = scoped.path;
+  const scopedOptions = { ...options, body: scoped.body };
   if (IS_DEMO_MODE) {
-    devLog("demo-request", { method, path, tokenPresent: Boolean(token) });
+    devLog("demo-request", { method, path: scopedPath, tokenPresent: Boolean(token), companyId });
     try {
-      const result = await demoApi<T>(path, options, token);
-      devLog("demo-response", { method, path, status: 200 });
+      const result = await demoApi<T>(scopedPath, scopedOptions, token);
+      devLog("demo-response", { method, path: scopedPath, status: 200 });
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro inesperado no modo demo.";
-      devLog("demo-error", { method, path, status: 0, message });
+      devLog("demo-error", { method, path: scopedPath, status: 0, message });
       throw new ApiError(0, message);
     }
   }
 
+  const url = new URL(`${API_URL}${scopedPath}`, window.location.origin);
+  if (companyId !== null && !path.startsWith("/auth") && !path.startsWith("/setup")) {
+    url.searchParams.set("company_id", String(companyId));
+  }
+
   const headers = new Headers(options.headers);
-  if (options.body) headers.set("Content-Type", "application/json");
+  if (scopedOptions.body) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const controller = new AbortController();
@@ -57,12 +96,12 @@ export async function api<T>(
   }
 
   const startedAt = performance.now();
-  devLog("request", { method, url, tokenPresent: Boolean(token) });
+  devLog("request", { method, url: url.toString(), tokenPresent: Boolean(token), companyId });
   try {
-    const response = await fetch(url, { ...options, headers, signal: controller.signal });
+    const response = await fetch(url, { ...scopedOptions, headers, signal: controller.signal });
     devLog("response", {
       method,
-      url,
+      url: url.toString(),
       status: response.status,
       durationMs: Math.round(performance.now() - startedAt)
     });
@@ -80,11 +119,11 @@ export async function api<T>(
     return response.json() as Promise<T>;
   } catch (error) {
     if (error instanceof ApiError) {
-      devLog("error", { method, url, status: error.status, message: error.message });
+      devLog("error", { method, url: url.toString(), status: error.status, message: error.message });
       throw error;
     }
     const message = describeNetworkError(error);
-    devLog("error", { method, url, status: 0, message });
+    devLog("error", { method, url: url.toString(), status: 0, message });
     throw new ApiError(0, message);
   } finally {
     window.clearTimeout(timeoutId);

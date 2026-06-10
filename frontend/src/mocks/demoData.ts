@@ -1,5 +1,5 @@
 import { EmploymentType, ResultCenter } from "../types";
-import { Competency, DemoBackup, DemoClosing, DemoEmployee, DemoMovement, DemoSettings, MovementType } from "./demoTypes";
+import { Competency, DemoBackup, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMovement, DemoSettings, MovementType } from "./demoTypes";
 
 export const demoResultCenters: ResultCenter[] = [
   { id: 1, code: "ADM", name: "Administrativo", color: "#2563EB", active: true },
@@ -23,6 +23,155 @@ export const demoCompetencies: Competency[] = [
   { id: "2026-04", label: "Abr/2026", status: "CLOSED" },
   { id: "2026-05", label: "Mai/2026", status: "OPEN" },
   { id: "2026-06", label: "Jun/2026", status: "OPEN" }
+];
+
+function buildSettings(companyName: string, cnpj: string, backupDirectory: string, dailyHours: number, holidays: string[], charges: DemoSettings["charges"]): DemoSettings {
+  return {
+    company_name: companyName,
+    cnpj,
+    initial_month: "2026-01",
+    default_daily_hours: dailyHours,
+    include_saturdays: false,
+    include_sundays: false,
+    holidays,
+    charges,
+    backup_directory: backupDirectory,
+    auto_backup_on_start: true,
+    backup_retention: 90
+  };
+}
+
+export const demoCompanies: DemoCompany[] = [
+  {
+    id: 1,
+    code: "ALFA-MAT",
+    name: "Alfa Matriz Ltda.",
+    kind: "MATRIZ",
+    group: "Grupo Alfa",
+    parent_company_id: null,
+    active: true,
+    settings: buildSettings(
+      "Alfa Matriz Ltda.",
+      "12.345.678/0001-90",
+      "C:\\SistemaIndicadoresFolha\\AlfaMatriz\\backups",
+      8.8,
+      ["01/01/2026", "21/04/2026", "01/05/2026"],
+      [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 1.5 }, { name: "Terceiros", rate: 5.8 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }]
+    ),
+    backups: [
+      { id: 1, date: "2026-06-05 08:10", file: "alfa_matriz_20260605_0810.dump", size: "42 MB", status: "Validado" },
+      { id: 2, date: "2026-06-04 18:00", file: "alfa_matriz_20260604_1800.dump", size: "41 MB", status: "Concluído" }
+    ],
+    closing: {
+      competency: "2026-06",
+      status: "OPEN",
+      checklist: {
+        "Colaboradores conferidos": true,
+        "Movimentações conferidas": true,
+        "Folha importada": true,
+        "Indicadores calculados": true,
+        "Relatório mensal gerado": false,
+        "Backup realizado": false
+      }
+    }
+  },
+  {
+    id: 2,
+    code: "ALFA-FIL",
+    name: "Alfa Filial Indústria",
+    kind: "FILIAL",
+    group: "Grupo Alfa",
+    parent_company_id: 1,
+    active: true,
+    settings: buildSettings(
+      "Alfa Filial Indústria",
+      "12.345.678/0002-71",
+      "C:\\SistemaIndicadoresFolha\\AlfaFilial\\backups",
+      8.6,
+      ["01/01/2026", "21/04/2026", "07/09/2026"],
+      [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 2 }, { name: "Terceiros", rate: 6.2 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }]
+    ),
+    backups: [
+      { id: 1, date: "2026-06-05 09:15", file: "alfa_filial_20260605_0915.dump", size: "39 MB", status: "Validado" },
+      { id: 2, date: "2026-06-03 18:00", file: "alfa_filial_20260603_1800.dump", size: "38 MB", status: "Concluído" }
+    ],
+    closing: {
+      competency: "2026-06",
+      status: "OPEN",
+      checklist: {
+        "Colaboradores conferidos": true,
+        "Movimentações conferidas": false,
+        "Folha importada": true,
+        "Indicadores calculados": true,
+        "Relatório mensal gerado": false,
+        "Backup realizado": false
+      }
+    }
+  },
+  {
+    id: 3,
+    code: "BETA-IND",
+    name: "Beta Industrial S.A.",
+    kind: "OUTRA",
+    group: "Grupo Beta",
+    parent_company_id: null,
+    active: true,
+    settings: buildSettings(
+      "Beta Industrial S.A.",
+      "45.987.321/0001-55",
+      "C:\\SistemaIndicadoresFolha\\BetaIndustrial\\backups",
+      8.0,
+      ["01/01/2026", "07/09/2026", "12/10/2026"],
+      [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 3 }, { name: "Terceiros", rate: 7.5 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }]
+    ),
+    backups: [
+      { id: 1, date: "2026-06-05 10:00", file: "beta_industrial_20260605_1000.dump", size: "44 MB", status: "Validado" }
+    ],
+    closing: {
+      competency: "2026-06",
+      status: "OPEN",
+      checklist: {
+        "Colaboradores conferidos": true,
+        "Movimentações conferidas": true,
+        "Folha importada": false,
+        "Indicadores calculados": false,
+        "Relatório mensal gerado": false,
+        "Backup realizado": false
+      }
+    }
+  },
+  {
+    id: 4,
+    code: "GAMMA-COM",
+    name: "Gamma Comércio Ltda.",
+    kind: "OUTRA",
+    group: "Grupo Gamma",
+    parent_company_id: null,
+    active: true,
+    settings: buildSettings(
+      "Gamma Comércio Ltda.",
+      "78.901.234/0001-11",
+      "C:\\SistemaIndicadoresFolha\\GammaComercio\\backups",
+      7.5,
+      ["01/01/2026", "21/04/2026", "25/12/2026"],
+      [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 1 }, { name: "Terceiros", rate: 5.2 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }]
+    ),
+    backups: [
+      { id: 1, date: "2026-06-05 07:40", file: "gamma_comercio_20260605_0740.dump", size: "40 MB", status: "Concluído" }
+    ],
+    closing: {
+      competency: "2026-06",
+      status: "OPEN",
+      checklist: {
+        "Colaboradores conferidos": true,
+        "Movimentações conferidas": true,
+        "Folha importada": true,
+        "Indicadores calculados": true,
+        "Relatório mensal gerado": false,
+        "Backup realizado": true
+      }
+    }
+  }
 ];
 
 const names = [
@@ -57,9 +206,20 @@ function cpf(index: number) {
   return String(10000000000 + index * 137291).slice(0, 11);
 }
 
+function pixTypeFor(index: number): "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "RANDOM" {
+  return ["CPF", "CNPJ", "EMAIL", "PHONE", "RANDOM"][index % 5] as "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "RANDOM";
+}
+
+function familyAllowanceFor(index: number, salaryBase: number): number {
+  if (salaryBase > 3500 && index % 5 === 0) return 124.08;
+  if (salaryBase > 4500 && index % 8 === 0) return 248.16;
+  return 0;
+}
+
 export function createDemoEmployees(): DemoEmployee[] {
   return names.map((name, index) => {
     const centerCode = distribution[index];
+    const company = demoCompanies[index % demoCompanies.length];
     const center = demoResultCenters.find(item => item.code === centerCode)!;
     const type = demoEmploymentTypes[(index + (centerCode === "DIR" ? 3 : 0)) % demoEmploymentTypes.length];
     const salaryBase = centerCode === "DIR" ? 22000 + index * 310 : centerCode === "IND" ? 3300 + index * 95 : centerCode === "COM" ? 4200 + index * 120 : 3900 + index * 100;
@@ -68,8 +228,10 @@ export function createDemoEmployees(): DemoEmployee[] {
     const admissionYear = 2021 + (index % 5);
     const admissionMonth = String((index % 12) + 1).padStart(2, "0");
     const jobList = jobs[centerCode];
+    const familyAllowance = familyAllowanceFor(index, salaryBase);
     return {
       id: index + 1,
+      company_id: company.id,
       employee_code: code,
       job_title: jobList[index % jobList.length],
       department: center.name,
@@ -78,6 +240,18 @@ export function createDemoEmployees(): DemoEmployee[] {
       status,
       daily_hours: "8.80",
       notes: "Registro fictício para demonstração comercial.",
+      bank_name: centerCode === "DIR" ? "Banco Alfa" : "Banco Digital",
+      bank_agency: `${String(1000 + (index % 300)).padStart(4, "0")}`,
+      bank_account: String(50000 + index * 11),
+      bank_account_digit: String((index % 9) + 1),
+      pix_key_type: pixTypeFor(index),
+      pix_key: pixTypeFor(index) === "CPF"
+        ? cpf(index + 1)
+        : pixTypeFor(index) === "EMAIL"
+          ? `${name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ".")}@empresa-demo.com.br`
+          : pixTypeFor(index) === "PHONE"
+            ? `(11) 9${String(80000000 + index * 2317).slice(0, 8)}`
+            : `PIX-DEMO-${index + 1}`,
       employee: { id: index + 1, cpf: cpf(index + 1), full_name: name },
       employment_type: type,
       result_center: center,
@@ -85,8 +259,8 @@ export function createDemoEmployees(): DemoEmployee[] {
       email: `${name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ".")}@empresa-demo.com.br`,
       phone: `(11) 9${String(80000000 + index * 2317).slice(0, 8)}`,
       salary_history: [
-        { date: "2025-01-01", amount: Math.round(salaryBase * 0.9), reason: "Reajuste anual" },
-        { date: "2026-01-01", amount: Math.round(salaryBase), reason: "Revisão salarial" }
+        { date: "2026-01-01", amount: Math.round(salaryBase), family_allowance: familyAllowance, reason: familyAllowance ? "Revisão salarial com salário-família" : "Revisão salarial" },
+        { date: "2025-01-01", amount: Math.round(salaryBase * 0.9), family_allowance: 0, reason: "Reajuste anual" }
       ],
       movement_history: [
         { date: "2026-02-12", description: "Conferência cadastral concluída" },
@@ -103,6 +277,7 @@ export function createDemoMovements(employees = createDemoEmployees()): DemoMove
   return demoCompetencies.flatMap((competency, monthIndex) =>
     employees.slice(monthIndex * 4, monthIndex * 4 + 10).map((employee, index) => ({
       id: monthIndex * 100 + index + 1,
+      company_id: employee.company_id,
       competency: competency.id,
       employee_id: employee.id,
       employee_name: employee.employee.full_name,
@@ -118,41 +293,16 @@ export function createDemoMovements(employees = createDemoEmployees()): DemoMove
   );
 }
 
-export const demoSettings: DemoSettings = {
-  company_name: "Empresa Demonstração Ltda.",
-  cnpj: "12.345.678/0001-90",
-  initial_month: "2026-01",
-  default_daily_hours: 8.8,
-  include_saturdays: false,
-  include_sundays: false,
-  holidays: ["01/01/2026", "21/04/2026", "01/05/2026"],
-  charges: [
-    { name: "INSS", rate: 20 },
-    { name: "RAT", rate: 1.5 },
-    { name: "Terceiros", rate: 5.8 },
-    { name: "FGTS", rate: 8 },
-    { name: "Multa FGTS", rate: 50 }
-  ],
-  backup_directory: "C:\\SistemaIndicadoresFolha\\backups",
-  auto_backup_on_start: true,
-  backup_retention: 90
-};
+export const demoSettings = demoCompanies[0].settings;
+export const demoBackups = demoCompanies[0].backups;
+export const demoClosing = demoCompanies[0].closing;
 
-export const demoBackups: DemoBackup[] = [
-  { id: 1, date: "2026-06-05 08:10", file: "indicadores_20260605_0810.dump", size: "42 MB", status: "Validado" },
-  { id: 2, date: "2026-06-04 18:00", file: "indicadores_20260604_1800.dump", size: "41 MB", status: "Concluído" },
-  { id: 3, date: "2026-06-03 18:00", file: "indicadores_20260603_1800.dump", size: "41 MB", status: "Concluído" }
-];
-
-export const demoClosing: DemoClosing = {
-  competency: "2026-06",
-  status: "OPEN",
-  checklist: {
-    "Colaboradores conferidos": true,
-    "Movimentações conferidas": true,
-    "Folha importada": true,
-    "Indicadores calculados": true,
-    "Relatório mensal gerado": false,
-    "Backup realizado": false
-  }
-};
+export function createDemoCostAllocations(): DemoCostAllocation[] {
+  return [
+    { id: 1, company_id: 1, competency: "2026-06", result_center: demoResultCenters[0], category: "Despesas administrativas", description: "Rateio de infraestrutura administrativa", amount: 14850, source: "Lancto manual", allocated_at: "2026-06-03 09:10", status: "Lançado" },
+    { id: 2, company_id: 1, competency: "2026-06", result_center: demoResultCenters[1], category: "Operação industrial", description: "Energia e insumos da produção", amount: 28600, source: "Lancto manual", allocated_at: "2026-06-04 10:30", status: "Revisado" },
+    { id: 3, company_id: 2, competency: "2026-06", result_center: demoResultCenters[1], category: "Operação industrial", description: "Turno noturno e manutenção", amount: 22340, source: "Lancto manual", allocated_at: "2026-06-04 14:20", status: "Aprovado" },
+    { id: 4, company_id: 3, competency: "2026-06", result_center: demoResultCenters[2], category: "Comercial", description: "Campanhas e apoio comercial", amount: 11980, source: "Lancto manual", allocated_at: "2026-06-05 11:00", status: "Lançado" },
+    { id: 5, company_id: 4, competency: "2026-06", result_center: demoResultCenters[3], category: "Diretoria", description: "Custos executivos e representação", amount: 18500, source: "Lancto manual", allocated_at: "2026-06-05 16:45", status: "Revisado" }
+  ];
+}

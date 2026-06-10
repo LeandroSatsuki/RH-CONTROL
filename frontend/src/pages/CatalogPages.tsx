@@ -1,9 +1,11 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
+import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage } from "../components/Feedback";
 import { EmploymentType, ResultCenter, User } from "../types";
 
 export function CentersPage({ token, user }: { token: string; user: User }) {
+  const { selectedCompany } = useDemoScope();
   const [items, setItems] = useState<ResultCenter[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,7 +20,7 @@ export function CentersPage({ token, user }: { token: string; user: User }) {
       setLoading(false);
     }
   };
-  useEffect(() => { void load(); }, [token]);
+  useEffect(() => { void load(); }, [token, selectedCompany.id]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -33,12 +35,14 @@ export function CentersPage({ token, user }: { token: string; user: User }) {
   return <Catalog title="Centros de Resultado" subtitle="Áreas usadas para segmentar pessoas e custos." error={error} form={user.role === "ADMIN" &&
     <form className="inline-form" onSubmit={submit}><input name="code" placeholder="Código" required /><input name="name" placeholder="Nome" required /><input name="color" type="color" defaultValue="#2563eb" /><button className="primary">Adicionar</button></form>}>
     {loading && <div className="inline-loading">Carregando...</div>}
+    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>.</p>
     {items.map(item => <div className="list-row" key={item.id}><span className="color-dot" style={{ background: item.color }} /><strong>{item.code}</strong><span>{item.name}</span><span className="status">Ativo</span></div>)}
     {!items.length && !loading && <Empty>Nenhum Centro de Resultado cadastrado.</Empty>}
   </Catalog>;
 }
 
 export function TypesPage({ token, user }: { token: string; user: User }) {
+  const { selectedCompany } = useDemoScope();
   const [items, setItems] = useState<EmploymentType[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -53,7 +57,7 @@ export function TypesPage({ token, user }: { token: string; user: User }) {
       setLoading(false);
     }
   };
-  useEffect(() => { void load(); }, [token]);
+  useEffect(() => { void load(); }, [token, selectedCompany.id]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -68,6 +72,7 @@ export function TypesPage({ token, user }: { token: string; user: User }) {
   return <Catalog title="Modalidades de contratação" subtitle="Defina quais vínculos possuem encargos." error={error} form={user.role === "ADMIN" &&
     <form className="inline-form" onSubmit={submit}><input name="name" placeholder="Nome da modalidade" required /><label className="check"><input name="has_charges" type="checkbox" /> Possui encargos</label><button className="primary">Adicionar</button></form>}>
     {loading && <div className="inline-loading">Carregando...</div>}
+    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>.</p>
     {items.map(item => <div className="list-row" key={item.id}><strong>{item.name}</strong><span>{item.has_charges ? "Com encargos" : "Sem encargos"}</span><span className="status">Ativa</span></div>)}
   </Catalog>;
 }

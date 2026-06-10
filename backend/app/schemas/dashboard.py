@@ -1,5 +1,15 @@
 from pydantic import BaseModel
 
+from app.models.enums import CompanyKind
+
+
+class DashboardCompany(BaseModel):
+    id: int
+    code: str
+    name: str
+    kind: CompanyKind
+    group_name: str
+
 
 class DashboardCard(BaseModel):
     id: int
@@ -19,7 +29,7 @@ class DashboardCard(BaseModel):
 
 
 class DashboardResponse(BaseModel):
+    company: DashboardCompany | None = None
     month: int
     year: int
     cards: list[DashboardCard]
-

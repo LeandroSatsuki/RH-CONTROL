@@ -2,8 +2,11 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models.enums import CompanyKind
+
 
 class ResultCenterBase(BaseModel):
+    company_id: int = 1
     code: str = Field(min_length=2, max_length=20)
     name: str = Field(min_length=2, max_length=120)
     color: str = "#2563EB"
@@ -33,6 +36,7 @@ class ResultCenterRead(ResultCenterBase):
 
 
 class EmploymentTypeBase(BaseModel):
+    company_id: int = 1
     name: str = Field(min_length=2, max_length=80)
     has_charges: bool = False
     active: bool = True
@@ -47,3 +51,30 @@ class EmploymentTypeRead(EmploymentTypeBase):
 
     id: int
 
+
+class CompanyBase(BaseModel):
+    code: str = Field(min_length=2, max_length=20)
+    name: str = Field(min_length=2, max_length=180)
+    kind: CompanyKind = CompanyKind.OUTRA
+    group_name: str = ""
+    parent_company_id: int | None = None
+    active: bool = True
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class CompanyCreate(CompanyBase):
+    pass
+
+
+class CompanyRead(CompanyBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+
+
+class CompanyListRead(CompanyRead):
+    pass
