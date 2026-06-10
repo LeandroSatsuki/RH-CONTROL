@@ -36,7 +36,7 @@ export function LoginPage({ onLogin, initialError = "" }: Props) {
       <section className="auth-intro">
         <span className="eyebrow">Controle de RH</span>
         <h1>Indicadores claros.<br />Decisões melhores.</h1>
-        <p>Folha, pessoas e custos organizados em um único lugar, na sua rede local.</p>
+        <p>Pessoas e custos organizados em um único lugar, na sua rede local.</p>
       </section>
       <form className="auth-card" onSubmit={submit}>
         <div className="brand-mark large">IF</div>

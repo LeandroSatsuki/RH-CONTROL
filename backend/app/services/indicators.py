@@ -6,8 +6,9 @@ def absenteeism(non_productive_hours: float, scheduled_hours: float) -> float:
     return safe_divide(non_productive_hours, scheduled_hours)
 
 
-def turnover(admissions: int, terminations: int, average_headcount: float) -> float:
-    return safe_divide((admissions + terminations) / 2, average_headcount)
+def turnover(admissions: int, terminations: int, headcount: float) -> float:
+    # A planilha de referência usa o total de colaboradores do mês no denominador.
+    return safe_divide((admissions + terminations) / 2, headcount)
 
 
 def excel_number(value: object) -> float:
@@ -24,4 +25,3 @@ def excel_number(value: object) -> float:
 def calculate_unconfirmed_labor_provision(*_: object) -> float:
     # TODO: validar a regra trabalhista e suas bases antes de implementar este cálculo.
     return 0.0
-

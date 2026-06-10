@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -74,6 +75,7 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         "cpf": "529.982.247-25",
         "full_name": "Pessoa Teste",
         "employee_code": "0001",
+        "company_id": 1,
         "employment_type_id": employment_type.json()["id"],
         "result_center_id": center.json()["id"],
         "job_title": "Analista",
@@ -81,11 +83,59 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         "admission_date": "2026-06-01",
         "status": "ACTIVE",
         "daily_hours": 8.8,
+        "salary_base": 4500,
         "notes": "",
+        "bank_name": "Banco Demo",
+        "bank_agency": "0001",
+        "bank_account": "12345",
+        "bank_account_digit": "0",
+        "pix_key_type": "CPF",
+        "pix_key": "52998224725",
     }
-    assert client.post("/api/employees", headers=admin, json=employee).status_code == 201
+    created = client.post("/api/employees", headers=admin, json=employee)
+    assert created.status_code == 201
+    created_employee = created.json()
+    assert Decimal(created_employee["salary_history"][0]["amount"]) == Decimal("4500")
+    assert Decimal(created_employee["salary_history"][0]["family_allowance"]) == Decimal("0")
+    assert created_employee["salary_history"][0]["reason"] == "Cadastro inicial"
     employee["employee_code"] = "0002"
     assert client.post("/api/employees", headers=admin, json=employee).status_code == 409
+    missing_pix = {**employee, "employee_code": "0003"}
+    missing_pix.pop("pix_key")
+    response = client.post("/api/employees", headers=admin, json=missing_pix)
+    assert response.status_code == 422
+
+    salary_change = client.post(
+        f"/api/employees/{created_employee['id']}/salary-history",
+        headers=admin,
+        json={
+            "effective_date": "2026-07-01",
+            "amount": 4800,
+            "family_allowance": 124.08,
+            "reason": "Reajuste com salário-família",
+        },
+    )
+    assert salary_change.status_code == 201
+    salary_history = sorted(
+        salary_change.json()["salary_history"],
+        key=lambda item: item["effective_date"],
+        reverse=True,
+    )
+    assert Decimal(salary_history[0]["amount"]) == Decimal("4800")
+    assert Decimal(salary_history[0]["family_allowance"]) == Decimal("124.08")
+    assert Decimal(salary_history[1]["amount"]) == Decimal("4500")
+    assert Decimal(salary_history[1]["family_allowance"]) == Decimal("0")
+    duplicate_adjustment = client.post(
+        f"/api/employees/{created_employee['id']}/salary-history",
+        headers=admin,
+        json={
+            "effective_date": "2026-07-01",
+            "amount": 5000,
+            "family_allowance": 124.08,
+            "reason": "Tentativa duplicada",
+        },
+    )
+    assert duplicate_adjustment.status_code == 409
 
     for code, name, color in [
         ("IND", "Industrial", "#F59E0B"),
@@ -102,6 +152,37 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     dashboard = client.get("/api/dashboard?month=6&year=2026", headers=admin)
     assert dashboard.status_code == 200
     assert [card["code"] for card in dashboard.json()["cards"]] == ["ADM", "COM", "DIR", "IND"]
+
+    company = client.post(
+        "/api/companies",
+        headers=admin,
+        json={
+            "code": "BETA-IND",
+            "name": "Beta Industrial S.A.",
+            "kind": "OUTRA",
+            "group_name": "Grupo Beta",
+            "parent_company_id": None,
+            "active": True,
+        },
+    )
+    assert company.status_code == 201
+    company_id = company.json()["id"]
+
+    scoped_center = client.post(
+        "/api/result-centers",
+        headers=admin,
+        json={
+            "company_id": company_id,
+            "code": "BETA",
+            "name": "Beta",
+            "color": "#14B8A6",
+            "active": True,
+        },
+    )
+    assert scoped_center.status_code == 201
+    filtered_centers = client.get(f"/api/result-centers?company_id={company_id}", headers=admin)
+    assert filtered_centers.status_code == 200
+    assert [item["code"] for item in filtered_centers.json()] == ["BETA"]
 
     with next(app.dependency_overrides[get_db]()) as db:
         db.add(

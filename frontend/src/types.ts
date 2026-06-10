@@ -1,4 +1,6 @@
 export type Role = "ADMIN" | "CONSULTANT";
+export type CompanyKind = "MATRIZ" | "FILIAL" | "OUTRA";
+export type PixKeyType = "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "RANDOM";
 
 export interface User {
   id: number;
@@ -23,8 +25,19 @@ export interface EmploymentType {
   active: boolean;
 }
 
+export interface Company {
+  id: number;
+  code: string;
+  name: string;
+  kind: CompanyKind;
+  group_name: string;
+  parent_company_id: number | null;
+  active: boolean;
+}
+
 export interface Employment {
   id: number;
+  company_id: number;
   employee_code: string;
   job_title: string;
   department: string;
@@ -32,7 +45,15 @@ export interface Employment {
   termination_date: string | null;
   status: "ACTIVE" | "INACTIVE" | "ON_LEAVE";
   daily_hours: string;
+  salary_base: number;
   notes: string;
+  bank_name: string;
+  bank_agency: string;
+  bank_account: string;
+  bank_account_digit: string;
+  pix_key_type: PixKeyType;
+  pix_key: string;
+  salary_history?: { date: string; amount: number; family_allowance: number; reason: string }[];
   employee: { id: number; cpf: string; full_name: string };
   employment_type: EmploymentType;
   result_center: ResultCenter;
@@ -54,4 +75,3 @@ export interface DashboardCard {
   total_cost: number;
   previous_active_employees: number;
 }
-

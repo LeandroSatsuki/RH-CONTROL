@@ -1,9 +1,12 @@
 import { ReactNode, useEffect, useState } from "react";
 import { IS_DEMO_MODE } from "../api";
+import { useDemoScope } from "../context/DemoScope";
 import { User } from "../types";
 
 export type Page =
   | "dashboard"
+  | "alerts"
+  | "audit"
   | "employees"
   | "movements"
   | "payroll"
@@ -28,7 +31,7 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "dashboard", label: "Dashboard", icon: "▦" },
   { page: "employees", label: "Colaboradores", icon: "ID" },
   { page: "movements", label: "Movimentações", icon: "MV" },
-  { page: "payroll", label: "Folha", icon: "R$" },
+  { page: "payroll", label: "Custos", icon: "CT" },
   { page: "indicators", label: "Indicadores", icon: "Σ" },
   { page: "reports", label: "Relatórios", icon: "RP" },
   { page: "import", label: "Importação", icon: "↥" },
@@ -36,11 +39,14 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "closing", label: "Fechamento", icon: "✓" },
   { page: "settings", label: "Configurações", icon: "⚙" },
   { page: "centers", label: "Centros de Resultado", icon: "CR" },
-  { page: "types", label: "Modalidades", icon: "MC" }
+  { page: "types", label: "Modalidades", icon: "MC" },
+  { page: "alerts", label: "Alertas", icon: "!" },
+  { page: "audit", label: "Auditoria", icon: "LG" }
 ];
 
 export function Layout({ user, page, onPage, onLogout, children }: Props) {
   const [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
+  const { companies, selectedCompany, selectedCompanyId, setSelectedCompanyId } = useDemoScope();
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
@@ -52,7 +58,7 @@ export function Layout({ user, page, onPage, onLogout, children }: Props) {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">IF</div>
-          <div><strong>Indicadores</strong><span>Folha & Pessoas</span></div>
+          <div><strong>Indicadores</strong><span>Custos & Pessoas</span></div>
         </div>
         <nav>
           {menu.filter(item => !item.adminOnly || user.role === "ADMIN").map(item => (
@@ -73,8 +79,24 @@ export function Layout({ user, page, onPage, onLogout, children }: Props) {
       <main className="main">
         <header>
           {IS_DEMO_MODE && <span className="demo-pill">Demo com dados fictícios</span>}
+          <select
+            className="company-switch"
+            value={selectedCompanyId}
+            onChange={event => setSelectedCompanyId(Number(event.target.value))}
+            aria-label="Selecionar empresa"
+          >
+            {companies.map(company => (
+              <option key={company.id} value={company.id}>
+                {company.id === 0 ? "Todas as empresas" : `${company.code} - ${company.name}`}
+              </option>
+            ))}
+          </select>
           <span className="competency-pill">Competência atual: Jun/2026</span>
-          <div><span className="eyebrow">{IS_DEMO_MODE ? "Versão de apresentação" : "Sistema local"}</span><strong>{user.full_name}</strong></div>
+          <div>
+            <span className="eyebrow">{IS_DEMO_MODE ? "Versão de apresentação" : "Sistema local"}</span>
+            <strong>{user.full_name}</strong>
+            <small>{selectedCompany.id === 0 ? "Todas as empresas" : `${selectedCompany.code} - ${selectedCompany.kind.toLowerCase()} • ${selectedCompany.group}`}</small>
+          </div>
           <span className="role">{user.role === "ADMIN" ? "Administrador" : "Consultor"}</span>
         </header>
         <div className="content">{children}</div>

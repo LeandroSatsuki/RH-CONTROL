@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { IS_DEMO_MODE, api } from "../api";
+import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage } from "../components/Feedback";
 import { DashboardResponseDemo } from "../mocks/demoTypes";
 import { DashboardCard } from "../types";
@@ -8,6 +9,7 @@ const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
 
 export function DashboardPage({ token }: { token: string }) {
+  const { selectedCompany } = useDemoScope();
   const [competency, setCompetency] = useState("2026-06");
   const [data, setData] = useState<DashboardResponseDemo | null>(null);
   const [selected, setSelected] = useState<DashboardCard | null>(null);
@@ -32,7 +34,7 @@ export function DashboardPage({ token }: { token: string }) {
     return () => {
       active = false;
     };
-  }, [competency, token]);
+  }, [competency, token, selectedCompany.id]);
 
   const consolidated = data?.consolidated;
 
@@ -42,7 +44,7 @@ export function DashboardPage({ token }: { token: string }) {
         <div>
           <span className="eyebrow">Visão geral</span>
           <h1>Dashboard</h1>
-          <p>Acompanhe pessoas, folha e riscos por Centro de Resultado.</p>
+          <p>Acompanhe pessoas, custos e riscos por Centro de Resultado na empresa selecionada.</p>
         </div>
         <div className="filters">
           <select value={competency} onChange={event => setCompetency(event.target.value)}>
@@ -53,35 +55,24 @@ export function DashboardPage({ token }: { token: string }) {
 
       <ErrorMessage message={error} />
       {loading && <div className="inline-loading">Carregando dashboard...</div>}
+      {!error && data && <p className="note">Empresa ativa: <strong>{data.company?.name ?? "Todas as empresas"}</strong> • {(data.company as { group?: string; group_name?: string } | null)?.group ?? (data.company as { group_name?: string } | null)?.group_name ?? "Visão consolidada"}</p>}
 
       {consolidated && (
         <section className="summary-grid">
           <Summary label="Efetivo ativo" value={String(consolidated.active_employees)} />
-          <Summary label="Folha bruta" value={money.format(consolidated.gross_payroll)} />
-          <Summary label="Folha líquida" value={money.format(consolidated.net_payroll)} />
+          <Summary label="Custo bruto" value={money.format(consolidated.gross_payroll)} />
+          <Summary label="Custo líquido" value={money.format(consolidated.net_payroll)} />
           <Summary label="Custo total" value={money.format(consolidated.total_cost)} strong />
           <Summary label="Absenteísmo" value={percent.format(consolidated.absenteeism)} />
           <Summary label="Turnover" value={percent.format(consolidated.turnover)} />
         </section>
       )}
 
-      {data && (
-        <section className="panel alerts-panel">
-          <div>
-            <span className="eyebrow">Alertas do mês</span>
-            <h2>Sinais para acompanhar</h2>
-          </div>
-          <div className="alert-list">
-            {data.alerts.map(alert => <span key={alert}>{alert}</span>)}
-          </div>
-        </section>
-      )}
-
       <div className="dashboard-grid">
-        {data?.cards.map(card => <CenterCard key={card.id} card={card} topCosts={data.top_costs[card.code] ?? []} onDetails={() => setSelected(card)} />)}
+        {data?.cards.map(card => <CenterCard key={card.id} card={card} onDetails={() => setSelected(card)} />)}
       </div>
       {!data?.cards.length && !error && !loading && <Empty>Nenhum Centro de Resultado ativo.</Empty>}
-      <p className="note">{IS_DEMO_MODE ? "No modo demo, os indicadores e valores exibidos são fictícios e servem apenas para apresentação." : "Absenteísmo e valores de folha permanecem zerados até os módulos de movimentações e folha serem implementados."}</p>
+      <p className="note">{IS_DEMO_MODE ? "No modo demo, os indicadores e valores exibidos são fictícios e servem apenas para apresentação. Os lembretes ficam na aba Alertas." : "Absenteísmo e valores permanecem zerados até os módulos de movimentações e custos serem implementados."}</p>
 
       {selected && (
         <div className="drawer-backdrop" onClick={() => setSelected(null)}>
@@ -106,7 +97,7 @@ export function DashboardPage({ token }: { token: string }) {
   );
 }
 
-function CenterCard({ card, topCosts, onDetails }: { card: DashboardCard; topCosts: { employee: string; cost: number }[]; onDetails: () => void }) {
+function CenterCard({ card, onDetails }: { card: DashboardCard; onDetails: () => void }) {
   const difference = card.active_employees - card.previous_active_employees;
   return (
     <article className="center-card" style={{ "--center-color": card.color } as React.CSSProperties}>
@@ -118,13 +109,9 @@ function CenterCard({ card, topCosts, onDetails }: { card: DashboardCard; topCos
         <Metric label="Desligamentos" value={String(card.terminations)} />
         <Metric label="Absenteísmo" value={percent.format(card.absenteeism)} important />
         <Metric label="Turnover" value={percent.format(card.turnover)} important />
-        <Metric label="Folha bruta" value={money.format(card.gross_payroll)} important />
-        <Metric label="Folha líquida" value={money.format(card.net_payroll)} important />
+        <Metric label="Custo bruto" value={money.format(card.gross_payroll)} important />
+        <Metric label="Custo líquido" value={money.format(card.net_payroll)} important />
         <Metric label="Custo total" value={money.format(card.total_cost)} important wide />
-      </div>
-      <div className="top-costs">
-        <strong>Top 3 custos</strong>
-        {topCosts.map(item => <span key={item.employee}>{item.employee} <b>{money.format(item.cost)}</b></span>)}
       </div>
       <button className="secondary full" onClick={onDetails}>Ver detalhes</button>
     </article>

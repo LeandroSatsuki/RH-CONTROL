@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.enums import EmploymentStatus
+from app.models.enums import EmploymentStatus, PixKeyType
 from app.schemas.catalog import EmploymentTypeRead, ResultCenterRead
 
 
@@ -27,6 +27,7 @@ def is_valid_cpf(value: str) -> bool:
 
 
 class EmployeeCreate(BaseModel):
+    company_id: int = 1
     cpf: str
     full_name: str = Field(min_length=3, max_length=180)
     employee_code: str = Field(min_length=1, max_length=40)
@@ -38,7 +39,14 @@ class EmployeeCreate(BaseModel):
     termination_date: date | None = None
     status: EmploymentStatus = EmploymentStatus.ACTIVE
     daily_hours: Decimal = Field(default=Decimal("8.80"), gt=0, le=24)
+    salary_base: Decimal = Field(gt=0)
     notes: str = ""
+    bank_name: str = Field(min_length=2, max_length=120)
+    bank_agency: str = Field(min_length=2, max_length=20)
+    bank_account: str = Field(min_length=2, max_length=30)
+    bank_account_digit: str = Field(min_length=1, max_length=5)
+    pix_key_type: PixKeyType
+    pix_key: str = Field(min_length=3, max_length=120)
 
     @field_validator("cpf")
     @classmethod
@@ -62,10 +70,29 @@ class EmployeePersonRead(BaseModel):
     full_name: str
 
 
+class SalaryHistoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    effective_date: date
+    amount: Decimal
+    family_allowance: Decimal
+    reason: str
+
+
+class SalaryHistoryCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    effective_date: date
+    amount: Decimal = Field(gt=0)
+    family_allowance: Decimal = Field(default=Decimal("0.00"), ge=0)
+    reason: str = Field(min_length=3, max_length=180)
+
+
 class EmploymentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    company_id: int
     employee_code: str
     job_title: str
     department: str
@@ -73,8 +100,15 @@ class EmploymentRead(BaseModel):
     termination_date: date | None
     status: EmploymentStatus
     daily_hours: Decimal
+    salary_base: Decimal
     notes: str
+    bank_name: str
+    bank_agency: str
+    bank_account: str
+    bank_account_digit: str
+    pix_key_type: PixKeyType
+    pix_key: str
+    salary_history: list[SalaryHistoryRead]
     employee: EmployeePersonRead
     employment_type: EmploymentTypeRead
     result_center: ResultCenterRead
-
