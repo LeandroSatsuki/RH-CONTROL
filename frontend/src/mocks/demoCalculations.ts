@@ -1,43 +1,75 @@
-import { DashboardCard, EmploymentType, ResultCenter } from "../types";
+import { DashboardCard, ResultCenter } from "../types";
 import { demoCompanies, demoEmploymentTypes, demoResultCenters } from "./demoData";
 import { DemoEmployee, DemoMovement, IndicatorSummary, PayrollRow } from "./demoTypes";
 
 export function payrollRows(employees: DemoEmployee[], competency = "2026-06"): PayrollRow[] {
-  const monthFactor = Number(competency.slice(5, 7)) / 100;
+  const [year, month] = competency.split("-").map(Number);
   return employees.filter(item => item.status !== "INACTIVE").map(employee => {
-    const familyAllowance = currentFamilyAllowance(employee);
+    const company = demoCompanies.find(item => item.id === employee.company_id) ?? demoCompanies[0];
+    const rates = company.settings.payroll_rates;
+    const benefitTags = new Set((employee.benefits ?? []).map(normalizeLabel));
     const salary = employee.employment_type.name === "CLT" ? employee.salary_base : 0;
     const proLabore = employee.employment_type.name === "Pró-labore" ? employee.salary_base : 0;
-    const profit = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
-    const costAid = employee.employment_type.name !== "CLT" ? Math.round(employee.salary_base * 0.08) : 320;
-    const meal = employee.employment_type.name === "CLT" ? 620 : 0;
-    const health = employee.employment_type.name === "CLT" ? 480 : employee.result_center.code === "DIR" ? 900 : 0;
-    const insurance = employee.employment_type.name === "CLT" ? 65 : 0;
-    const dental = employee.employment_type.name === "CLT" ? 42 : 0;
-    const charges = employee.employment_type.has_charges ? Math.round(salary * 0.353) : 0;
-    const provisions = employee.employment_type.has_charges ? Math.round(salary * (0.18 + monthFactor)) : 0;
-    const gross = salary + familyAllowance + proLabore + profit + costAid;
-    const net = Math.round(gross * (employee.employment_type.has_charges ? 0.78 : 0.92));
-    const total = gross + meal + health + insurance + dental + charges + provisions;
+    const profitDistribution = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
+    const costAid = employee.employment_type.name === "CLT" ? 320 : Math.round(employee.salary_base * 0.08);
+    const meal = benefitTags.has("alimentacao") ? (employee.employment_type.name === "CLT" ? 620 : 480) : 0;
+    const lodging = benefitTags.has("hospedagem") ? (employee.result_center.code === "DIR" ? 900 : 550) : 0;
+    const insurance = benefitTags.has("seguro") ? (employee.employment_type.name === "CLT" ? 65 : 40) : 0;
+    const healthPlan = benefitTags.has("plano de saude") ? (employee.result_center.code === "DIR" ? 900 : employee.employment_type.name === "CLT" ? 480 : 360) : 0;
+    const subtotalEarnings = roundMoney(salary + proLabore + profitDistribution + costAid + meal + lodging + insurance + healthPlan);
+    const inss = roundMoney(subtotalEarnings * (rates.inss / 100));
+    const rat = roundMoney(subtotalEarnings * (rates.rat / 100));
+    const terceiros = roundMoney(subtotalEarnings * (rates.terceiros / 100));
+    const fgts = roundMoney(subtotalEarnings * (rates.fgts / 100));
+    const charges = roundMoney(inss + rat + terceiros + fgts);
+
+    const vacation = roundMoney(employee.salary_base / 12);
+    const vacationThird = roundMoney(vacation / 3);
+    const fgtsVacation = roundMoney((vacation + vacationThird) * (rates.fgts_vacation / 100));
+    const thirteenthSalary = roundMoney(employee.salary_base / 12);
+    const fgtsThirteenthSalary = roundMoney(thirteenthSalary * (rates.fgts_thirteenth / 100));
+    const noticeIndemnity = roundMoney(employee.salary_base / 12);
+    const fgtsNotice = roundMoney(noticeIndemnity * (rates.fgts_notice / 100));
+    const fgtsFine = roundMoney((fgts + fgtsVacation + fgtsThirteenthSalary + fgtsNotice) * (rates.multa_fgts / 100));
+    const employerContribution = roundMoney((vacation + vacationThird + thirteenthSalary + noticeIndemnity) * (rates.patronal / 100));
+    const totalProvisions = roundMoney(vacation + vacationThird + fgtsVacation + thirteenthSalary + fgtsThirteenthSalary + noticeIndemnity + fgtsNotice + fgtsFine + employerContribution);
+    const grossPayroll = subtotalEarnings;
+    const netPayroll = roundMoney(subtotalEarnings + charges);
+    const totalCost = roundMoney(subtotalEarnings + charges + totalProvisions);
+
     return {
       employee_id: employee.id,
       employee_name: employee.employee.full_name,
       result_center: employee.result_center,
       employment_type: employee.employment_type,
       salary,
-      family_allowance: familyAllowance,
       pro_labore: proLabore,
-      profit_distribution: profit,
+      profit_distribution: profitDistribution,
       cost_aid: costAid,
       meal,
-      health,
+      lodging,
       insurance,
-      dental,
+      health_plan: healthPlan,
+      subtotal_earnings: subtotalEarnings,
+      inss,
+      rat,
+      terceiros,
+      fgts,
       charges,
-      provisions,
-      gross_payroll: gross,
-      net_payroll: net,
-      total_cost: total
+      vacation,
+      vacation_third: vacationThird,
+      fgts_vacation: fgtsVacation,
+      thirteenth_salary: thirteenthSalary,
+      fgts_thirteenth_salary: fgtsThirteenthSalary,
+      notice_indemnity: noticeIndemnity,
+      fgts_notice: fgtsNotice,
+      fgts_fine: fgtsFine,
+      employer_contribution: employerContribution,
+      total_provisions: totalProvisions,
+      gross_payroll: grossPayroll,
+      net_payroll: netPayroll,
+      total_cost: totalCost,
+      grand_total: totalCost
     };
   });
 }
@@ -69,10 +101,9 @@ export function dashboardCards(employees: DemoEmployee[], movements: DemoMovemen
     }, {});
     const admissions = centerMovements.filter(item => item.type === "admissão").length;
     const terminations = centerMovements.filter(item => item.type === "desligamento").length;
-  const nonProductiveHours = centerEmployees.reduce((acc, employee) => acc + nonProductiveHoursForEmployee(employee, centerMovements, year, month), 0);
+    const nonProductiveHours = centerEmployees.reduce((acc, employee) => acc + nonProductiveHoursForEmployee(employee, centerMovements, year, month), 0);
     const plannedHours = Math.max(centerEmployees.reduce((acc, employee) => acc + scheduledHoursForEmployee(employee, year, month), 0), 1);
     const previous = Math.max(centerEmployees.length - admissions + terminations - (center.code === "IND" ? 1 : 0), 0);
-    const average = (previous + centerEmployees.length) / 2;
     return {
       id: center.id,
       code: center.code,
@@ -146,9 +177,16 @@ function safeDivide(value: number, denominator: number): number {
   return denominator ? value / denominator : 0;
 }
 
-function currentFamilyAllowance(employee: DemoEmployee) {
-  return [...employee.salary_history]
-    .sort((a, b) => b.date.localeCompare(a.date))[0]?.family_allowance ?? 0;
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function normalizeLabel(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function scheduledHoursForEmployee(employee: DemoEmployee, year: number, month: number) {

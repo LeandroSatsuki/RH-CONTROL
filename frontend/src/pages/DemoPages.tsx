@@ -3,7 +3,7 @@ import { IS_DEMO_MODE, api } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { demoCompetencies, demoResultCenters, demoSettings } from "../mocks/demoData";
-import { DemoAlert, DemoAuditEntry, DemoBackup, DemoClosing, DemoCostAllocation, DemoMovement, DemoSettings, IndicatorSummary } from "../mocks/demoTypes";
+import { DemoAlert, DemoAuditEntry, DemoBackup, DemoClosing, DemoCostAllocation, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
 import { CentersPage, TypesPage } from "./CatalogPages";
 import { User } from "../types";
 
@@ -93,93 +93,215 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
 export function CostDistributionPage({ token, user }: { token: string; user: User }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
-  const lockedCompany = selectedCompany.id === 0;
   const [competency, setCompetency] = useState("2026-06");
   const [center, setCenter] = useState("");
   const [query, setQuery] = useState("");
-  const [items, setItems] = useState<DemoCostAllocation[]>([]);
-  const [detail, setDetail] = useState<DemoCostAllocation | null>(null);
+  const [rows, setRows] = useState<PayrollRow[]>([]);
   const [loading, setLoading] = useState(false);
   const fb = useFeedback();
-  useEffect(() => {
-    let active = true;
-    async function load() {
-      setLoading(true);
-      try {
-        const response = await api<DemoCostAllocation[]>(`/demo/cost-allocations?competency=${competency}`, {}, token);
-        if (active) setItems(response);
-      } catch (err) {
-        if (active) fb.fail(err instanceof Error ? err.message : "Erro ao carregar rateios");
-      } finally {
-        if (active) setLoading(false);
-      }
-    }
-    void load();
-    return () => {
-      active = false;
-    };
-  }, [competency, token, selectedCompany.id]);
-  const filtered = items.filter(item => (!center || item.result_center.code === center) && (!query || item.description.toLowerCase().includes(query.toLowerCase()) || item.category.toLowerCase().includes(query.toLowerCase())));
-  const centers = filtered.reduce<Record<string, number>>((acc, item) => {
-    acc[item.result_center.code] = (acc[item.result_center.code] ?? 0) + item.amount;
-    return acc;
-  }, {});
-  const totalAllocated = filtered.reduce((acc, item) => acc + item.amount, 0);
-  const largest = [...filtered].sort((a, b) => b.amount - a.amount)[0];
-  async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (lockedCompany) return fb.fail("Selecione uma empresa específica para distribuir custos.");
-    if (user.role !== "ADMIN") return fb.fail("Seu perfil possui acesso somente para consulta.");
-    const form = new FormData(event.currentTarget);
+
+  async function load() {
+    setLoading(true);
+    fb.setError("");
     try {
-      await api("/demo/cost-allocations", {
-        method: "POST",
-        body: JSON.stringify({
-          competency,
-          result_center_id: Number(form.get("result_center_id")),
-          category: form.get("category"),
-          description: form.get("description"),
-          amount: Number(form.get("amount")),
-          source: form.get("source")
-        })
-      }, token);
-      fb.notify("Custo distribuído com sucesso.");
-      event.currentTarget.reset();
-      setItems(await api<DemoCostAllocation[]>(`/demo/cost-allocations?competency=${competency}`, {}, token));
+      const response = await api<PayrollRow[]>(`/demo/payroll?competency=${competency}`, {}, token);
+      setRows(response);
     } catch (err) {
-      fb.fail(err instanceof Error ? err.message : "Erro ao distribuir custo");
+      fb.fail(err instanceof Error ? err.message : "Erro ao carregar custo/folha");
+    } finally {
+      setLoading(false);
     }
   }
-  return <PageShell title="Distribuição de custos" subtitle="Lançamento de valores por Centro de Resultado, com histórico por competência e empresa." error={fb.error} success={fb.success}
-    actions={<><button className="secondary" onClick={() => user.role === "ADMIN" ? fb.notify("Prévia de rateio simulada.") : fb.fail("Seu perfil possui acesso somente para consulta.")}>Pré-visualizar rateio</button><button className="secondary" onClick={() => fb.notify("Exportação de custos gerada em modo demonstração.")}>Exportar Excel</button></>}>
-    <div className="summary-grid">
-      <Summary label="Valor distribuído" value={money.format(totalAllocated)} />
-      <Summary label="Lançamentos" value={String(filtered.length)} />
-      <Summary label="Centros impactados" value={String(Object.keys(centers).length)} />
-      <Summary label="Maior rateio" value={largest ? money.format(largest.amount) : "-"} strong />
+
+  useEffect(() => {
+    void load();
+  }, [competency, token, selectedCompany.id]);
+
+  const filtered = rows.filter(item => (!center || item.result_center.code === center) && (!query || `${item.employee_name} ${item.result_center.code} ${item.employment_type.name}`.toLowerCase().includes(query.toLowerCase())));
+  const totals = filtered.reduce((acc, item) => ({
+    salary: acc.salary + item.salary,
+    proLabore: acc.proLabore + item.pro_labore,
+    profit: acc.profit + item.profit_distribution,
+    costAid: acc.costAid + item.cost_aid,
+    meal: acc.meal + item.meal,
+    lodging: acc.lodging + item.lodging,
+    insurance: acc.insurance + item.insurance,
+    healthPlan: acc.healthPlan + item.health_plan,
+    subtotal: acc.subtotal + item.subtotal_earnings,
+    inss: acc.inss + item.inss,
+    rat: acc.rat + item.rat,
+    terceiros: acc.terceiros + item.terceiros,
+    fgts: acc.fgts + item.fgts,
+    charges: acc.charges + item.charges,
+    vacation: acc.vacation + item.vacation,
+    vacationThird: acc.vacationThird + item.vacation_third,
+    fgtsVacation: acc.fgtsVacation + item.fgts_vacation,
+    thirteenth: acc.thirteenth + item.thirteenth_salary,
+    fgtsThirteenth: acc.fgtsThirteenth + item.fgts_thirteenth_salary,
+    notice: acc.notice + item.notice_indemnity,
+    fgtsNotice: acc.fgtsNotice + item.fgts_notice,
+    fgtsFine: acc.fgtsFine + item.fgts_fine,
+    employerContribution: acc.employerContribution + item.employer_contribution,
+    totalProvisions: acc.totalProvisions + item.total_provisions,
+    grandTotal: acc.grandTotal + item.grand_total
+  }), {
+    salary: 0, proLabore: 0, profit: 0, costAid: 0, meal: 0, lodging: 0, insurance: 0, healthPlan: 0,
+    subtotal: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacationThird: 0,
+    fgtsVacation: 0, thirteenth: 0, fgtsThirteenth: 0, notice: 0, fgtsNotice: 0, fgtsFine: 0,
+    employerContribution: 0, totalProvisions: 0, grandTotal: 0
+  });
+  const centerTotals = filtered.reduce<Record<string, number>>((acc, item) => {
+    acc[item.result_center.code] = (acc[item.result_center.code] ?? 0) + item.grand_total;
+    return acc;
+  }, {});
+  const payrollRates = selectedCompany.settings?.payroll_rates ?? demoSettings.payroll_rates;
+
+  return <PageShell
+    title="Custo / Folha"
+    subtitle="Leitura mensal por colaborador e Centro de Resultado, espelhando a estrutura da planilha ADM_Fopag."
+    error={fb.error}
+    success={fb.success}
+    actions={<button className="secondary" onClick={() => void load()}>Atualizar visão</button>}
+  >
+    <div className="summary-grid payroll-summary">
+      <Summary label="Colaboradores" value={String(filtered.length)} />
+      <Summary label="Subtotal" value={money.format(totals.subtotal)} />
+      <Summary label="Encargos" value={money.format(totals.charges)} />
+      <Summary label="Provisões" value={money.format(totals.totalProvisions)} />
+      <Summary label="Total geral" value={money.format(totals.grandTotal)} strong />
     </div>
-    <div className="panel filters-panel">
+    <div className="panel filters-panel payroll-filters">
       <select value={competency} onChange={e => setCompetency(e.target.value)}>{demoCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
-      <select value={center} onChange={e => setCenter(e.target.value)}><option value="">Todos os CRs</option>{demoResultCenters.map(item => <option key={item.id}>{item.code}</option>)}</select>
-      <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar por categoria ou descrição" />
+      <select value={center} onChange={e => setCenter(e.target.value)}><option value="">Todos os CRs</option>{demoResultCenters.map(item => <option key={item.id} value={item.code}>{item.code}</option>)}</select>
+      <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar colaborador ou modalidade" />
     </div>
-    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Esta tela registra rateios, não gera folha.</p>
-    {user.role === "ADMIN" && !lockedCompany && <form className="panel form-grid" onSubmit={create}>
-      <label>Competência<select value={competency} onChange={e => setCompetency(e.target.value)}>{demoCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-      <label>Centro de Resultado<select name="result_center_id" required><option value="">Selecione</option>{demoResultCenters.map(item => <option key={item.id} value={item.id}>{item.code} - {item.name}</option>)}</select></label>
-      <label>Categoria<input name="category" required defaultValue="Despesas administrativas" /></label>
-      <label>Valor<input name="amount" type="number" step="0.01" min="0" required /></label>
-      <label className="span-2">Descrição<input name="description" required placeholder="Ex.: rateio de aluguel, energia, manutenção" /></label>
-      <label className="span-2">Origem / observação<input name="source" defaultValue="Lançamento manual" /></label>
-      <button className="primary">Distribuir custo</button>
-    </form>}
-    {lockedCompany && <div className="panel"><p>Selecione uma empresa específica no topo para lançar rateios.</p></div>}
-    <div className="panel list">{Object.entries(centers).map(([code, amount]) => <div className="list-row payroll-center" key={code}><span className="color-dot" style={{ background: demoResultCenters.find(item => item.code === code)?.color ?? "#999" }} /><strong>{code}</strong><span>Rateios na competência</span><span>{money.format(amount)}</span></div>)}</div>
-    <DataTable loading={loading} empty="Nenhum rateio encontrado.">
-      <table><thead><tr><th>Data</th><th>CR</th><th>Categoria</th><th>Descrição</th><th>Origem</th><th>Valor</th><th>Status</th></tr></thead>
-      <tbody>{filtered.map(item => <tr key={item.id} onClick={() => setDetail(item)} className="clickable"><td>{item.allocated_at}</td><td>{item.result_center.code}</td><td>{item.category}</td><td>{item.description}</td><td>{item.source}</td><td>{money.format(item.amount)}</td><td><span className="status">{item.status}</span></td></tr>)}</tbody></table>
+    <p className="note">Empresa selecionada: <strong>{selectedCompany.id === 0 ? "Todas as empresas" : selectedCompany.name}</strong>. Na visão consolidada, os percentuais podem variar por empresa.</p>
+    <div className="panel list payroll-centers">
+      {Object.entries(centerTotals).map(([code, amount]) => (
+        <div className="list-row payroll-center" key={code}>
+          <span className="color-dot" style={{ background: demoResultCenters.find(item => item.code === code)?.color ?? "#999" }} />
+          <strong>{code}</strong>
+          <span>Total da competência</span>
+          <span>{money.format(amount)}</span>
+        </div>
+      ))}
+    </div>
+    <DataTable loading={loading} empty="Nenhum registro encontrado.">
+      <table className="payroll-table">
+        <thead>
+          <tr>
+            <th rowSpan={2}>Colaborador</th>
+            <th rowSpan={2}>Centro de resultado</th>
+            <th colSpan={9} className="group-head group-earnings">Composições</th>
+            <th colSpan={5} className="group-head group-charges">Encargos</th>
+            <th colSpan={10} className="group-head group-provisions">Provisões</th>
+            <th rowSpan={2} className="group-head group-total">Total Geral</th>
+          </tr>
+          <tr>
+            <th className="group-earnings">Salário</th>
+            <th className="group-earnings">Prolabore</th>
+            <th className="group-earnings">Distribuição de Lucro</th>
+            <th className="group-earnings">Ajuda de Custo</th>
+            <th className="group-earnings">Alimentação</th>
+            <th className="group-earnings">Hospedagem</th>
+            <th className="group-earnings">Seguro</th>
+            <th className="group-earnings">Plano de Saúde</th>
+            <th className="group-earnings">Subtotal</th>
+            <th className="group-charges">INSS</th>
+            <th className="group-charges">RAT</th>
+            <th className="group-charges">Terceiros</th>
+            <th className="group-charges">FGTS</th>
+            <th className="group-charges">Total Encargos</th>
+            <th className="group-provisions">Férias</th>
+            <th className="group-provisions">1/3 Férias</th>
+            <th className="group-provisions">FGTS Férias</th>
+            <th className="group-provisions">13° Salário</th>
+            <th className="group-provisions">FGTS 13° Salário</th>
+            <th className="group-provisions">Aviso Prévio</th>
+            <th className="group-provisions">FGTS Aviso</th>
+            <th className="group-provisions">Multa FGTS</th>
+            <th className="group-provisions">Patronal</th>
+            <th className="group-provisions">Total Provisões</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map(item => (
+            <tr key={item.employee_id}>
+              <td>{item.employee_name}<small>{item.employment_type.name}</small></td>
+              <td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td>
+              <td className="group-earnings">{money.format(item.salary)}</td>
+              <td className="group-earnings">{money.format(item.pro_labore)}</td>
+              <td className="group-earnings">{money.format(item.profit_distribution)}</td>
+              <td className="group-earnings">{money.format(item.cost_aid)}</td>
+              <td className="group-earnings">{money.format(item.meal)}</td>
+              <td className="group-earnings">{money.format(item.lodging)}</td>
+              <td className="group-earnings">{money.format(item.insurance)}</td>
+              <td className="group-earnings">{money.format(item.health_plan)}</td>
+              <td className="group-earnings">{money.format(item.subtotal_earnings)}</td>
+              <td className="group-charges">{money.format(item.inss)}</td>
+              <td className="group-charges">{money.format(item.rat)}</td>
+              <td className="group-charges">{money.format(item.terceiros)}</td>
+              <td className="group-charges">{money.format(item.fgts)}</td>
+              <td className="group-charges">{money.format(item.charges)}</td>
+              <td className="group-provisions">{money.format(item.vacation)}</td>
+              <td className="group-provisions">{money.format(item.vacation_third)}</td>
+              <td className="group-provisions">{money.format(item.fgts_vacation)}</td>
+              <td className="group-provisions">{money.format(item.thirteenth_salary)}</td>
+              <td className="group-provisions">{money.format(item.fgts_thirteenth_salary)}</td>
+              <td className="group-provisions">{money.format(item.notice_indemnity)}</td>
+              <td className="group-provisions">{money.format(item.fgts_notice)}</td>
+              <td className="group-provisions">{money.format(item.fgts_fine)}</td>
+              <td className="group-provisions">{money.format(item.employer_contribution)}</td>
+              <td className="group-provisions">{money.format(item.total_provisions)}</td>
+              <td className="group-total strong">{money.format(item.grand_total)}</td>
+            </tr>
+          ))}
+          {filtered.length > 0 && (
+            <tr className="totals-row">
+              <td colSpan={2}><strong>Total da competência</strong></td>
+              <td className="group-earnings strong">{money.format(totals.salary)}</td>
+              <td className="group-earnings strong">{money.format(totals.proLabore)}</td>
+              <td className="group-earnings strong">{money.format(totals.profit)}</td>
+              <td className="group-earnings strong">{money.format(totals.costAid)}</td>
+              <td className="group-earnings strong">{money.format(totals.meal)}</td>
+              <td className="group-earnings strong">{money.format(totals.lodging)}</td>
+              <td className="group-earnings strong">{money.format(totals.insurance)}</td>
+              <td className="group-earnings strong">{money.format(totals.healthPlan)}</td>
+              <td className="group-earnings strong">{money.format(totals.subtotal)}</td>
+              <td className="group-charges strong">{money.format(totals.inss)}</td>
+              <td className="group-charges strong">{money.format(totals.rat)}</td>
+              <td className="group-charges strong">{money.format(totals.terceiros)}</td>
+              <td className="group-charges strong">{money.format(totals.fgts)}</td>
+              <td className="group-charges strong">{money.format(totals.charges)}</td>
+              <td className="group-provisions strong">{money.format(totals.vacation)}</td>
+              <td className="group-provisions strong">{money.format(totals.vacationThird)}</td>
+              <td className="group-provisions strong">{money.format(totals.fgtsVacation)}</td>
+              <td className="group-provisions strong">{money.format(totals.thirteenth)}</td>
+              <td className="group-provisions strong">{money.format(totals.fgtsThirteenth)}</td>
+              <td className="group-provisions strong">{money.format(totals.notice)}</td>
+              <td className="group-provisions strong">{money.format(totals.fgtsNotice)}</td>
+              <td className="group-provisions strong">{money.format(totals.fgtsFine)}</td>
+              <td className="group-provisions strong">{money.format(totals.employerContribution)}</td>
+              <td className="group-provisions strong">{money.format(totals.totalProvisions)}</td>
+              <td className="group-total strong">{money.format(totals.grandTotal)}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      {!filtered.length && !loading && <Empty>Nenhum registro de custo/folha encontrado.</Empty>}
     </DataTable>
-    {detail && <AllocationDrawer item={detail} onClose={() => setDetail(null)} />}
+    {selectedCompany.id !== 0 ? (
+      <div className="panel formula-panel">
+        <strong>Percentuais configurados</strong>
+        <p>INSS {percent.format(payrollRates.inss / 100)} | RAT {percent.format(payrollRates.rat / 100)} | Terceiros {percent.format(payrollRates.terceiros / 100)} | FGTS {percent.format(payrollRates.fgts / 100)}.</p>
+        <p>Provisões: FGTS férias {percent.format(payrollRates.fgts_vacation / 100)}, FGTS 13° {percent.format(payrollRates.fgts_thirteenth / 100)}, FGTS aviso {percent.format(payrollRates.fgts_notice / 100)}, multa FGTS {percent.format(payrollRates.multa_fgts / 100)} e patronal {percent.format(payrollRates.patronal / 100)}.</p>
+      </div>
+    ) : (
+      <div className="panel formula-panel">
+        <strong>Percentuais configurados</strong>
+        <p>Na visão consolidada, cada empresa usa seus próprios percentuais. Selecione uma empresa específica para conferir a configuração aplicada.</p>
+      </div>
+    )}
   </PageShell>;
 }
 
