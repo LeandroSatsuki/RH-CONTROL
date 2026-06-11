@@ -31,6 +31,7 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "dashboard", label: "Dashboard", icon: "▦" },
   { page: "employees", label: "Colaboradores", icon: "ID" },
   { page: "movements", label: "Movimentações", icon: "MV" },
+  { page: "payroll", label: "Custo / Folha", icon: "CF" },
   { page: "indicators", label: "Indicadores", icon: "Σ" },
   { page: "reports", label: "Relatórios", icon: "RP" },
   { page: "closing", label: "Fechamento", icon: "✓" },

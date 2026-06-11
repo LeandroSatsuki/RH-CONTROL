@@ -51,6 +51,15 @@ function loadState(): DemoState {
   if (!stored) return defaultState();
   try {
     const parsed = { ...defaultState(), ...JSON.parse(stored) } as DemoState;
+    const fallbackRates = demoCompanies[0].settings.payroll_rates;
+    parsed.companies = parsed.companies.map(company => ({
+      ...company,
+      settings: {
+        ...demoCompanies[0].settings,
+        ...company.settings,
+        payroll_rates: { ...fallbackRates, ...(company.settings?.payroll_rates ?? {}) }
+      }
+    }));
     parsed.employees = parsed.employees.map(employee => ({
       ...employee,
       benefits: employee.benefits ?? []

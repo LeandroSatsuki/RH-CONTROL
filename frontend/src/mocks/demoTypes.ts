@@ -57,19 +57,33 @@ export interface PayrollRow {
   result_center: ResultCenter;
   employment_type: EmploymentType;
   salary: number;
-  family_allowance: number;
   pro_labore: number;
   profit_distribution: number;
   cost_aid: number;
   meal: number;
-  health: number;
+  lodging: number;
   insurance: number;
-  dental: number;
+  health_plan: number;
+  subtotal_earnings: number;
+  inss: number;
+  rat: number;
+  terceiros: number;
+  fgts: number;
   charges: number;
-  provisions: number;
+  vacation: number;
+  vacation_third: number;
+  fgts_vacation: number;
+  thirteenth_salary: number;
+  fgts_thirteenth_salary: number;
+  notice_indemnity: number;
+  fgts_notice: number;
+  fgts_fine: number;
+  employer_contribution: number;
+  total_provisions: number;
   gross_payroll: number;
   net_payroll: number;
   total_cost: number;
+  grand_total: number;
 }
 
 export interface DemoCostAllocation {
@@ -162,6 +176,17 @@ export interface DemoSettings {
   include_sundays: boolean;
   holidays: string[];
   charges: { name: string; rate: number }[];
+  payroll_rates: {
+    inss: number;
+    rat: number;
+    terceiros: number;
+    fgts: number;
+    fgts_vacation: number;
+    fgts_thirteenth: number;
+    fgts_notice: number;
+    multa_fgts: number;
+    patronal: number;
+  };
   backup_directory: string;
   auto_backup_on_start: boolean;
   backup_retention: number;

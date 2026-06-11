@@ -134,11 +134,30 @@ label.check input { width: 15px; }
 .list-row > strong:first-child { grid-column: span 2; }
 .table-wrap { overflow: auto; padding: 0; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.payroll-table { min-width: 2050px; }
 th { color: var(--muted); background: var(--surface-2); font-size: 10px; text-align: left; text-transform: uppercase; letter-spacing: .5px; }
 th, td { padding: 13px 15px; border-bottom: 1px solid var(--line); }
 td small { display: block; margin-top: 3px; color: var(--muted); }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover { background: var(--surface-2); }
+.payroll-table th,
+.payroll-table td { white-space: nowrap; }
+.payroll-table thead th { position: sticky; top: 0; z-index: 1; }
+.payroll-table thead tr:nth-child(2) th { top: 34px; z-index: 1; }
+.group-head { font-size: 10px; font-weight: 800; letter-spacing: .6px; text-align: center; }
+.group-earnings { background: #edf5ff; }
+.group-charges { background: #fff4e6; }
+.group-provisions { background: #f3ecff; }
+.group-total { background: #e6f7ef; }
+.payroll-table tbody td.group-earnings { background: rgba(37, 99, 235, 0.06); }
+.payroll-table tbody td.group-charges { background: rgba(245, 158, 11, 0.08); }
+.payroll-table tbody td.group-provisions { background: rgba(139, 92, 246, 0.07); }
+.payroll-table tbody td.group-total { background: rgba(16, 185, 129, 0.09); font-weight: 800; }
+.payroll-table td.strong { font-weight: 800; }
+.totals-row td { background: var(--surface-2); font-weight: 800; }
+.payroll-summary { grid-template-columns: repeat(5, minmax(150px, 1fr)); }
+.payroll-filters { grid-template-columns: 1fr 1fr 1.3fr; }
+.payroll-centers { padding-top: 8px; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .filters-panel { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 10px; align-items: center; }
 .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
