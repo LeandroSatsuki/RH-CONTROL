@@ -12,7 +12,6 @@ export function DashboardPage({ token }: { token: string }) {
   const { selectedCompany } = useDemoScope();
   const [competency, setCompetency] = useState("2026-06");
   const [data, setData] = useState<DashboardResponseDemo | null>(null);
-  const [selected, setSelected] = useState<DashboardCard | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -69,35 +68,15 @@ export function DashboardPage({ token }: { token: string }) {
       )}
 
       <div className="dashboard-grid">
-        {data?.cards.map(card => <CenterCard key={card.id} card={card} onDetails={() => setSelected(card)} />)}
+        {data?.cards.map(card => <CenterCard key={card.id} card={card} />)}
       </div>
       {!data?.cards.length && !error && !loading && <Empty>Nenhum Centro de Resultado ativo.</Empty>}
       <p className="note">{IS_DEMO_MODE ? "No modo demo, os indicadores e valores exibidos são fictícios e servem apenas para apresentação. Os lembretes ficam na aba Alertas." : "Absenteísmo e valores permanecem zerados até os módulos de movimentações e custos serem implementados."}</p>
-
-      {selected && (
-        <div className="drawer-backdrop" onClick={() => setSelected(null)}>
-          <aside className="drawer" onClick={event => event.stopPropagation()}>
-            <button className="ghost right" onClick={() => setSelected(null)}>Fechar</button>
-            <span className="eyebrow">{selected.code}</span>
-            <h2>{selected.name}</h2>
-            <div className="detail-grid">
-              <Summary label="Ativos" value={String(selected.active_employees)} />
-              <Summary label="Admissões" value={String(selected.admissions)} />
-              <Summary label="Desligamentos" value={String(selected.terminations)} />
-              <Summary label="Custo total" value={money.format(selected.total_cost)} strong />
-            </div>
-            <h3>Modalidades</h3>
-            <div className="type-tags open">{Object.entries(selected.by_employment_type).map(([name, count]) => <span key={name}>{name} <strong>{count}</strong></span>)}</div>
-            <h3>Leitura executiva</h3>
-            <p>Este Centro de Resultado concentra {percent.format(selected.total_cost / Math.max(data?.consolidated.total_cost ?? 1, 1))} do custo total da competência.</p>
-          </aside>
-        </div>
-      )}
     </>
   );
 }
 
-function CenterCard({ card, onDetails }: { card: DashboardCard; onDetails: () => void }) {
+function CenterCard({ card }: { card: DashboardCard }) {
   const difference = card.active_employees - card.previous_active_employees;
   return (
     <article className="center-card" style={{ "--center-color": card.color } as React.CSSProperties}>
@@ -113,7 +92,6 @@ function CenterCard({ card, onDetails }: { card: DashboardCard; onDetails: () =>
         <Metric label="Custo líquido" value={money.format(card.net_payroll)} important />
         <Metric label="Custo total" value={money.format(card.total_cost)} important wide />
       </div>
-      <button className="secondary full" onClick={onDetails}>Ver detalhes</button>
     </article>
   );
 }

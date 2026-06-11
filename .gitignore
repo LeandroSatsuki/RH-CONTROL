@@ -15,6 +15,7 @@ frontend/release/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+consultas/~$*.xlsx
 logs/
 .idea/
 .vscode/

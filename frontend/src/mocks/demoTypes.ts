@@ -26,6 +26,7 @@ export interface DemoEmployee extends Employment {
   bank_account_digit: string;
   pix_key_type: "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "RANDOM";
   pix_key: string;
+  benefits: string[];
   email: string;
   phone: string;
   salary_history: { date: string; amount: number; family_allowance: number; reason: string }[];

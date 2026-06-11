@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { API_URL, IS_DEMO_MODE, api } from "./api";
 import { AppError } from "./components/Feedback";
 import { Layout, Page } from "./components/Layout";
-import { CentersPage, TypesPage } from "./pages/CatalogPages";
 import { DashboardPage } from "./pages/DashboardPage";
 import { AlertsPage, AuditPage, BackupPage, ClosingPage, ImportPage, IndicatorsPage, MovementsPage, PayrollPage, ReportsPage, SettingsPage } from "./pages/DemoPages";
 import { EmployeesPage } from "./pages/EmployeesPage";
@@ -251,8 +250,6 @@ export default function App() {
         {page === "backup" && <BackupPage token={token} user={user} />}
         {page === "closing" && <ClosingPage token={token} user={user} />}
         {page === "settings" && <SettingsPage token={token} user={user} />}
-        {page === "centers" && <CentersPage token={token} user={user} />}
-        {page === "types" && <TypesPage token={token} user={user} />}
       </Layout>
     </DemoScopeProvider>
   );

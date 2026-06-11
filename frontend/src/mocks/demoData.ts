@@ -245,6 +245,7 @@ export function createDemoEmployees(): DemoEmployee[] {
       bank_account: String(50000 + index * 11),
       bank_account_digit: String((index % 9) + 1),
       pix_key_type: pixTypeFor(index),
+      benefits: index % 4 === 0 ? ["Alimentação", "Transporte"] : index % 4 === 1 ? ["Seguro", "Plano de saúde"] : index % 4 === 2 ? ["Hospedagem"] : [],
       pix_key: pixTypeFor(index) === "CPF"
         ? cpf(index + 1)
         : pixTypeFor(index) === "EMAIL"

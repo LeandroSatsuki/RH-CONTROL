@@ -2,8 +2,9 @@ import { FormEvent, ReactNode, useEffect, useState } from "react";
 import { IS_DEMO_MODE, api } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
-import { demoCompetencies, demoEmploymentTypes, demoResultCenters, demoSettings } from "../mocks/demoData";
+import { demoCompetencies, demoResultCenters, demoSettings } from "../mocks/demoData";
 import { DemoAlert, DemoAuditEntry, DemoBackup, DemoClosing, DemoCostAllocation, DemoMovement, DemoSettings, IndicatorSummary } from "../mocks/demoTypes";
+import { CentersPage, TypesPage } from "./CatalogPages";
 import { User } from "../types";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -230,7 +231,7 @@ export function AlertsPage({ token }: { token: string; user: User }) {
     <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Os alertas servem para lembrar o usuário do que precisa de atenção.</p>
     <DataTable loading={loading} empty="Nenhum alerta encontrado.">
       <table><thead><tr><th>Empresa</th><th>CR</th><th>Colaborador</th><th>Tipo</th><th>Vencimento</th><th>Prioridade</th><th>Mensagem</th></tr></thead>
-      <tbody>{filtered.map(item => <tr key={item.id}><td>{item.company_name}</td><td>{item.result_center.code}</td><td>{item.employee_name}</td><td>{item.type}</td><td>{item.due_date}</td><td><span className="status">{item.severity}</span></td><td>{item.message}</td></tr>)}</tbody></table>
+      <tbody>{filtered.map(item => <tr key={item.id}><td>{item.company_name}</td><td>{item.result_center.code}</td><td>{item.employee_name}</td><td>{item.type}</td><td>{item.due_date}</td><td><span className={severityClass(item.severity)}>{item.severity}</span></td><td>{item.message}</td></tr>)}</tbody></table>
     </DataTable>
   </PageShell>;
 }
@@ -411,6 +412,8 @@ export function ReportsPage({ token }: { token: string }) {
   </PageShell>;
 }
 
+type SystemSection = "general" | "centers" | "types" | "backup" | "import";
+
 export function SettingsPage({ token, user }: { token: string; user: User }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
@@ -418,6 +421,7 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
   const fb = useFeedback();
   const [loading, setLoading] = useState(false);
   const lockedCompany = selectedCompany.id === 0;
+  const [section, setSection] = useState<SystemSection>("general");
   useEffect(() => {
     if (lockedCompany) return;
     let active = true;
@@ -451,25 +455,34 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
     }
   }
   if (lockedCompany) {
-    return <PageShell title="Configurações" subtitle="As configurações são feitas por empresa. Selecione uma empresa específica para editar jornada, backup e encargos." error={fb.error} success={fb.success}>
+    return <PageShell title="Ajustes do sistema" subtitle="As configurações são feitas por empresa. Selecione uma empresa específica para editar jornada, backup e encargos." error={fb.error} success={fb.success}>
       <div className="panel"><p>Escolha uma empresa no seletor do topo para continuar.</p></div>
     </PageShell>;
   }
   if (loading && !settings) return <div className="inline-loading">Carregando configurações...</div>;
-  return <PageShell title="Configurações" subtitle={`Parâmetros demonstrativos da empresa ${selectedCompany.name}, jornada, encargos e permissões.`} error={fb.error} success={fb.success}>
-    <form onSubmit={save} className="settings-grid">
+  return <PageShell title="Ajustes do sistema" subtitle={`Área administrativa da empresa ${selectedCompany.name}. Cadastros, backup e importação ficam reunidos aqui.`} error={fb.error} success={fb.success}>
+    <div className="segment-tabs">
+      <button className={section === "general" ? "active" : ""} onClick={() => setSection("general")}>Geral</button>
+      <button className={section === "centers" ? "active" : ""} onClick={() => setSection("centers")}>Centros de Resultado</button>
+      <button className={section === "types" ? "active" : ""} onClick={() => setSection("types")}>Modalidades</button>
+      <button className={section === "backup" ? "active" : ""} onClick={() => setSection("backup")}>Backup</button>
+      <button className={section === "import" ? "active" : ""} onClick={() => setSection("import")}>Importação</button>
+    </div>
+    {section === "general" && <form onSubmit={save} className="settings-grid">
       <SectionCard title="Empresa"><label>Nome<input name="company_name" defaultValue={settings?.company_name ?? selectedCompany.name} disabled={user.role !== "ADMIN"} /></label><InfoLine label="CNPJ" value={settings?.cnpj ?? "-"} /><InfoLine label="Mês inicial" value={settings?.initial_month ?? "-"} /></SectionCard>
       <SectionCard title="Jornada"><label>Jornada padrão<input name="default_daily_hours" type="number" step="0.1" defaultValue={settings?.default_daily_hours ?? 8.8} disabled={user.role !== "ADMIN"} /></label><InfoLine label="Considerar sábado" value={settings?.include_saturdays ? "Sim" : "Não"} /><InfoLine label="Feriados" value={settings?.holidays.join(", ") ?? ""} /></SectionCard>
       <SectionCard title="Encargos">{settings?.charges.map(item => <InfoLine key={item.name} label={item.name} value={`${item.rate}%`} />)}</SectionCard>
-      <SectionCard title="Modalidades">{demoEmploymentTypes.map(item => <InfoLine key={item.name} label={item.name} value={item.has_charges ? "Com encargos" : "Sem encargos"} />)}</SectionCard>
       <SectionCard title="Usuários e permissões"><InfoLine label="Administrador" value="Controle total" /><InfoLine label="Consultor" value="Consulta e exportação" /></SectionCard>
-      <SectionCard title="Backup"><InfoLine label="Pasta" value={settings?.backup_directory ?? "-"} /><InfoLine label="Ao abrir" value={settings?.auto_backup_on_start ? "Ativo" : "Inativo"} /><InfoLine label="Retenção" value={`${settings?.backup_retention ?? 0} backups`} /></SectionCard>
       {user.role === "ADMIN" && <button className="primary">Salvar configurações</button>}
-    </form>
+    </form>}
+    {section === "centers" && <CentersPage token={token} user={user} embedded />}
+    {section === "types" && <TypesPage token={token} user={user} embedded />}
+    {section === "backup" && <BackupPage token={token} user={user} embedded />}
+    {section === "import" && <ImportPage token={token} user={user} embedded />}
   </PageShell>;
 }
 
-export function BackupPage({ token, user }: { token: string; user: User }) {
+export function BackupPage({ token, user, embedded = false }: { token: string; user: User; embedded?: boolean }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [items, setItems] = useState<DemoBackup[]>([]);
@@ -504,11 +517,18 @@ export function BackupPage({ token, user }: { token: string; user: User }) {
     </PageShell>;
   }
   if (loading && !items.length) return <div className="inline-loading">Carregando backups...</div>;
+  const content = <>
+    <ErrorMessage message={fb.error} />
+    <SuccessMessage message={fb.success} />
+    <div className="summary-grid"><Summary label="Último backup" value={items[0]?.date ?? "-"} /><Summary label="Pasta" value={companySettings.backup_directory} /><Summary label="Retenção" value={`${companySettings.backup_retention} backups`} strong /></div>
+    <div className="panel list">{items.map(item => <div className="list-row backup-row" key={item.id}><strong>{item.file}</strong><span>{item.date}</span><span>{item.size}</span><span className="status-pill status-active">{item.status}</span></div>)}</div>
+  </>;
+  if (embedded) return content;
   return <PageShell title="Backup" subtitle={`Rotina demonstrativa de cópia e restauração da empresa ${selectedCompany.name}.`} error={fb.error} success={fb.success}
     actions={<><button className="primary" onClick={backup}>Gerar backup agora</button><button className="secondary" onClick={() => user.role === "ADMIN" ? fb.notify("Pasta alterada em modo demonstração.") : fb.fail("Seu perfil possui acesso somente para consulta.")}>Alterar pasta</button><button className="secondary" onClick={() => user.role === "ADMIN" ? fb.notify("Restauração simulada. Nenhum dado real foi alterado.") : fb.fail("Seu perfil possui acesso somente para consulta.")}>Restaurar backup</button></>}>
     <div className="summary-grid"><Summary label="Último backup" value={items[0]?.date ?? "-"} /><Summary label="Pasta" value={companySettings.backup_directory} /><Summary label="Retenção" value={`${companySettings.backup_retention} backups`} strong /></div>
     {loading && <div className="inline-loading">Carregando backups...</div>}
-    <div className="panel list">{items.map(item => <div className="list-row backup-row" key={item.id}><strong>{item.file}</strong><span>{item.date}</span><span>{item.size}</span><span className="status">{item.status}</span></div>)}</div>
+    <div className="panel list">{items.map(item => <div className="list-row backup-row" key={item.id}><strong>{item.file}</strong><span>{item.date}</span><span>{item.size}</span><span className="status-pill status-active">{item.status}</span></div>)}</div>
   </PageShell>;
 }
 
@@ -552,15 +572,19 @@ export function ClosingPage({ token, user }: { token: string; user: User }) {
   </PageShell>;
 }
 
-export function ImportPage({ token, user }: { token: string; user: User }) {
+export function ImportPage({ token, user, embedded = false }: { token: string; user: User; embedded?: boolean }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const [preview, setPreview] = useState<any>(null);
   const fb = useFeedback();
   async function simulate() { if (restricted(user, fb.fail)) return; setPreview(await api("/demo/import-preview", { method: "POST" }, token)); fb.notify("Prévia de importação gerada em modo demonstração."); }
-  return <PageShell title="Importação" subtitle="Fluxo visual para validar planilhas antes de confirmar dados." error={fb.error} success={fb.success}>
+  const content = <>
+    <ErrorMessage message={fb.error} />
+    <SuccessMessage message={fb.success} />
     <div className="panel import-panel"><select><option>Colaboradores</option><option>Custos alocados</option><option>Movimentações</option><option>Planilha legado</option></select><button className="secondary" onClick={() => fb.notify("Template baixado em modo demonstração.")}>Baixar template</button><div className="upload-box">Arraste uma planilha aqui ou clique para selecionar</div><button className="primary" onClick={simulate}>Confirmar importação</button></div>
     {preview && <div className="panel"><h2>Prévia dos dados</h2><div className="summary-grid"><Summary label="Linhas" value={preview.rows} /><Summary label="Válidas" value={preview.valid} /><Summary label="Inconsistências" value={preview.errors.length} strong /></div><ul className="validation-list">{preview.errors.map((item: string) => <li key={item}>{item}</li>)}</ul></div>}
-  </PageShell>;
+  </>;
+  if (embedded) return content;
+  return <PageShell title="Importação" subtitle="Fluxo visual para validar planilhas antes de confirmar dados." error={fb.error} success={fb.success}>{content}</PageShell>;
 }
 
 const movementTypes = ["admissão", "desligamento", "falta", "atestado", "afastamento", "férias", "transferência de Centro de Resultado", "alteração salarial"];
@@ -593,4 +617,12 @@ export const PayrollPage = CostDistributionPage;
 
 function date(value: string) {
   return new Date(`${value}T00:00:00`).toLocaleDateString("pt-BR");
+}
+
+function severityClass(severity: DemoAlert["severity"]) {
+  return {
+    Baixa: "severity-pill severity-low",
+    Média: "severity-pill severity-medium",
+    Alta: "severity-pill severity-high"
+  }[severity];
 }
