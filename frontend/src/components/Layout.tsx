@@ -31,17 +31,12 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "dashboard", label: "Dashboard", icon: "▦" },
   { page: "employees", label: "Colaboradores", icon: "ID" },
   { page: "movements", label: "Movimentações", icon: "MV" },
-  { page: "payroll", label: "Custos", icon: "CT" },
   { page: "indicators", label: "Indicadores", icon: "Σ" },
   { page: "reports", label: "Relatórios", icon: "RP" },
-  { page: "import", label: "Importação", icon: "↥" },
-  { page: "backup", label: "Backup", icon: "BK" },
   { page: "closing", label: "Fechamento", icon: "✓" },
-  { page: "settings", label: "Configurações", icon: "⚙" },
-  { page: "centers", label: "Centros de Resultado", icon: "CR" },
-  { page: "types", label: "Modalidades", icon: "MC" },
   { page: "alerts", label: "Alertas", icon: "!" },
-  { page: "audit", label: "Auditoria", icon: "LG" }
+  { page: "audit", label: "Auditoria", icon: "LG" },
+  { page: "settings", label: "Ajustes do sistema", icon: "⚙", adminOnly: true }
 ];
 
 export function Layout({ user, page, onPage, onLogout, children }: Props) {

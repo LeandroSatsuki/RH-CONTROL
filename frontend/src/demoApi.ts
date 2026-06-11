@@ -50,7 +50,12 @@ function loadState(): DemoState {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) return defaultState();
   try {
-    return { ...defaultState(), ...JSON.parse(stored) } as DemoState;
+    const parsed = { ...defaultState(), ...JSON.parse(stored) } as DemoState;
+    parsed.employees = parsed.employees.map(employee => ({
+      ...employee,
+      benefits: employee.benefits ?? []
+    }));
+    return parsed;
   } catch {
     return defaultState();
   }
@@ -288,7 +293,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
   if (route === "/employees" && method === "POST") {
     assertAdmin(token);
     if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para cadastrar colaboradores.");
-    const payload = body<Record<string, string>>(options);
+    const payload = body<Record<string, any>>(options);
     const cpf = String(payload.cpf ?? "").replace(/\D/g, "");
     if (state.employees.some(item => item.employee.cpf === cpf)) throw new Error("CPF já cadastrado no modo demo.");
     const type = state.employmentTypes.find(item => item.id === Number(payload.employment_type_id)) ?? state.employmentTypes[0];
@@ -312,6 +317,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       bank_account_digit: String(payload.bank_account_digit ?? "0"),
       pix_key_type: (payload.pix_key_type as DemoEmployee["pix_key_type"]) ?? "CPF",
       pix_key: String(payload.pix_key ?? cpf),
+      benefits: Array.isArray(payload.benefits) ? payload.benefits.map(String) : [],
       employee: { id, cpf, full_name: String(payload.full_name ?? "") },
       employment_type: type,
       result_center: center,

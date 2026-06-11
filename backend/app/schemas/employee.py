@@ -47,6 +47,7 @@ class EmployeeCreate(BaseModel):
     bank_account_digit: str = Field(min_length=1, max_length=5)
     pix_key_type: PixKeyType
     pix_key: str = Field(min_length=3, max_length=120)
+    benefits: list[str] = Field(default_factory=list)
 
     @field_validator("cpf")
     @classmethod
@@ -108,6 +109,7 @@ class EmploymentRead(BaseModel):
     bank_account_digit: str
     pix_key_type: PixKeyType
     pix_key: str
+    benefits: list[str]
     salary_history: list[SalaryHistoryRead]
     employee: EmployeePersonRead
     employment_type: EmploymentTypeRead

@@ -53,6 +53,7 @@ export interface Employment {
   bank_account_digit: string;
   pix_key_type: PixKeyType;
   pix_key: string;
+  benefits: string[];
   salary_history?: { date: string; amount: number; family_allowance: number; reason: string }[];
   employee: { id: number; cpf: string; full_name: string };
   employment_type: EmploymentType;

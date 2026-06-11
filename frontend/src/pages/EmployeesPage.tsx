@@ -57,8 +57,10 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const benefits = form.getAll("benefits").map(String);
     try {
-      await api("/employees", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) }, token);
+      const payload = Object.fromEntries(form);
+      await api("/employees", { method: "POST", body: JSON.stringify({ ...payload, benefits }) }, token);
       setOpen(false);
       setSuccess("Colaborador cadastrado com sucesso.");
       void load();
@@ -110,6 +112,14 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <label>Dígito da conta<input name="bank_account_digit" placeholder="0" required /></label>
       <label>Tipo PIX<select name="pix_key_type" required><option value="">Selecione</option><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option><option value="EMAIL">E-mail</option><option value="PHONE">Telefone</option><option value="RANDOM">Chave aleatória</option></select></label>
       <label className="span-2">Chave PIX<input name="pix_key" placeholder="Obrigatória" required /></label>
+      <fieldset className="span-2 benefits-fieldset">
+        <legend>Benefícios</legend>
+        <label className="check"><input name="benefits" type="checkbox" value="Alimentação" /> Alimentação</label>
+        <label className="check"><input name="benefits" type="checkbox" value="Transporte" /> Transporte</label>
+        <label className="check"><input name="benefits" type="checkbox" value="Hospedagem" /> Hospedagem</label>
+        <label className="check"><input name="benefits" type="checkbox" value="Seguro" /> Seguro</label>
+        <label className="check"><input name="benefits" type="checkbox" value="Plano de saúde" /> Plano de saúde</label>
+      </fieldset>
       <input name="status" type="hidden" value="ACTIVE" />
       <label className="span-2">Observações<textarea name="notes" rows={2} /></label>
       <button className="primary">Cadastrar colaborador</button>
@@ -118,7 +128,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     <div className="panel table-wrap">
       {loading && <div className="inline-loading">Carregando colaboradores...</div>}
       <table><thead><tr><th>Matrícula</th><th>Colaborador</th><th>CPF</th><th>Cargo</th><th>CR</th><th>Modalidade</th><th>Salário</th><th>Admissão</th><th>Status</th></tr></thead>
-      <tbody>{filtered.map(item => <tr key={item.id} onClick={() => setSelected(item)} className="clickable"><td>{item.employee_code}</td><td><strong>{item.employee.full_name}</strong></td><td>{formatCpf(item.employee.cpf)}</td><td>{item.job_title}</td><td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td><td>{item.employment_type.name}</td><td>{money.format(item.salary_base)}</td><td>{date(item.admission_date)}</td><td><span className="status">{statusLabel(item.status)}</span></td></tr>)}</tbody></table>
+      <tbody>{filtered.map(item => <tr key={item.id} onClick={() => setSelected(item)} className="clickable"><td>{item.employee_code}</td><td><strong>{item.employee.full_name}</strong></td><td>{formatCpf(item.employee.cpf)}</td><td>{item.job_title}</td><td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td><td>{item.employment_type.name}</td><td>{money.format(item.salary_base)}</td><td>{date(item.admission_date)}</td><td><span className={statusClass(item.status)}>{statusLabel(item.status)}</span></td></tr>)}</tbody></table>
       {!filtered.length && !loading && <Empty>Nenhum colaborador encontrado.</Empty>}
     </div>
 
@@ -138,41 +148,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
 
 function EmployeeDrawer({ employee, token, user, onClose, onAction, onSaved }: { employee: DemoEmployee; token: string; user: User; onClose: () => void; onAction: (message: string, adminOnly?: boolean) => void; onSaved: (employee: DemoEmployee) => void }) {
   const history = [...employee.salary_history].sort((a, b) => b.date.localeCompare(a.date));
-  const currentFamilyAllowance = history[0]?.family_allowance ?? 0;
-  const estimatedCost = (employee.salary_base + currentFamilyAllowance) * (employee.employment_type.has_charges ? 1.72 : 1.18);
-  const [saving, setSaving] = useState(false);
-  const [adjustError, setAdjustError] = useState("");
-  const [adjustSuccess, setAdjustSuccess] = useState("");
-
-  async function submitHistory(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (user.role !== "ADMIN") {
-      onAction("Seu perfil possui acesso somente para consulta.");
-      return;
-    }
-    const form = new FormData(event.currentTarget);
-    setSaving(true);
-    setAdjustError("");
-    setAdjustSuccess("");
-    try {
-      const updated = await api<DemoEmployee>(`/employees/${employee.id}/salary-history`, {
-        method: "POST",
-        body: JSON.stringify({
-          effective_date: form.get("effective_date"),
-          amount: Number(form.get("amount")),
-          family_allowance: Number(form.get("family_allowance") || 0),
-          reason: form.get("reason")
-        })
-      }, token);
-      onSaved(updated);
-      setAdjustSuccess("Ajuste histórico registrado.");
-      event.currentTarget.reset();
-    } catch (err) {
-      setAdjustError(err instanceof Error ? err.message : "Erro ao registrar ajuste");
-    } finally {
-      setSaving(false);
-    }
-  }
+  const estimatedCost = employee.salary_base * (employee.employment_type.has_charges ? 1.72 : 1.18);
   return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer wide" onClick={event => event.stopPropagation()}>
     <button className="ghost right" onClick={onClose}>Fechar</button>
     <span className="eyebrow">{employee.employee_code}</span><h2>{employee.employee.full_name}</h2>
@@ -191,23 +167,14 @@ function EmployeeDrawer({ employee, token, user, onClose, onAction, onSaved }: {
       <Info label="Centro atual" value={`${employee.result_center.code} - ${employee.result_center.name}`} />
       <Info label="Modalidade" value={employee.employment_type.name} />
       <Info label="Custo estimado do mês" value={money.format(estimatedCost)} />
-      <Info label="Salário-família atual" value={money.format(currentFamilyAllowance)} />
       <Info label="Banco" value={employee.bank_name} />
       <Info label="Agência / conta" value={`${employee.bank_agency} / ${employee.bank_account}-${employee.bank_account_digit}`} />
       <Info label="PIX" value={`${employee.pix_key_type}: ${employee.pix_key}`} />
+      <Info label="Benefícios" value={(employee.benefits ?? []).length ? (employee.benefits ?? []).join(", ") : "Nenhum"} />
     </div>
-    {user.role === "ADMIN" && <form className="panel form-grid compact" onSubmit={submitHistory}>
-      <label>Data de vigência<input name="effective_date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} /></label>
-      <label>Atualizar salário<input name="amount" type="number" step="0.01" min="0" required defaultValue={employee.salary_base} /></label>
-      <label>Salário-família<input name="family_allowance" type="number" step="0.01" min="0" defaultValue={currentFamilyAllowance} /></label>
-      <label className="span-2">Motivo<input name="reason" defaultValue="Ajuste histórico" required /></label>
-      <button className="primary" disabled={saving}>{saving ? "Salvando..." : "Atualizar salário"}</button>
-      {adjustError && <p className="error-line span-2">{adjustError}</p>}
-      {adjustSuccess && <p className="success-line span-2">{adjustSuccess}</p>}
-    </form>}
     <Section title="Férias" items={employee.vacations.map(item => `${item.period} - ${item.status}`)} />
     <Section title="Afastamentos" items={employee.leaves.length ? employee.leaves.map(item => `${item.period} - ${item.reason} (${item.days} dias)`) : ["Nenhum afastamento ativo"]} />
-    <Section title="Históricos Salariais" items={history.map(item => `${date(item.date)} - ${money.format(item.amount)} + família ${money.format(item.family_allowance)} (${item.reason})`)} />
+    <Section title="Históricos Salariais" items={history.map(item => `${date(item.date)} - ${money.format(item.amount)} (${item.reason})`)} />
     <Section title="Histórico de Movimentos" items={employee.movement_history.map(item => `${date(item.date)} - ${item.description}`)} />
   </aside></div>;
 }
@@ -230,4 +197,12 @@ function date(value: string) {
 
 function statusLabel(status: Employment["status"]) {
   return { ACTIVE: "Ativo", INACTIVE: "Inativo", ON_LEAVE: "Afastado" }[status];
+}
+
+function statusClass(status: Employment["status"]) {
+  return {
+    ACTIVE: "status-pill status-active",
+    INACTIVE: "status-pill status-inactive",
+    ON_LEAVE: "status-pill status-leave"
+  }[status];
 }
