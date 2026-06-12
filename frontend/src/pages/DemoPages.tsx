@@ -1,14 +1,17 @@
-import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import { IS_DEMO_MODE, api } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
-import { demoCompetencies, demoResultCenters, demoSettings } from "../mocks/demoData";
-import { DemoAlert, DemoAuditEntry, DemoBackup, DemoClosing, DemoCostAllocation, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
+import { demoBenefitDefinitions, demoCompetencies, demoResultCenters, demoSettings } from "../mocks/demoData";
+import { DemoAlert, DemoAuditEntry, DemoBackup, DemoBenefitDistribution, DemoClosing, DemoCostAllocation, DemoEmployee, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
+import { recalculatePayrollRow } from "../mocks/demoCalculations";
 import { CentersPage, TypesPage } from "./CatalogPages";
 import { User } from "../types";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
+const plainNumber = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
 
 function DemoOnly() {
   return <div className="panel"><span className="eyebrow">Módulo demo</span><h2>Disponível na versão de apresentação</h2><p>Este módulo usa dados fictícios locais quando `VITE_DEMO_MODE=true`.</p></div>;
@@ -98,14 +101,16 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<PayrollRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const fb = useFeedback();
+  const payrollRates = selectedCompany.settings?.payroll_rates ?? demoSettings.payroll_rates;
 
   async function load() {
     setLoading(true);
     fb.setError("");
     try {
       const response = await api<PayrollRow[]>(`/demo/payroll?competency=${competency}`, {}, token);
-      setRows(response);
+      setRows(response.map(row => recalculatePayrollRow(row, payrollRates)));
     } catch (err) {
       fb.fail(err instanceof Error ? err.message : "Erro ao carregar custo/folha");
     } finally {
@@ -123,6 +128,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     proLabore: acc.proLabore + item.pro_labore,
     profit: acc.profit + item.profit_distribution,
     costAid: acc.costAid + item.cost_aid,
+    transport: acc.transport + item.transport,
     meal: acc.meal + item.meal,
     lodging: acc.lodging + item.lodging,
     insurance: acc.insurance + item.insurance,
@@ -145,7 +151,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     totalProvisions: acc.totalProvisions + item.total_provisions,
     grandTotal: acc.grandTotal + item.grand_total
   }), {
-    salary: 0, proLabore: 0, profit: 0, costAid: 0, meal: 0, lodging: 0, insurance: 0, healthPlan: 0,
+    salary: 0, proLabore: 0, profit: 0, costAid: 0, transport: 0, meal: 0, lodging: 0, insurance: 0, healthPlan: 0,
     subtotal: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacationThird: 0,
     fgtsVacation: 0, thirteenth: 0, fgtsThirteenth: 0, notice: 0, fgtsNotice: 0, fgtsFine: 0,
     employerContribution: 0, totalProvisions: 0, grandTotal: 0
@@ -154,14 +160,36 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     acc[item.result_center.code] = (acc[item.result_center.code] ?? 0) + item.grand_total;
     return acc;
   }, {});
-  const payrollRates = selectedCompany.settings?.payroll_rates ?? demoSettings.payroll_rates;
+  function updateRowField(rowId: number, field: keyof Pick<PayrollRow, "salary" | "pro_labore" | "profit_distribution" | "cost_aid" | "transport" | "meal" | "lodging" | "insurance" | "health_plan">, value: number) {
+    setRows(current => current.map(row => {
+      if (row.employee_id !== rowId) return row;
+      return recalculatePayrollRow({ ...row, [field]: value } as PayrollRow, payrollRates);
+    }));
+  }
 
   return <PageShell
     title="Custo / Folha"
     subtitle="Leitura mensal por colaborador e Centro de Resultado, espelhando a estrutura da planilha ADM_Fopag."
     error={fb.error}
     success={fb.success}
-    actions={<button className="secondary" onClick={() => void load()}>Atualizar visão</button>}
+    actions={
+      <>
+        <button className="secondary" onClick={() => downloadPayrollCsv(filtered, selectedCompany, competency)}>Baixar Excel</button>
+        <button
+          className={editMode ? "primary" : "secondary"}
+          onClick={() => {
+            if (user.role !== "ADMIN") {
+              fb.fail("Seu perfil possui acesso somente para consulta.");
+              return;
+            }
+            setEditMode(value => !value);
+          }}
+        >
+          {editMode ? "Sair do modo edição" : "Entrar em modo edição"}
+        </button>
+        <button className="secondary" onClick={() => void load()}>Atualizar visão</button>
+      </>
+    }
   >
     <div className="summary-grid payroll-summary">
       <Summary label="Colaboradores" value={String(filtered.length)} />
@@ -186,13 +214,13 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
         </div>
       ))}
     </div>
-    <DataTable loading={loading} empty="Nenhum registro encontrado.">
+    <DataTable loading={loading} empty="Nenhum registro encontrado." className="payroll-table-shell">
       <table className="payroll-table">
         <thead>
           <tr>
             <th rowSpan={2}>Colaborador</th>
             <th rowSpan={2}>Centro de resultado</th>
-            <th colSpan={9} className="group-head group-earnings">Composições</th>
+            <th colSpan={10} className="group-head group-earnings">Composições</th>
             <th colSpan={5} className="group-head group-charges">Encargos</th>
             <th colSpan={10} className="group-head group-provisions">Provisões</th>
             <th rowSpan={2} className="group-head group-total">Total Geral</th>
@@ -202,6 +230,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <th className="group-earnings">Prolabore</th>
             <th className="group-earnings">Distribuição de Lucro</th>
             <th className="group-earnings">Ajuda de Custo</th>
+            <th className="group-earnings">Vale transporte</th>
             <th className="group-earnings">Alimentação</th>
             <th className="group-earnings">Hospedagem</th>
             <th className="group-earnings">Seguro</th>
@@ -229,15 +258,61 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <tr key={item.employee_id}>
               <td>{item.employee_name}<small>{item.employment_type.name}</small></td>
               <td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td>
-              <td className="group-earnings">{money.format(item.salary)}</td>
-              <td className="group-earnings">{money.format(item.pro_labore)}</td>
-              <td className="group-earnings">{money.format(item.profit_distribution)}</td>
-              <td className="group-earnings">{money.format(item.cost_aid)}</td>
-              <td className="group-earnings">{money.format(item.meal)}</td>
-              <td className="group-earnings">{money.format(item.lodging)}</td>
-              <td className="group-earnings">{money.format(item.insurance)}</td>
-              <td className="group-earnings">{money.format(item.health_plan)}</td>
-              <td className="group-earnings">{money.format(item.subtotal_earnings)}</td>
+              <EditablePayrollCell
+                value={item.salary}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "salary", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.pro_labore}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "pro_labore", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.profit_distribution}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "profit_distribution", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.cost_aid}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "cost_aid", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.transport}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "transport", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.meal}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "meal", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.lodging}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "lodging", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.insurance}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "insurance", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.health_plan}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "health_plan", value)}
+                className="group-earnings"
+              />
+              <td className="group-earnings strong subtotal-cell">{money.format(item.subtotal_earnings)}</td>
               <td className="group-charges">{money.format(item.inss)}</td>
               <td className="group-charges">{money.format(item.rat)}</td>
               <td className="group-charges">{money.format(item.terceiros)}</td>
@@ -259,15 +334,16 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
           {filtered.length > 0 && (
             <tr className="totals-row">
               <td colSpan={2}><strong>Total da competência</strong></td>
-              <td className="group-earnings strong">{money.format(totals.salary)}</td>
-              <td className="group-earnings strong">{money.format(totals.proLabore)}</td>
-              <td className="group-earnings strong">{money.format(totals.profit)}</td>
-              <td className="group-earnings strong">{money.format(totals.costAid)}</td>
-              <td className="group-earnings strong">{money.format(totals.meal)}</td>
-              <td className="group-earnings strong">{money.format(totals.lodging)}</td>
-              <td className="group-earnings strong">{money.format(totals.insurance)}</td>
-              <td className="group-earnings strong">{money.format(totals.healthPlan)}</td>
-              <td className="group-earnings strong">{money.format(totals.subtotal)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.salary)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.proLabore)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.profit)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.costAid)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.transport)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.meal)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.lodging)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.insurance)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.healthPlan)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.subtotal)}</td>
               <td className="group-charges strong">{money.format(totals.inss)}</td>
               <td className="group-charges strong">{money.format(totals.rat)}</td>
               <td className="group-charges strong">{money.format(totals.terceiros)}</td>
@@ -290,18 +366,6 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
       </table>
       {!filtered.length && !loading && <Empty>Nenhum registro de custo/folha encontrado.</Empty>}
     </DataTable>
-    {selectedCompany.id !== 0 ? (
-      <div className="panel formula-panel">
-        <strong>Percentuais configurados</strong>
-        <p>INSS {percent.format(payrollRates.inss / 100)} | RAT {percent.format(payrollRates.rat / 100)} | Terceiros {percent.format(payrollRates.terceiros / 100)} | FGTS {percent.format(payrollRates.fgts / 100)}.</p>
-        <p>Provisões: FGTS férias {percent.format(payrollRates.fgts_vacation / 100)}, FGTS 13° {percent.format(payrollRates.fgts_thirteenth / 100)}, FGTS aviso {percent.format(payrollRates.fgts_notice / 100)}, multa FGTS {percent.format(payrollRates.multa_fgts / 100)} e patronal {percent.format(payrollRates.patronal / 100)}.</p>
-      </div>
-    ) : (
-      <div className="panel formula-panel">
-        <strong>Percentuais configurados</strong>
-        <p>Na visão consolidada, cada empresa usa seus próprios percentuais. Selecione uma empresa específica para conferir a configuração aplicada.</p>
-      </div>
-    )}
   </PageShell>;
 }
 
@@ -514,24 +578,644 @@ export function IndicatorsPage({ token }: { token: string }) {
   </PageShell>;
 }
 
+type ReportKey =
+  | "consolidated"
+  | "center"
+  | "employees"
+  | "movements"
+  | "absenteeism"
+  | "turnover"
+  | "costs"
+  | "salary"
+  | "leaves"
+  | "benefit-vt"
+  | "benefit-al"
+  | "benefit-ps"
+  | "benefit-sv";
+
+interface ReportColumn {
+  key: string;
+  label: string;
+  display?: "currency" | "number" | "text" | "percent";
+}
+
+interface ReportPreview {
+  title: string;
+  description: string;
+  kpis: { label: string; value: string }[];
+  columns: ReportColumn[];
+  rows: Record<string, string | number>[];
+  footer?: string;
+  exportLabel: string;
+}
+
+interface ReportCatalogItem {
+  key: ReportKey;
+  title: string;
+  description: string;
+  hint: string;
+}
+
+interface ReportFilters {
+  center: string;
+  state: string;
+  employmentType: string;
+  supervisor: string;
+  query: string;
+}
+
+const reportCatalog: ReportCatalogItem[] = [
+  { key: "consolidated", title: "Consolidado mensal", description: "Visão geral por Centro de Resultado com efetivo, custos e indicadores.", hint: "Resumo executivo" },
+  { key: "center", title: "Por Centro de Resultado", description: "Detalha os quatro blocos ADM, IND, COM e DIR com comparação de custo.", hint: "Comparativo" },
+  { key: "employees", title: "Colaboradores ativos", description: "Lista de colaboradores com cargo, modalidade, centro e benefícios.", hint: "Base cadastral" },
+  { key: "movements", title: "Movimentações do mês", description: "Afastamentos, férias, faltas, desligamentos e impactos em dias.", hint: "Histórico mensal" },
+  { key: "absenteeism", title: "Absenteísmo", description: "Horas não produtivas, jornada programada e percentual por centro.", hint: "Indicador" },
+  { key: "turnover", title: "Turnover", description: "Admissões, desligamentos e taxa de rotatividade por centro.", hint: "Indicador" },
+  { key: "costs", title: "Custos alocados", description: "Rateios lançados para cada Centro de Resultado com status.", hint: "Financeiro" },
+  { key: "salary", title: "Histórico salarial", description: "Mudanças salariais e observações por colaborador.", hint: "Trajetória" },
+  { key: "leaves", title: "Afastamentos financeiros", description: "Afastamentos, férias e atestados com dias e horas impactadas.", hint: "Operacional" },
+  { key: "benefit-vt", title: "Benefício - Vale transporte", description: "Distribuições de vale transporte com dias, valor por dia e valor mensal.", hint: "Benefícios" },
+  { key: "benefit-al", title: "Benefício - Alimentação", description: "Distribuições de alimentação em lote ou individual, por colaborador.", hint: "Benefícios" },
+  { key: "benefit-ps", title: "Benefício - Plano de saúde", description: "Distribuições recorrentes com visão mensal por colaborador.", hint: "Benefícios" },
+  { key: "benefit-sv", title: "Benefício - Seguro de vida", description: "Distribuições de seguro de vida com controle mensal e histórico.", hint: "Benefícios" }
+];
+
 export function ReportsPage({ token }: { token: string }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const fb = useFeedback();
-  const reports = ["Relatório mensal consolidado", "Relatório por Centro de Resultado", "Relatório de colaboradores", "Relatório de movimentações", "Relatório de absenteísmo", "Relatório de turnover", "Relatório de custos alocados", "Relatório de histórico salarial"];
-  const [preview, setPreview] = useState<any>(null);
-  async function action() {
+  const [competency, setCompetency] = useState("2026-06");
+  const [selectedKey, setSelectedKey] = useState<ReportKey>("consolidated");
+  const [filters, setFilters] = useState<ReportFilters>({
+    center: "",
+    state: "",
+    employmentType: "",
+    supervisor: "",
+    query: ""
+  });
+  const [companyPreview, setCompanyPreview] = useState<{ company: string; company_logo: string; cards: { code: string; name: string; color: string; active_employees: number; gross_payroll: number; total_cost: number; absenteeism?: number; turnover?: number }[] } | null>(null);
+  const [employees, setEmployees] = useState<DemoEmployee[]>([]);
+  const [movements, setMovements] = useState<DemoMovement[]>([]);
+  const [benefits, setBenefits] = useState<DemoBenefitDistribution[]>([]);
+  const [allocations, setAllocations] = useState<DemoCostAllocation[]>([]);
+  const [indicators, setIndicators] = useState<IndicatorSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    fb.setError("");
     try {
-      setPreview(await api(`/demo/report-preview?competency=2026-06`, {}, token));
-      fb.notify("Relatório gerado em modo demonstração.");
+      const [preview, employeeList, movementList, benefitList, allocationList, indicatorSummary] = await Promise.all([
+        api<{ company: string; company_logo: string; cards: { code: string; name: string; color: string; active_employees: number; gross_payroll: number; total_cost: number; absenteeism?: number; turnover?: number }[] }>(`/demo/report-preview?competency=${competency}`, {}, token),
+        api<DemoEmployee[]>("/employees", {}, token),
+        api<DemoMovement[]>(`/demo/movements?competency=${competency}`, {}, token),
+        api<DemoBenefitDistribution[]>(`/demo/benefit-distributions?competency=${competency}`, {}, token),
+        api<DemoCostAllocation[]>(`/demo/cost-allocations?competency=${competency}`, {}, token),
+        api<IndicatorSummary>(`/demo/indicators?competency=${competency}`, {}, token)
+      ]);
+      setCompanyPreview(preview);
+      setEmployees(employeeList);
+      setMovements(movementList);
+      setBenefits(benefitList);
+      setAllocations(allocationList);
+      setIndicators(indicatorSummary);
     } catch (err) {
-      fb.fail(err instanceof Error ? err.message : "Erro ao gerar relatório");
+      fb.fail(err instanceof Error ? err.message : "Erro ao carregar relatórios");
+    } finally {
+      setLoading(false);
     }
   }
-  return <PageShell title="Relatórios" subtitle={`Pacote de saídas gerenciais para acompanhamento mensal da empresa ${selectedCompany.name}.`} error={fb.error} success={fb.success}>
-    <div className="report-grid">{reports.map(report => <article className="report-card" key={report}><h3>{report}</h3><p>Filtros por competência, Centro de Resultado, modalidade e status.</p><div className="actions"><button className="secondary" onClick={action}>Visualizar</button><button className="secondary" onClick={action}>Exportar Excel</button><button className="secondary" onClick={action}>Gerar PDF</button><button className="secondary" onClick={action}>Imprimir</button></div></article>)}</div>
-    {preview && <div className="panel report-preview"><span className="eyebrow">Prévia</span><h2>{preview.company}</h2><p>Competência {preview.competency}</p><div className="summary-grid"><Summary label="ADM" value="Resumo gerado" /><Summary label="IND" value="Resumo gerado" /><Summary label="COM" value="Resumo gerado" /><Summary label="DIR" value="Resumo gerado" /></div></div>}
-  </PageShell>;
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [competency, token, selectedCompany.id]);
+
+  const previews: Record<ReportKey, ReportPreview> = useMemo(() => buildReportPreviews({
+    competency,
+    companyPreview,
+    employees,
+    movements,
+    benefits,
+    allocations,
+    indicators,
+    companyName: selectedCompany.name,
+    filters
+  }), [allocations, benefits, companyPreview, competency, employees, filters, indicators, movements, selectedCompany.name]);
+
+  const selectedReport = previews[selectedKey];
+  const supervisorOptions = useMemo(() => Array.from(new Set(employees.map(item => item.supervisor_name))).sort((a, b) => a.localeCompare(b, "pt-BR")), [employees]);
+  const stateOptions = useMemo(() => Array.from(new Set(employees.map(item => item.state))).sort(), [employees]);
+  const employmentTypeOptions = useMemo(() => Array.from(new Set(employees.map(item => item.employment_type.name))).sort((a, b) => a.localeCompare(b, "pt-BR")), [employees]);
+
+  return (
+    <PageShell title="Relatórios" subtitle={`Pacote de saídas gerenciais para acompanhamento mensal da empresa ${selectedCompany.name}.`} error={fb.error} success={fb.success}>
+      <div className="panel filters-panel report-maker-filters">
+        <select value={competency} onChange={event => setCompetency(event.target.value)}>
+          {demoCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
+        <select value={filters.center} onChange={event => setFilters(current => ({ ...current, center: event.target.value }))}>
+          <option value="">Todos os CRs</option>
+          {demoResultCenters.map(item => <option key={item.id} value={item.code}>{item.code}</option>)}
+        </select>
+        <select value={filters.state} onChange={event => setFilters(current => ({ ...current, state: event.target.value }))}>
+          <option value="">Todos os UF</option>
+          {stateOptions.map(state => <option key={state} value={state}>{state}</option>)}
+        </select>
+        <select value={filters.employmentType} onChange={event => setFilters(current => ({ ...current, employmentType: event.target.value }))}>
+          <option value="">Todas modalidades</option>
+          {employmentTypeOptions.map(type => <option key={type} value={type}>{type}</option>)}
+        </select>
+        <select value={filters.supervisor} onChange={event => setFilters(current => ({ ...current, supervisor: event.target.value }))}>
+          <option value="">Todos os supervisores</option>
+          {supervisorOptions.map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+        <input value={filters.query} onChange={event => setFilters(current => ({ ...current, query: event.target.value }))} placeholder="Buscar colaborador ou benefício" />
+        <button className="secondary" type="button" onClick={() => setFilters({ center: "", state: "", employmentType: "", supervisor: "", query: "" })}>Limpar filtros</button>
+      </div>
+      <p className="note">Filtros básicos aplicados em todos os relatórios: competência, Centro de Resultado, UF, modalidade, supervisor e busca.</p>
+
+      <div className="report-grid">
+        {reportCatalog.map(item => (
+          <article className={`report-card ${selectedKey === item.key ? "active" : ""}`} key={item.key}>
+            <div className="report-card-top">
+              <div>
+                <span className="eyebrow">{item.hint}</span>
+                <h3>{item.title}</h3>
+              </div>
+              <button className="secondary" type="button" onClick={() => setSelectedKey(item.key)}>Ver prévia</button>
+            </div>
+            <p>{item.description}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="panel report-preview">
+        <div className="report-header">
+          {companyPreview?.company_logo ? <img className="report-logo" src={companyPreview.company_logo} alt={`Logo de ${companyPreview.company}`} /> : <div className="report-logo-placeholder">Logo</div>}
+          <div>
+            <h2>{selectedReport.title}</h2>
+            <p>{selectedReport.description}</p>
+          </div>
+        </div>
+        <div className="summary-grid report-summary">
+          {selectedReport.kpis.map(kpi => <Summary key={kpi.label} label={kpi.label} value={kpi.value} strong />)}
+        </div>
+        <div className="actions report-actions">
+          <button className="secondary" type="button" onClick={() => downloadReportExcel(selectedReport, selectedReport.exportLabel, companyPreview?.company ?? selectedCompany.name, competency)}>Baixar Excel</button>
+          <button className="secondary" type="button" onClick={() => fb.notify("PDF de relatório gerado em modo demonstração.")}>Gerar PDF</button>
+          <button className="secondary" type="button" onClick={() => fb.notify("Relatório preparado para impressão em modo demonstração.")}>Imprimir</button>
+        </div>
+        {loading && <div className="inline-loading">Carregando prévias...</div>}
+        <div className="table-wrap report-preview-shell">
+          <table>
+            <thead>
+              <tr>
+                {selectedReport.columns.map(column => <th key={column.key}>{column.label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {selectedReport.rows.map((row, index) => (
+                <tr key={`${selectedKey}-${index}`}>
+                  {selectedReport.columns.map(column => (
+                    <td key={column.key}>{formatReportCell(row[column.key], column.display)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!selectedReport.rows.length && !loading && <Empty>Nenhum dado disponível para essa prévia.</Empty>}
+        </div>
+        {selectedReport.footer && <p className="note">{selectedReport.footer}</p>}
+      </div>
+    </PageShell>
+  );
+}
+
+function normalizeReportText(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function matchesReportQuery(parts: Array<string | number | undefined | null>, query: string) {
+  if (!query) return true;
+  const normalized = normalizeReportText(query);
+  return parts.some(part => normalizeReportText(String(part ?? "")).includes(normalized));
+}
+
+function buildReportPreviews(input: {
+  competency: string;
+  companyPreview: { company: string; company_logo: string; cards: { code: string; name: string; color: string; active_employees: number; gross_payroll: number; total_cost: number; absenteeism?: number; turnover?: number }[] } | null;
+  employees: DemoEmployee[];
+  movements: DemoMovement[];
+  benefits: DemoBenefitDistribution[];
+  allocations: DemoCostAllocation[];
+  indicators: IndicatorSummary | null;
+  companyName: string;
+  filters: ReportFilters;
+}): Record<ReportKey, ReportPreview> {
+  const cards = (input.companyPreview?.cards ?? demoResultCenters.map(center => ({
+    code: center.code,
+    name: center.name,
+    color: center.color,
+    active_employees: 0,
+    gross_payroll: 0,
+    total_cost: 0,
+    absenteeism: 0,
+    turnover: 0
+  }))).filter(card => !input.filters.center || card.code === input.filters.center);
+  const employeeLookup = new Map(input.employees.map(employee => [employee.id, employee]));
+  const activeEmployees = input.employees.filter(item => item.status !== "INACTIVE" && (!input.filters.center || item.result_center.code === input.filters.center) && (!input.filters.state || item.state === input.filters.state) && (!input.filters.employmentType || item.employment_type.name === input.filters.employmentType) && (!input.filters.supervisor || item.supervisor_name === input.filters.supervisor) && matchesReportQuery([item.employee.full_name, item.employee.cpf, item.employee_code, item.job_title, item.department, item.notes, item.supervisor_name, item.state, item.result_center.code], input.filters.query));
+  const employeeRows = activeEmployees.slice(0, 12).map(employee => ({
+    employee: employee.employee.full_name,
+    center: employee.result_center.code,
+    type: employee.employment_type.name,
+    salary: employee.salary_base,
+    benefits: employee.benefits.join(", ") || "-"
+  }));
+  const movementRows = input.movements.filter(item => {
+    const employee = employeeLookup.get(item.employee_id);
+    return (!input.filters.center || item.result_center.code === input.filters.center)
+      && (!input.filters.state || employee?.state === input.filters.state)
+      && (!input.filters.employmentType || employee?.employment_type.name === input.filters.employmentType)
+      && (!input.filters.supervisor || employee?.supervisor_name === input.filters.supervisor)
+      && matchesReportQuery([item.employee_name, item.type, item.result_center.code, item.observation, employee?.employee.cpf, employee?.job_title], input.filters.query);
+  }).slice(0, 12).map(movement => ({
+    employee: movement.employee_name,
+    type: movement.type,
+    center: movement.result_center.code,
+    days: movement.days,
+    hours: movement.hour_impact,
+    status: movement.status,
+    observation: movement.observation
+  }));
+  const allocationRows = input.allocations.filter(item => (!input.filters.center || item.result_center.code === input.filters.center) && matchesReportQuery([item.result_center.code, item.category, item.description, item.status], input.filters.query)).slice(0, 12).map(item => ({
+    center: item.result_center.code,
+    category: item.category,
+    description: item.description,
+    amount: item.amount,
+    status: item.status
+  }));
+  const salaryRows = input.employees
+    .filter(employee => employee.status !== "INACTIVE" && (!input.filters.center || employee.result_center.code === input.filters.center) && (!input.filters.state || employee.state === input.filters.state) && (!input.filters.employmentType || employee.employment_type.name === input.filters.employmentType) && (!input.filters.supervisor || employee.supervisor_name === input.filters.supervisor) && matchesReportQuery([employee.employee.full_name, employee.employee.cpf, employee.job_title, employee.department], input.filters.query))
+    .flatMap(employee => (employee.salary_history ?? []).slice(0, 3).map((item: { date: string; amount: number; family_allowance: number; reason: string }) => ({
+      employee: employee.employee.full_name,
+      date: item.date,
+      amount: item.amount,
+      family_allowance: item.family_allowance,
+      reason: item.reason
+    })))
+    .slice(0, 15);
+  const leaveRows = input.movements.filter(item => {
+    const employee = employeeLookup.get(item.employee_id);
+    return ["afastamento", "atestado", "férias"].includes(item.type)
+      && (!input.filters.center || item.result_center.code === input.filters.center)
+      && (!input.filters.state || employee?.state === input.filters.state)
+      && (!input.filters.employmentType || employee?.employment_type.name === input.filters.employmentType)
+      && (!input.filters.supervisor || employee?.supervisor_name === input.filters.supervisor)
+      && matchesReportQuery([item.employee_name, item.type, item.observation, employee?.job_title], input.filters.query);
+  }).slice(0, 15).map(item => ({
+    employee: item.employee_name,
+    type: item.type,
+    center: item.result_center.code,
+    days: item.days,
+    hours: item.hour_impact,
+    observation: item.observation
+  }));
+  const movementStatsByCenter = demoResultCenters.map(center => {
+    const scoped = input.movements.filter(item => item.result_center.code === center.code);
+    return {
+      code: center.code,
+      name: center.name,
+      color: center.color,
+      admissions: scoped.filter(item => item.type === "admissão").length,
+      terminations: scoped.filter(item => item.type === "desligamento").length,
+      turnover: input.indicators ? input.indicators.turnover : 0
+    };
+  });
+  const turnoverRows = cards.map(card => {
+    const stats = movementStatsByCenter.find(item => item.code === card.code);
+    return {
+      code: card.code,
+      name: card.name,
+      admissions: stats?.admissions ?? 0,
+      terminations: stats?.terminations ?? 0,
+      turnover: card.turnover ?? stats?.turnover ?? 0
+    };
+  });
+  const benefitCards = demoBenefitDefinitions.filter(item => item.active).map(definition => {
+    const scoped = input.benefits.filter(item => item.benefit_code === definition.code && (!input.filters.center || item.result_center.code === input.filters.center) && (!input.filters.state || item.state === input.filters.state) && (!input.filters.employmentType || item.employment_type === input.filters.employmentType) && (!input.filters.supervisor || item.supervisor_name === input.filters.supervisor) && matchesReportQuery([item.employee_name, item.description, item.source, item.result_center.code], input.filters.query));
+    return {
+      definition,
+      rows: scoped.slice(0, 15).map(item => ({
+        employee: item.employee_name,
+        center: item.result_center.code,
+        supervisor: item.supervisor_name,
+        modality: item.employment_type,
+        days: item.days_worked,
+        value_per_day: item.value_per_day || item.monthly_value,
+        amount: item.amount,
+        source: item.source,
+        description: item.description
+      })),
+      total: scoped.reduce((acc, item) => acc + item.amount, 0),
+      count: scoped.length
+    };
+  });
+
+  return {
+    consolidated: {
+      title: "Relatório mensal consolidado",
+      description: "Visão geral por Centro de Resultado com efetivo, custos e indicadores.",
+      exportLabel: "relatorio-mensal-consolidado",
+      kpis: [
+        { label: "Centros", value: String(cards.length) },
+        { label: "Efetivo", value: String(cards.reduce((acc, card) => acc + Number(card.active_employees ?? 0), 0)) },
+        { label: "Custo bruto", value: money.format(cards.reduce((acc, card) => acc + Number(card.gross_payroll ?? 0), 0)) },
+        { label: "Custo total", value: money.format(cards.reduce((acc, card) => acc + Number(card.total_cost ?? 0), 0)) }
+      ],
+      columns: [
+        { key: "code", label: "Centro" },
+        { key: "name", label: "Nome" },
+        { key: "active_employees", label: "Efetivo", display: "number" },
+        { key: "gross_payroll", label: "Custo bruto", display: "currency" },
+        { key: "total_cost", label: "Custo total", display: "currency" }
+      ],
+      rows: cards
+    },
+    center: {
+      title: "Por Centro de Resultado",
+      description: "Comparativo dos quatro blocos ADM, IND, COM e DIR com efetivo e custo.",
+      exportLabel: "relatorio-por-centro",
+      kpis: cards.map(card => ({ label: card.code, value: `${card.active_employees} pessoas` })).slice(0, 4),
+      columns: [
+        { key: "code", label: "Centro" },
+        { key: "name", label: "Nome" },
+        { key: "active_employees", label: "Efetivo", display: "number" },
+        { key: "gross_payroll", label: "Custo bruto", display: "currency" },
+        { key: "total_cost", label: "Custo total", display: "currency" }
+      ],
+      rows: cards,
+      footer: "Os valores acima refletem a empresa selecionada na competência atual."
+    },
+    employees: {
+      title: "Colaboradores ativos",
+      description: "Base de colaboradores com modalidade, centro, salário e benefícios cadastrados.",
+      exportLabel: "relatorio-colaboradores-ativos",
+      kpis: [
+        { label: "Ativos", value: String(activeEmployees.length) },
+        { label: "Com benefícios", value: String(activeEmployees.filter(item => item.benefits.length).length) },
+        { label: "CLT", value: String(activeEmployees.filter(item => item.employment_type.name === "CLT").length) },
+        { label: "Outros", value: String(activeEmployees.filter(item => item.employment_type.name !== "CLT").length) }
+      ],
+      columns: [
+        { key: "employee", label: "Colaborador" },
+        { key: "center", label: "Centro" },
+        { key: "type", label: "Modalidade" },
+        { key: "salary", label: "Salário base", display: "currency" },
+        { key: "benefits", label: "Benefícios" }
+      ],
+      rows: employeeRows
+    },
+    movements: {
+      title: "Movimentações do mês",
+      description: "Faltas, atestados, férias, admissões e desligamentos registrados na competência.",
+      exportLabel: "relatorio-movimentacoes-mes",
+      kpis: [
+        { label: "Linhas", value: String(input.movements.length) },
+        { label: "Afastamentos", value: String(input.movements.filter(item => ["afastamento", "atestado", "férias"].includes(item.type)).length) },
+        { label: "Pendente", value: String(input.movements.filter(item => item.status === "Pendente").length) },
+        { label: "Aplicada", value: String(input.movements.filter(item => item.status === "Aplicada").length) }
+      ],
+      columns: [
+        { key: "employee", label: "Colaborador" },
+        { key: "type", label: "Tipo" },
+        { key: "center", label: "Centro" },
+        { key: "days", label: "Dias", display: "number" },
+        { key: "hours", label: "Horas", display: "number" },
+        { key: "status", label: "Status" },
+        { key: "observation", label: "Observação" }
+      ],
+      rows: movementRows
+    },
+    absenteeism: {
+      title: "Absenteísmo",
+      description: "Horas não produtivas e comparação por Centro de Resultado.",
+      exportLabel: "relatorio-absenteismo",
+      kpis: [
+        { label: "Absenteísmo", value: percent.format(input.indicators?.absenteeism ?? 0) },
+        { label: "Horas não produtivas", value: String((input.indicators?.non_productive_hours ?? 0).toFixed(1)) },
+        { label: "Dias produtivos", value: String(input.indicators?.productive_days ?? 0) },
+        { label: "Efetivo médio", value: String((input.indicators?.average_headcount ?? 0).toFixed(1)) }
+      ],
+      columns: [
+        { key: "code", label: "Centro" },
+        { key: "name", label: "Nome" },
+        { key: "absenteeism", label: "Absenteísmo", display: "percent" },
+        { key: "turnover", label: "Turnover", display: "percent" },
+        { key: "active_employees", label: "Efetivo", display: "number" }
+      ],
+      rows: cards,
+      footer: "O percentual é consolidado em modo demo com base em férias, afastamentos e atestados."
+    },
+    turnover: {
+      title: "Turnover",
+      description: "Admissões e desligamentos da competência com taxa de rotatividade por centro.",
+      exportLabel: "relatorio-turnover",
+      kpis: [
+        { label: "Turnover", value: percent.format(input.indicators?.turnover ?? 0) },
+        { label: "Admissões", value: String(input.indicators?.admissions ?? 0) },
+        { label: "Desligamentos", value: String(input.indicators?.terminations ?? 0) },
+        { label: "Efetivo final", value: String(input.indicators?.final_headcount ?? 0) }
+      ],
+      columns: [
+        { key: "code", label: "Centro" },
+        { key: "name", label: "Nome" },
+        { key: "admissions", label: "Admissões", display: "number" },
+        { key: "terminations", label: "Desligamentos", display: "number" },
+        { key: "turnover", label: "Turnover", display: "percent" }
+      ],
+      rows: turnoverRows
+    },
+    costs: {
+      title: "Custos alocados",
+      description: "Rateios manuais lançados para os centros com status de conferência.",
+      exportLabel: "relatorio-custos-alocados",
+      kpis: [
+        { label: "Rateios", value: String(allocationRows.length) },
+        { label: "Lançado", value: String(input.allocations.filter(item => item.status === "Lançado").length) },
+        { label: "Revisado", value: String(input.allocations.filter(item => item.status === "Revisado").length) },
+        { label: "Aprovado", value: String(input.allocations.filter(item => item.status === "Aprovado").length) }
+      ],
+      columns: [
+        { key: "center", label: "Centro" },
+        { key: "category", label: "Categoria" },
+        { key: "description", label: "Descrição" },
+        { key: "amount", label: "Valor", display: "currency" },
+        { key: "status", label: "Status" }
+      ],
+      rows: allocationRows
+    },
+    salary: {
+      title: "Histórico salarial",
+      description: "Linha do tempo de salários com observações e salário-família quando houver.",
+      exportLabel: "relatorio-historico-salarial",
+      kpis: [
+        { label: "Colaboradores", value: String(activeEmployees.length) },
+        { label: "Registros", value: String(salaryRows.length) },
+        { label: "Com salário-família", value: String(salaryRows.filter(item => Number(item.family_allowance) > 0).length) },
+        { label: "Última revisão", value: "2026-01" }
+      ],
+      columns: [
+        { key: "employee", label: "Colaborador" },
+        { key: "date", label: "Data" },
+        { key: "amount", label: "Salário", display: "currency" },
+        { key: "family_allowance", label: "Salário-família", display: "currency" },
+        { key: "reason", label: "Motivo" }
+      ],
+      rows: salaryRows
+    },
+    leaves: {
+      title: "Afastamentos financeiros",
+      description: "Afastamentos, férias e atestados que impactam dias e horas da competência.",
+      exportLabel: "relatorio-afastamentos-financeiros",
+      kpis: [
+        { label: "Eventos", value: String(leaveRows.length) },
+        { label: "Férias", value: String(leaveRows.filter(item => item.type === "férias").length) },
+        { label: "Atestados", value: String(leaveRows.filter(item => item.type === "atestado").length) },
+        { label: "Afastamentos", value: String(leaveRows.filter(item => item.type === "afastamento").length) }
+      ],
+      columns: [
+        { key: "employee", label: "Colaborador" },
+        { key: "type", label: "Tipo" },
+        { key: "center", label: "Centro" },
+        { key: "days", label: "Dias", display: "number" },
+        { key: "hours", label: "Horas", display: "number" },
+        { key: "observation", label: "Observação" }
+      ],
+      rows: leaveRows
+    },
+    "benefit-vt": {
+      title: "Benefício - Vale transporte",
+      description: "Lançamentos de vale transporte com base nos colaboradores que recebem esse benefício.",
+      exportLabel: "relatorio-beneficio-vale-transporte",
+      kpis: (() => {
+        const benefit = benefitCards.find(item => item.definition.code === "VT");
+        return [
+          { label: "Lançamentos", value: String(benefit?.count ?? 0) },
+          { label: "Valor total", value: money.format(benefit?.total ?? 0) },
+          { label: "Dias", value: String(benefit?.rows.reduce((acc, item) => acc + Number(item.days ?? 0), 0) ?? 0) },
+          { label: "Colaboradores", value: String(new Set(benefit?.rows.map(item => item.employee)).size ?? 0) }
+        ];
+      })(),
+      columns: [
+        { key: "employee", label: "Colaborador" },
+        { key: "center", label: "Centro" },
+        { key: "supervisor", label: "Supervisor" },
+        { key: "modality", label: "Modalidade" },
+        { key: "days", label: "Dias", display: "number" },
+        { key: "value_per_day", label: "Valor por dia", display: "currency" },
+        { key: "amount", label: "Valor", display: "currency" },
+        { key: "source", label: "Origem" },
+        { key: "description", label: "Descrição" }
+      ],
+      rows: benefitCards.find(item => item.definition.code === "VT")?.rows ?? []
+    },
+    "benefit-al": {
+      title: "Benefício - Alimentação",
+      description: "Lançamentos de alimentação com distribuição em lote ou individual.",
+      exportLabel: "relatorio-beneficio-alimentacao",
+      kpis: (() => {
+        const benefit = benefitCards.find(item => item.definition.code === "AL");
+        return [
+          { label: "Lançamentos", value: String(benefit?.count ?? 0) },
+          { label: "Valor total", value: money.format(benefit?.total ?? 0) },
+          { label: "Dias", value: String(benefit?.rows.reduce((acc, item) => acc + Number(item.days ?? 0), 0) ?? 0) },
+          { label: "Colaboradores", value: String(new Set(benefit?.rows.map(item => item.employee)).size ?? 0) }
+        ];
+      })(),
+      columns: [
+        { key: "employee", label: "Colaborador" },
+        { key: "center", label: "Centro" },
+        { key: "supervisor", label: "Supervisor" },
+        { key: "modality", label: "Modalidade" },
+        { key: "days", label: "Dias", display: "number" },
+        { key: "value_per_day", label: "Valor por dia", display: "currency" },
+        { key: "amount", label: "Valor", display: "currency" },
+        { key: "source", label: "Origem" },
+        { key: "description", label: "Descrição" }
+      ],
+      rows: benefitCards.find(item => item.definition.code === "AL")?.rows ?? []
+    },
+    "benefit-ps": {
+      title: "Benefício - Plano de saúde",
+      description: "Lançamentos recorrentes de plano de saúde por colaborador.",
+      exportLabel: "relatorio-beneficio-plano-saude",
+      kpis: (() => {
+        const benefit = benefitCards.find(item => item.definition.code === "PS");
+        return [
+          { label: "Lançamentos", value: String(benefit?.count ?? 0) },
+          { label: "Valor total", value: money.format(benefit?.total ?? 0) },
+          { label: "Colaboradores", value: String(new Set(benefit?.rows.map(item => item.employee)).size ?? 0) },
+          { label: "Competência", value: input.competency.replace("-", "/") }
+        ];
+      })(),
+      columns: [
+        { key: "employee", label: "Colaborador" },
+        { key: "center", label: "Centro" },
+        { key: "supervisor", label: "Supervisor" },
+        { key: "modality", label: "Modalidade" },
+        { key: "amount", label: "Valor", display: "currency" },
+        { key: "source", label: "Origem" },
+        { key: "description", label: "Descrição" }
+      ],
+      rows: benefitCards.find(item => item.definition.code === "PS")?.rows ?? []
+    },
+    "benefit-sv": {
+      title: "Benefício - Seguro de vida",
+      description: "Lançamentos recorrentes de seguro de vida por colaborador.",
+      exportLabel: "relatorio-beneficio-seguro-vida",
+      kpis: (() => {
+        const benefit = benefitCards.find(item => item.definition.code === "SV");
+        return [
+          { label: "Lançamentos", value: String(benefit?.count ?? 0) },
+          { label: "Valor total", value: money.format(benefit?.total ?? 0) },
+          { label: "Colaboradores", value: String(new Set(benefit?.rows.map(item => item.employee)).size ?? 0) },
+          { label: "Competência", value: input.competency.replace("-", "/") }
+        ];
+      })(),
+      columns: [
+        { key: "employee", label: "Colaborador" },
+        { key: "center", label: "Centro" },
+        { key: "supervisor", label: "Supervisor" },
+        { key: "modality", label: "Modalidade" },
+        { key: "amount", label: "Valor", display: "currency" },
+        { key: "source", label: "Origem" },
+        { key: "description", label: "Descrição" }
+      ],
+      rows: benefitCards.find(item => item.definition.code === "SV")?.rows ?? []
+    }
+  } satisfies Record<ReportKey, ReportPreview>;
+}
+
+function downloadReportExcel(preview: ReportPreview, fileName: string, company: string, competency: string) {
+  const workbook = XLSX.utils.book_new();
+  const rows = preview.rows.map(row => Object.fromEntries(
+    preview.columns.map(column => [column.label, row[column.key] ?? ""])
+  ));
+  const sheet = XLSX.utils.json_to_sheet([
+    { Relatorio: preview.title, Empresa: company, Competencia: competency },
+    {},
+    ...rows
+  ]);
+  XLSX.utils.book_append_sheet(workbook, sheet, "Relatorio");
+  XLSX.writeFile(workbook, `${fileName}-${slugify(competency)}.xlsx`, { compression: true });
+}
+
+function formatReportCell(value: unknown, display?: ReportColumn["display"]) {
+  if (display === "currency") return money.format(Number(value ?? 0));
+  if (display === "number") return plainNumber.format(Number(value ?? 0));
+  if (display === "percent") return percent.format(Number(value ?? 0));
+  return String(value ?? "-");
 }
 
 type SystemSection = "general" | "centers" | "types" | "backup" | "import";
@@ -540,6 +1224,7 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [settings, setSettings] = useState<DemoSettings | null>(null);
+  const [companyLogo, setCompanyLogo] = useState("");
   const fb = useFeedback();
   const [loading, setLoading] = useState(false);
   const lockedCompany = selectedCompany.id === 0;
@@ -552,7 +1237,10 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
       fb.setError("");
       try {
         const response = await api<DemoSettings>("/demo/settings", {}, token);
-        if (active) setSettings(response);
+        if (active) {
+          setSettings(response);
+          setCompanyLogo(response.company_logo ?? "");
+        }
       } catch (err) {
         if (active) fb.fail(err instanceof Error ? err.message : "Erro ao carregar configurações");
       } finally {
@@ -569,12 +1257,20 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
     if (restricted(user, fb.fail)) return;
     const form = new FormData(event.currentTarget);
     try {
-      const updated = await api<DemoSettings>("/demo/settings", { method: "POST", body: JSON.stringify({ company_name: form.get("company_name"), default_daily_hours: Number(form.get("default_daily_hours")) }) }, token);
+      const updated = await api<DemoSettings>("/demo/settings", { method: "POST", body: JSON.stringify({ company_name: form.get("company_name"), default_daily_hours: Number(form.get("default_daily_hours")), company_logo: companyLogo }) }, token);
       setSettings(updated);
+      setCompanyLogo(updated.company_logo ?? companyLogo);
       fb.notify("Configurações salvas em modo demonstração.");
     } catch (err) {
       fb.fail(err instanceof Error ? err.message : "Erro ao salvar configurações");
     }
+  }
+  function handleLogoUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCompanyLogo(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
   }
   if (lockedCompany) {
     return <PageShell title="Ajustes do sistema" subtitle="As configurações são feitas por empresa. Selecione uma empresa específica para editar jornada, backup e encargos." error={fb.error} success={fb.success}>
@@ -591,7 +1287,7 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
       <button className={section === "import" ? "active" : ""} onClick={() => setSection("import")}>Importação</button>
     </div>
     {section === "general" && <form onSubmit={save} className="settings-grid">
-      <SectionCard title="Empresa"><label>Nome<input name="company_name" defaultValue={settings?.company_name ?? selectedCompany.name} disabled={user.role !== "ADMIN"} /></label><InfoLine label="CNPJ" value={settings?.cnpj ?? "-"} /><InfoLine label="Mês inicial" value={settings?.initial_month ?? "-"} /></SectionCard>
+      <SectionCard title="Empresa"><label>Nome<input name="company_name" defaultValue={settings?.company_name ?? selectedCompany.name} disabled={user.role !== "ADMIN"} /></label><InfoLine label="CNPJ" value={settings?.cnpj ?? "-"} /><InfoLine label="Mês inicial" value={settings?.initial_month ?? "-"} /><div className="logo-upload"><label>Logo da empresa<input type="file" accept="image/*" onChange={handleLogoUpload} disabled={user.role !== "ADMIN"} /></label>{companyLogo ? <img className="company-logo-preview" src={companyLogo} alt={`Logo de ${settings?.company_name ?? selectedCompany.name}`} /> : <div className="company-logo-placeholder">Nenhum logo enviado</div>}</div></SectionCard>
       <SectionCard title="Jornada"><label>Jornada padrão<input name="default_daily_hours" type="number" step="0.1" defaultValue={settings?.default_daily_hours ?? 8.8} disabled={user.role !== "ADMIN"} /></label><InfoLine label="Considerar sábado" value={settings?.include_saturdays ? "Sim" : "Não"} /><InfoLine label="Feriados" value={settings?.holidays.join(", ") ?? ""} /></SectionCard>
       <SectionCard title="Encargos">{settings?.charges.map(item => <InfoLine key={item.name} label={item.name} value={`${item.rate}%`} />)}</SectionCard>
       <SectionCard title="Usuários e permissões"><InfoLine label="Administrador" value="Controle total" /><InfoLine label="Consultor" value="Consulta e exportação" /></SectionCard>
@@ -658,6 +1354,7 @@ export function ClosingPage({ token, user }: { token: string; user: User }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [closing, setClosing] = useState<DemoClosing | null>(null);
+  const [justification, setJustification] = useState("");
   const fb = useFeedback();
   const [loading, setLoading] = useState(false);
   const lockedCompany = selectedCompany.id === 0;
@@ -672,10 +1369,10 @@ export function ClosingPage({ token, user }: { token: string; user: User }) {
     }
   };
   useEffect(() => { if (!lockedCompany) void load(); }, [token, selectedCompany.id]);
-  async function change(status: "OPEN" | "CLOSED") {
+  async function change(status: "OPEN" | "CLOSED", includeJustification = false) {
     if (restricted(user, fb.fail)) return;
     try {
-      setClosing(await api<DemoClosing>("/demo/closing", { method: "POST", body: JSON.stringify({ status }) }, token));
+      setClosing(await api<DemoClosing>("/demo/closing", { method: "POST", body: JSON.stringify({ status, justification: includeJustification ? justification : "" }) }, token));
       fb.notify(status === "CLOSED" ? "Competência fechada em modo demonstração." : "Competência reaberta em modo demonstração.");
     } catch (err) {
       fb.fail(err instanceof Error ? err.message : "Erro ao atualizar fechamento");
@@ -688,8 +1385,9 @@ export function ClosingPage({ token, user }: { token: string; user: User }) {
   }
   if (loading && !closing) return <div className="inline-loading">Carregando fechamento...</div>;
   return <PageShell title="Fechamento mensal" subtitle={`Checklist de conferência antes do encerramento da competência na empresa ${selectedCompany.name}.`} error={fb.error} success={fb.success}
-    actions={<><button className="primary" onClick={() => change("CLOSED")}>Fechar competência</button><button className="secondary" onClick={() => change("OPEN")}>Reabrir competência</button><button className="secondary" onClick={() => fb.notify("Relatório de fechamento gerado em modo demonstração.")}>Gerar relatório</button></>}>
+    actions={<><button className="primary" onClick={() => change("CLOSED")}>Fechar competência</button><button className="secondary" onClick={() => change("CLOSED", true)}>Fechar com justificativa</button><button className="secondary" onClick={() => change("OPEN")}>Reabrir competência</button><button className="secondary" onClick={() => fb.notify("Relatório de fechamento gerado em modo demonstração.")}>Gerar relatório</button></>}>
     <div className="summary-grid"><Summary label="Competência" value={closing?.competency ?? "-"} /><Summary label="Status" value={closing?.status === "OPEN" ? "Aberta" : "Fechada"} strong /></div>
+    {closing?.warnings?.length ? <div className="panel"><strong>Benefícios pendentes</strong><ul className="validation-list">{closing.warnings.map(item => <li key={item}>{item}</li>)}</ul><label>Justificativa para liberar o fechamento<textarea rows={3} value={justification} onChange={event => setJustification(event.target.value)} placeholder="Explique por que o lançamento ficará pendente para registro na movimentação" /></label></div> : null}
     <div className="panel checklist">{Object.entries(closing?.checklist ?? {}).map(([label, done]) => <label key={label} className="check"><input type="checkbox" checked={done} readOnly /> {label}</label>)}</div>
   </PageShell>;
 }
@@ -715,12 +1413,31 @@ function PageShell({ title, subtitle, error = "", success = "", actions, childre
   return <><div className="page-title"><div><span className="eyebrow">Demo</span><h1>{title}</h1><p>{subtitle}</p></div>{actions && <div className="actions">{actions}</div>}</div><ErrorMessage message={error} /><SuccessMessage message={success} />{children}</>;
 }
 
-function DataTable({ loading, empty, children }: { loading: boolean; empty: string; children: ReactNode }) {
-  return <div className="panel table-wrap">{loading && <div className="inline-loading">Carregando...</div>}{children}{!loading && !children && <Empty>{empty}</Empty>}</div>;
+function DataTable({ loading, empty, children, className = "" }: { loading: boolean; empty: string; children: ReactNode; className?: string }) {
+  return <div className={`panel table-wrap ${className}`.trim()}>{loading && <div className="inline-loading">Carregando...</div>}{children}{!loading && !children && <Empty>{empty}</Empty>}</div>;
 }
 
 function Summary({ label, value, strong }: { label: string; value: string | number; strong?: boolean }) {
   return <div className={`summary-card ${strong ? "strong" : ""}`}><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function EditablePayrollCell({ value, editing, onChange, className }: { value: number; editing: boolean; onChange: (value: number) => void; className: string }) {
+  return (
+    <td className={className}>
+      {editing ? (
+        <input
+          className="payroll-inline-input"
+          type="number"
+          step="0.01"
+          min="0"
+          value={Number.isFinite(value) ? value : 0}
+          onChange={event => onChange(Number(event.target.value))}
+        />
+      ) : (
+        money.format(value)
+      )}
+    </td>
+  );
 }
 
 function SectionCard({ title, children }: { title: string; children: ReactNode }) {
@@ -729,6 +1446,82 @@ function SectionCard({ title, children }: { title: string; children: ReactNode }
 
 function InfoLine({ label, value }: { label: string; value: string }) {
   return <div className="info-line"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: string }, competency: string) {
+  const headers = [
+    "Colaborador", "Centro", "Salario", "Prolabore", "DistribuicaoLucro", "AjudaCusto", "ValeTransporte", "Alimentacao", "Hospedagem", "Seguro", "PlanoSaude",
+    "Subtotal", "INSS", "RAT", "Terceiros", "FGTS", "TotalEncargos", "Ferias", "1_3Ferias", "FGTSFerias", "13Salario", "FGTS13",
+    "AvisoPrevio", "FGTSAviso", "MultaFGTS", "Patronal", "TotalProvisoes", "TotalGeral"
+  ];
+  const totals = rows.reduce((acc, row) => ({
+    salary: acc.salary + row.salary,
+    pro_labore: acc.pro_labore + row.pro_labore,
+    profit_distribution: acc.profit_distribution + row.profit_distribution,
+    cost_aid: acc.cost_aid + row.cost_aid,
+    transport: acc.transport + row.transport,
+    meal: acc.meal + row.meal,
+    lodging: acc.lodging + row.lodging,
+    insurance: acc.insurance + row.insurance,
+    health_plan: acc.health_plan + row.health_plan,
+    subtotal_earnings: acc.subtotal_earnings + row.subtotal_earnings,
+    inss: acc.inss + row.inss,
+    rat: acc.rat + row.rat,
+    terceiros: acc.terceiros + row.terceiros,
+    fgts: acc.fgts + row.fgts,
+    charges: acc.charges + row.charges,
+    vacation: acc.vacation + row.vacation,
+    vacation_third: acc.vacation_third + row.vacation_third,
+    fgts_vacation: acc.fgts_vacation + row.fgts_vacation,
+    thirteenth_salary: acc.thirteenth_salary + row.thirteenth_salary,
+    fgts_thirteenth_salary: acc.fgts_thirteenth_salary + row.fgts_thirteenth_salary,
+    notice_indemnity: acc.notice_indemnity + row.notice_indemnity,
+    fgts_notice: acc.fgts_notice + row.fgts_notice,
+    fgts_fine: acc.fgts_fine + row.fgts_fine,
+    employer_contribution: acc.employer_contribution + row.employer_contribution,
+    total_provisions: acc.total_provisions + row.total_provisions,
+    grand_total: acc.grand_total + row.grand_total
+  }), {
+    salary: 0, pro_labore: 0, profit_distribution: 0, cost_aid: 0, transport: 0, meal: 0, lodging: 0, insurance: 0, health_plan: 0,
+    subtotal_earnings: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacation_third: 0,
+    fgts_vacation: 0, thirteenth_salary: 0, fgts_thirteenth_salary: 0, notice_indemnity: 0, fgts_notice: 0, fgts_fine: 0,
+    employer_contribution: 0, total_provisions: 0, grand_total: 0
+  });
+  const lines = [
+    ["Empresa", company.id === 0 ? "Todas as empresas" : company.name],
+    ["Competencia", competency],
+    [],
+    headers,
+    ...rows.map(row => [
+      row.employee_name,
+      row.result_center.code,
+      row.salary, row.pro_labore, row.profit_distribution, row.cost_aid, row.transport, row.meal, row.lodging, row.insurance, row.health_plan,
+      row.subtotal_earnings, row.inss, row.rat, row.terceiros, row.fgts, row.charges, row.vacation, row.vacation_third, row.fgts_vacation,
+      row.thirteenth_salary, row.fgts_thirteenth_salary, row.notice_indemnity, row.fgts_notice, row.fgts_fine, row.employer_contribution,
+      row.total_provisions, row.grand_total
+    ]),
+    [],
+    ["Totais", "", totals.salary, totals.pro_labore, totals.profit_distribution, totals.cost_aid, totals.transport, totals.meal, totals.lodging, totals.insurance, totals.health_plan, totals.subtotal_earnings, totals.inss, totals.rat, totals.terceiros, totals.fgts, totals.charges, totals.vacation, totals.vacation_third, totals.fgts_vacation, totals.thirteenth_salary, totals.fgts_thirteenth_salary, totals.notice_indemnity, totals.fgts_notice, totals.fgts_fine, totals.employer_contribution, totals.total_provisions, totals.grand_total]
+  ];
+  downloadCsv(`custo-folha-${slugify(competency)}.csv`, lines);
+}
+
+function downloadCsv(fileName: string, rows: any[][]) {
+  const csv = rows.map(row => row.map(cell => {
+    const value = cell === null || cell === undefined ? "" : String(cell);
+    return `"${value.replace(/"/g, '""')}"`;
+  }).join(";")).join("\r\n");
+  const blob = new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function AllocationDrawer({ item, onClose }: { item: DemoCostAllocation; onClose: () => void }) {

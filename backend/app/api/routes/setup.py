@@ -47,6 +47,7 @@ def initial_setup(payload: InitialSetup, db: DbSession) -> dict[str, str]:
         id=1,
         company_id=company.id,
         company_name=payload.company_name,
+        company_logo=payload.company_logo,
         backup_directory=payload.backup_directory,
         auto_backup_on_start=payload.auto_backup_on_start,
         include_saturdays=payload.include_saturdays,

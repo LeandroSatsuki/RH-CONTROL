@@ -1,5 +1,5 @@
 import { EmploymentType, ResultCenter } from "../types";
-import { Competency, DemoBackup, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMovement, DemoSettings, MovementType } from "./demoTypes";
+import { Competency, DemoBackup, DemoBenefitDefinition, DemoBenefitDistribution, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMovement, DemoSettings, MovementType } from "./demoTypes";
 
 export const demoResultCenters: ResultCenter[] = [
   { id: 1, code: "ADM", name: "Administrativo", color: "#2563EB", active: true },
@@ -25,6 +25,13 @@ export const demoCompetencies: Competency[] = [
   { id: "2026-06", label: "Jun/2026", status: "OPEN" }
 ];
 
+export const demoBenefitDefinitions: DemoBenefitDefinition[] = [
+  { id: 1, code: "VT", name: "Vale transporte", active: true, mode: "DAILY", applies_to: ["ADM", "IND", "COM", "DIR"], notes: "Benefício diário com base em dias úteis e valor por dia." },
+  { id: 2, code: "AL", name: "Alimentação", active: true, mode: "DAILY", applies_to: ["ADM", "IND", "COM", "DIR"], notes: "Pode ser distribuído em lote ou individualmente no mês." },
+  { id: 3, code: "PS", name: "Plano de saúde", active: true, mode: "MONTHLY", applies_to: ["ADM", "IND", "COM", "DIR"], notes: "Valor mensal recorrente por colaborador." },
+  { id: 4, code: "SV", name: "Seguro de vida", active: true, mode: "MONTHLY", applies_to: ["ADM", "IND", "COM", "DIR"], notes: "Valor mensal recorrente por colaborador." }
+];
+
 function buildSettings(
   companyName: string,
   cnpj: string,
@@ -37,6 +44,7 @@ function buildSettings(
   return {
     company_name: companyName,
     cnpj,
+    company_logo: "",
     initial_month: "2026-01",
     default_daily_hours: dailyHours,
     include_saturdays: false,
@@ -229,6 +237,60 @@ function familyAllowanceFor(index: number, salaryBase: number): number {
   return 0;
 }
 
+function addressFor(index: number) {
+  const streets = [
+    "Rua das Acacias",
+    "Avenida Central",
+    "Rua do Comercio",
+    "Alameda dos Ipês",
+    "Rua Primavera",
+    "Avenida Brasil",
+    "Rua do Sol",
+    "Travessa das Flores"
+  ];
+  const neighborhoods = [
+    "Centro",
+    "Jardim Paulista",
+    "Vila Nova",
+    "Distrito Industrial",
+    "Parque das Nações",
+    "Cidade Jardim"
+  ];
+  const cities = ["Sao Paulo", "Campinas", "Sorocaba", "Mogi das Cruzes", "Santo Andre", "Guarulhos"];
+  const states = ["SP", "RJ", "MG", "PR"];
+
+  return {
+    street: `${streets[index % streets.length]}, ${100 + (index * 7) % 900}`,
+    addressNumber: String(10 + (index * 13) % 220),
+    neighborhood: neighborhoods[index % neighborhoods.length],
+    city: cities[index % cities.length],
+    state: states[index % states.length]
+  };
+}
+
+function benefitsFor(index: number, centerCode: "ADM" | "IND" | "COM" | "DIR") {
+  if (centerCode === "DIR") {
+    return index % 2 === 0
+      ? ["Plano de saúde", "Seguro de vida"]
+      : ["Alimentação", "Plano de saúde"];
+  }
+  if (centerCode === "IND") {
+    return index % 3 === 0
+      ? ["Vale transporte", "Alimentação"]
+      : index % 3 === 1
+        ? ["Vale transporte"]
+        : ["Seguro de vida"];
+  }
+  if (centerCode === "COM") {
+    return index % 2 === 0
+      ? ["Alimentação", "Vale transporte"]
+      : ["Alimentação", "Plano de saúde"];
+  }
+  return index % 2 === 0
+    ? ["Vale transporte", "Alimentação", "Plano de saúde"]
+    : ["Vale transporte", "Seguro de vida"];
+}
+
 export function createDemoEmployees(): DemoEmployee[] {
   return names.map((name, index) => {
     const centerCode = distribution[index];
@@ -242,6 +304,14 @@ export function createDemoEmployees(): DemoEmployee[] {
     const admissionMonth = String((index % 12) + 1).padStart(2, "0");
     const jobList = jobs[centerCode];
     const familyAllowance = familyAllowanceFor(index, salaryBase);
+    const supervisorName = centerCode === "DIR"
+      ? "Diretoria"
+      : centerCode === "COM"
+        ? "Gerência Comercial"
+        : centerCode === "IND"
+          ? "Coordenação Industrial"
+          : "Coordenação Administrativa";
+    const address = addressFor(index);
     return {
       id: index + 1,
       company_id: company.id,
@@ -253,12 +323,18 @@ export function createDemoEmployees(): DemoEmployee[] {
       status,
       daily_hours: "8.80",
       notes: "Registro fictício para demonstração comercial.",
+      supervisor_name: supervisorName,
+      street: address.street,
+      address_number: address.addressNumber,
+      neighborhood: address.neighborhood,
+      city: address.city,
+      state: address.state,
       bank_name: centerCode === "DIR" ? "Banco Alfa" : "Banco Digital",
       bank_agency: `${String(1000 + (index % 300)).padStart(4, "0")}`,
       bank_account: String(50000 + index * 11),
       bank_account_digit: String((index % 9) + 1),
       pix_key_type: pixTypeFor(index),
-      benefits: index % 4 === 0 ? ["Alimentação", "Transporte"] : index % 4 === 1 ? ["Seguro", "Plano de saúde"] : index % 4 === 2 ? ["Hospedagem"] : [],
+      benefits: benefitsFor(index, centerCode),
       pix_key: pixTypeFor(index) === "CPF"
         ? cpf(index + 1)
         : pixTypeFor(index) === "EMAIL"
@@ -286,6 +362,110 @@ export function createDemoEmployees(): DemoEmployee[] {
   });
 }
 
+export function createDemoBenefitDistributions(employees = createDemoEmployees()): DemoBenefitDistribution[] {
+  const competency = "2026-06";
+  const items: DemoBenefitDistribution[] = [];
+  employees
+    .filter(employee => employee.status === "ACTIVE")
+    .forEach((employee, index) => {
+      const company = demoCompanies.find(item => item.id === employee.company_id) ?? demoCompanies[0];
+      const baseDays = 22 - (index % 3);
+      if (employee.benefits.includes("Vale transporte")) {
+        items.push({
+          id: items.length + 1,
+          company_id: company.id,
+          competency,
+          benefit_code: "VT",
+          benefit_name: "Vale transporte",
+          employee_id: employee.id,
+          employee_name: employee.employee.full_name,
+          result_center: employee.result_center,
+          supervisor_name: employee.supervisor_name,
+          employment_type: employee.employment_type.name,
+          state: employee.state,
+          days_worked: baseDays,
+          value_per_day: employee.result_center.code === "DIR" ? 18.5 : 14.8,
+          monthly_value: 0,
+          amount: roundMoney((employee.result_center.code === "DIR" ? 18.5 : 14.8) * baseDays),
+          source: "Lote",
+          description: "Distribuição inicial de vale transporte",
+          created_at: "2026-06-01 08:00",
+          created_by: "Sistema Demo"
+        });
+      }
+      if (employee.benefits.includes("Alimentação")) {
+        items.push({
+          id: items.length + 1,
+          company_id: company.id,
+          competency,
+          benefit_code: "AL",
+          benefit_name: "Alimentação",
+          employee_id: employee.id,
+          employee_name: employee.employee.full_name,
+          result_center: employee.result_center,
+          supervisor_name: employee.supervisor_name,
+          employment_type: employee.employment_type.name,
+          state: employee.state,
+          days_worked: baseDays,
+          value_per_day: employee.result_center.code === "DIR" ? 32 : 24,
+          monthly_value: 0,
+          amount: roundMoney((employee.result_center.code === "DIR" ? 32 : 24) * baseDays),
+          source: "Lote",
+          description: "Distribuição inicial de alimentação",
+          created_at: "2026-06-01 08:00",
+          created_by: "Sistema Demo"
+        });
+      }
+      if (employee.benefits.includes("Plano de saúde")) {
+        items.push({
+          id: items.length + 1,
+          company_id: company.id,
+          competency,
+          benefit_code: "PS",
+          benefit_name: "Plano de saúde",
+          employee_id: employee.id,
+          employee_name: employee.employee.full_name,
+          result_center: employee.result_center,
+          supervisor_name: employee.supervisor_name,
+          employment_type: employee.employment_type.name,
+          state: employee.state,
+          days_worked: 0,
+          value_per_day: 0,
+          monthly_value: employee.result_center.code === "DIR" ? 860 : employee.employment_type.name === "CLT" ? 490 : 360,
+          amount: employee.result_center.code === "DIR" ? 860 : employee.employment_type.name === "CLT" ? 490 : 360,
+          source: "Lote",
+          description: "Distribuição inicial de plano de saúde",
+          created_at: "2026-06-01 08:00",
+          created_by: "Sistema Demo"
+        });
+      }
+      if (employee.benefits.includes("Seguro de vida")) {
+        items.push({
+          id: items.length + 1,
+          company_id: company.id,
+          competency,
+          benefit_code: "SV",
+          benefit_name: "Seguro de vida",
+          employee_id: employee.id,
+          employee_name: employee.employee.full_name,
+          result_center: employee.result_center,
+          supervisor_name: employee.supervisor_name,
+          employment_type: employee.employment_type.name,
+          state: employee.state,
+          days_worked: 0,
+          value_per_day: 0,
+          monthly_value: employee.employment_type.name === "CLT" ? 75 : 52,
+          amount: employee.employment_type.name === "CLT" ? 75 : 52,
+          source: "Lote",
+          description: "Distribuição inicial de seguro de vida",
+          created_at: "2026-06-01 08:00",
+          created_by: "Sistema Demo"
+        });
+      }
+    });
+  return items;
+}
+
 export function createDemoMovements(employees = createDemoEmployees()): DemoMovement[] {
   const types: MovementType[] = ["admissão", "desligamento", "falta", "atestado", "afastamento", "férias", "transferência de Centro de Resultado", "alteração salarial"];
   return demoCompetencies.flatMap((competency, monthIndex) =>
@@ -310,6 +490,7 @@ export function createDemoMovements(employees = createDemoEmployees()): DemoMove
 export const demoSettings = demoCompanies[0].settings;
 export const demoBackups = demoCompanies[0].backups;
 export const demoClosing = demoCompanies[0].closing;
+export const demoBenefitDistributions = createDemoBenefitDistributions();
 
 export function createDemoCostAllocations(): DemoCostAllocation[] {
   return [
@@ -319,4 +500,8 @@ export function createDemoCostAllocations(): DemoCostAllocation[] {
     { id: 4, company_id: 3, competency: "2026-06", result_center: demoResultCenters[2], category: "Comercial", description: "Campanhas e apoio comercial", amount: 11980, source: "Lancto manual", allocated_at: "2026-06-05 11:00", status: "Lançado" },
     { id: 5, company_id: 4, competency: "2026-06", result_center: demoResultCenters[3], category: "Diretoria", description: "Custos executivos e representação", amount: 18500, source: "Lancto manual", allocated_at: "2026-06-05 16:45", status: "Revisado" }
   ];
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
 }

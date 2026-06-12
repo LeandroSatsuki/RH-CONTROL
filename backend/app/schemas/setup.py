@@ -9,6 +9,7 @@ class SetupStatus(BaseModel):
 
 class InitialSetup(BaseModel):
     company_name: str = Field(min_length=2, max_length=180)
+    company_logo: str = ""
     backup_directory: str = ""
     auto_backup_on_start: bool = True
     include_saturdays: bool = False
@@ -17,4 +18,3 @@ class InitialSetup(BaseModel):
     admin_username: str = Field(min_length=3, max_length=80)
     admin_full_name: str = Field(min_length=2, max_length=160)
     admin_password: str = Field(min_length=8, max_length=128)
-

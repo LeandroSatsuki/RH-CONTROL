@@ -47,6 +47,12 @@ export interface Employment {
   daily_hours: string;
   salary_base: number;
   notes: string;
+  supervisor_name: string;
+  street: string;
+  address_number: string;
+  neighborhood: string;
+  city: string;
+  state: string;
   bank_name: string;
   bank_agency: string;
   bank_account: string;

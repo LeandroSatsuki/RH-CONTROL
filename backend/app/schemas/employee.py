@@ -41,6 +41,12 @@ class EmployeeCreate(BaseModel):
     daily_hours: Decimal = Field(default=Decimal("8.80"), gt=0, le=24)
     salary_base: Decimal = Field(gt=0)
     notes: str = ""
+    supervisor_name: str = ""
+    street: str = ""
+    address_number: str = ""
+    neighborhood: str = ""
+    city: str = ""
+    state: str = ""
     bank_name: str = Field(min_length=2, max_length=120)
     bank_agency: str = Field(min_length=2, max_length=20)
     bank_account: str = Field(min_length=2, max_length=30)
@@ -103,6 +109,12 @@ class EmploymentRead(BaseModel):
     daily_hours: Decimal
     salary_base: Decimal
     notes: str
+    supervisor_name: str
+    street: str
+    address_number: str
+    neighborhood: str
+    city: str
+    state: str
     bank_name: str
     bank_agency: str
     bank_account: str

@@ -133,8 +133,9 @@ label.check input { width: 15px; }
 .list-row > .color-dot { margin: 0; }
 .list-row > strong:first-child { grid-column: span 2; }
 .table-wrap { overflow: auto; padding: 0; }
+.payroll-table-shell { height: min(72vh, 760px); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.payroll-table { min-width: 2050px; }
+table.payroll-table { min-width: 2200px; }
 th { color: var(--muted); background: var(--surface-2); font-size: 10px; text-align: left; text-transform: uppercase; letter-spacing: .5px; }
 th, td { padding: 13px 15px; border-bottom: 1px solid var(--line); }
 td small { display: block; margin-top: 3px; color: var(--muted); }
@@ -153,11 +154,16 @@ tr.clickable:hover { background: var(--surface-2); }
 .payroll-table tbody td.group-charges { background: rgba(245, 158, 11, 0.08); }
 .payroll-table tbody td.group-provisions { background: rgba(139, 92, 246, 0.07); }
 .payroll-table tbody td.group-total { background: rgba(16, 185, 129, 0.09); font-weight: 800; }
-.payroll-table td.strong { font-weight: 800; }
+.payroll-table td.strong,
+.payroll-table td.subtotal-cell { font-weight: 800; }
+.payroll-inline-input { min-width: 92px; border-color: #7fb0e6; background: #fff; padding: 8px 9px; text-align: right; }
+.payroll-inline-input:focus { box-shadow: 0 0 0 3px rgba(127,176,230,.18); }
 .totals-row td { background: var(--surface-2); font-weight: 800; }
 .payroll-summary { grid-template-columns: repeat(5, minmax(150px, 1fr)); }
 .payroll-filters { grid-template-columns: 1fr 1fr 1.3fr; }
 .payroll-centers { padding-top: 8px; }
+.form-section-title { margin: 6px 0 0; color: var(--primary); font-size: 12px; letter-spacing: .8px; text-transform: uppercase; }
+.form-grid.compact .form-section-title { grid-column: span 2; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .filters-panel { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 10px; align-items: center; }
 .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
@@ -186,8 +192,80 @@ tr.clickable:hover { background: var(--surface-2); }
 .type-tags.open { min-height: 0; }
 .report-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; margin-bottom: 18px; }
 .report-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 17px; box-shadow: var(--shadow); }
+.report-card.active { border-color: #9fc3e7; box-shadow: inset 0 2px var(--primary), var(--shadow); }
 .report-card h3 { margin: 0 0 7px; font-size: 16px; }
+.report-card-top { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.report-card-top h3 { margin-bottom: 0; }
+.report-card-top .eyebrow { display: block; margin-bottom: 6px; }
+.report-header { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+.report-logo, .company-logo-preview { display: block; object-fit: contain; }
+.report-logo { width: 110px; height: 56px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 6px; }
+.report-logo-placeholder, .company-logo-placeholder { display: grid; place-items: center; border: 1px dashed #9bb8d6; border-radius: 8px; background: var(--surface-2); color: var(--muted); font-size: 12px; }
+.report-logo-placeholder { width: 110px; height: 56px; }
+.report-summary { grid-template-columns: repeat(4, minmax(160px, 1fr)); }
+.report-actions { margin-bottom: 14px; }
+.report-preview-shell { max-height: min(54vh, 560px); }
+.report-maker-filters { grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1.2fr auto; align-items: center; }
+.report-maker-filters input { min-width: 180px; }
+.company-logo-preview { max-width: 220px; max-height: 90px; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 8px; }
+.company-logo-placeholder { min-height: 90px; padding: 12px; margin-top: 10px; }
+.logo-upload { display: grid; gap: 8px; margin-top: 12px; }
+.logo-upload input[type="file"] { padding: 8px; }
 .report-preview h2 { margin: 4px 0; }
+.benefits-filter-shell { display: grid; gap: 12px; }
+.benefits-adder { display: grid; gap: 10px; }
+.add-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+.add-suggestions { display: grid; gap: 8px; max-width: 560px; }
+.add-suggestion { display: grid; gap: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 12px; text-align: left; }
+.add-suggestion span { color: var(--muted); font-size: 11px; }
+.benefits-filters { grid-template-columns: 1fr 1fr 1fr 1.2fr 1fr 1fr 1fr 1fr auto; }
+.benefits-workbench { display: grid; gap: 14px; }
+.benefits-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 360px); gap: 14px; align-items: start; }
+.benefits-builder { display: grid; grid-template-columns: 340px 1fr; gap: 14px; }
+.benefit-catalog-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-content: start; }
+.benefit-catalog-form h2 { grid-column: span 2; margin-bottom: 2px; }
+.benefit-catalog-form .span-2 { grid-column: span 2; }
+.benefit-catalog-list { display: grid; gap: 10px; }
+.benefit-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 14px; }
+.benefit-card.selected { border-color: #9fc3e7; box-shadow: inset 0 2px var(--primary); background: var(--surface); }
+.benefit-card-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+.benefit-card-head span { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+.benefit-card small { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+.benefits-amounts { display: grid; grid-template-columns: repeat(2, minmax(180px, 240px)); gap: 12px; margin-top: 14px; }
+.benefit-review { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.benefit-confirm { border-left: 4px solid var(--primary); }
+.benefits-table-shell { max-height: min(58vh, 620px); }
+.benefits-table-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 4px 2px 12px; }
+.benefits-table-header strong { font-size: 16px; }
+.benefits-table-header span { color: var(--muted); font-size: 12px; font-weight: 700; }
+.selected-panel { display: grid; gap: 12px; align-content: start; }
+.selected-panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.selected-panel-head h2 { margin: 0; font-size: 18px; }
+.selected-panel-actions { display: flex; align-items: center; gap: 10px; }
+.selected-panel-head span { color: var(--muted); font-size: 12px; font-weight: 700; }
+.selected-addbar { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+.selected-grid-head { display: grid; grid-template-columns: 30px minmax(180px, 1.5fr) 96px 96px 132px 104px; gap: 8px; align-items: center; padding: 0 10px; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .6px; }
+.selected-list { display: grid; gap: 6px; }
+.selected-list .selected-row { display: grid; grid-template-columns: 30px minmax(180px, 1.5fr) 96px 96px 132px 104px; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: 12px; }
+.selected-identity { display: grid; gap: 3px; }
+.selected-identity strong { font-size: 12px; }
+.selected-identity span { color: var(--muted); font-size: 10px; }
+.remove-chip { width: 28px; height: 28px; border: 1px solid #f1b7b7; border-radius: 8px; background: #fff0f0; color: #a12929; font-weight: 800; font-size: 11px; }
+.selected-row input { padding: 7px 9px; font-size: 12px; text-align: right; }
+.table-wrap .selected-row { background: rgba(31, 92, 152, 0.06); }
+.benefit-row { grid-template-columns: 1.4fr 1fr 1.8fr 120px; }
+.report-maker-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
+.report-maker-panel { display: grid; gap: 10px; align-content: start; }
+.report-field-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 12px; text-align: left; }
+.report-field-row small { color: var(--muted); }
+.report-selected-row { display: grid; grid-template-columns: 1.3fr 180px auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.report-selected-row:last-child { border-bottom: 0; }
+.report-template-panel { display: grid; gap: 12px; }
+.report-template-list { display: grid; gap: 10px; }
+.report-template-item { display: flex; justify-content: space-between; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 12px 14px; }
+.report-template-item.active { border-color: #9fc3e7; box-shadow: inset 0 2px var(--primary); }
+.report-template-item span { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+.report-maker-shell { max-height: min(58vh, 620px); }
 .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
 .settings-section { margin: 0; box-shadow: var(--shadow); }
 .settings-section h2 { font-size: 17px; }
@@ -239,6 +317,9 @@ tr.clickable:hover { background: var(--surface-2); }
   .span-2 { grid-column: span 1; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .metric.wide { grid-column: span 2; }
-  .summary-grid, .summary-grid.indicators, .report-grid, .settings-grid, .filters-panel, .checklist, .detail-grid { grid-template-columns: 1fr; }
+  .summary-grid, .summary-grid.indicators, .report-grid, .settings-grid, .filters-panel, .report-maker-filters, .checklist, .detail-grid { grid-template-columns: 1fr; }
+  .benefits-builder, .report-maker-grid, .benefits-amounts, .benefits-grid { grid-template-columns: 1fr; }
+  .benefits-filters { grid-template-columns: 1fr; }
+  .report-selected-row { grid-template-columns: 1fr; }
   .drawer { width: 100%; }
 }
