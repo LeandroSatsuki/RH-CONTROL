@@ -97,15 +97,24 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     <p className="note">Visualização da empresa <strong>{selectedCompany.name}</strong>.</p>
 
     {open && <form className="panel form-grid" onSubmit={submit}>
+      <h3 className="span-2 form-section-title">Identificação</h3>
       <label>Nome completo<input name="full_name" required /></label>
       <label>CPF<input name="cpf" placeholder="000.000.000-00" required /></label>
       <label>Matrícula<input name="employee_code" required /></label>
+      <label>Data de admissão<input name="admission_date" type="date" required /></label>
+      <label>Supervisor<input name="supervisor_name" placeholder="Nome do responsável direto" /></label>
       <label>Cargo / função<input name="job_title" required /></label>
       <label>Departamento<input name="department" /></label>
-      <label>Data de admissão<input name="admission_date" type="date" required /></label>
       <label>Modalidade<select name="employment_type_id" required><option value="">Selecione</option>{types.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
       <label>Centro de Resultado<select name="result_center_id" required><option value="">Selecione</option>{centers.map(item => <option value={item.id} key={item.id}>{item.code} - {item.name}</option>)}</select></label>
       <label>Salário base<input name="salary_base" type="number" step="100" defaultValue="4500" required /></label>
+      <h3 className="span-2 form-section-title">Endereço</h3>
+      <label className="span-2">Rua<input name="street" placeholder="Logradouro" /></label>
+      <label>Número<input name="address_number" placeholder="123" /></label>
+      <label>Bairro<input name="neighborhood" placeholder="Centro" /></label>
+      <label>Cidade<input name="city" placeholder="São Paulo" /></label>
+      <label>UF<input name="state" maxLength={2} placeholder="SP" /></label>
+      <h3 className="span-2 form-section-title">Dados bancários</h3>
       <label>Banco<input name="bank_name" placeholder="Nome do banco" required /></label>
       <label>Agência<input name="bank_agency" placeholder="0001" required /></label>
       <label>Conta<input name="bank_account" placeholder="12345" required /></label>
@@ -114,11 +123,10 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <label className="span-2">Chave PIX<input name="pix_key" placeholder="Obrigatória" required /></label>
       <fieldset className="span-2 benefits-fieldset">
         <legend>Benefícios</legend>
+        <label className="check"><input name="benefits" type="checkbox" value="Vale transporte" /> Vale transporte</label>
         <label className="check"><input name="benefits" type="checkbox" value="Alimentação" /> Alimentação</label>
-        <label className="check"><input name="benefits" type="checkbox" value="Transporte" /> Transporte</label>
-        <label className="check"><input name="benefits" type="checkbox" value="Hospedagem" /> Hospedagem</label>
-        <label className="check"><input name="benefits" type="checkbox" value="Seguro" /> Seguro</label>
         <label className="check"><input name="benefits" type="checkbox" value="Plano de saúde" /> Plano de saúde</label>
+        <label className="check"><input name="benefits" type="checkbox" value="Seguro de vida" /> Seguro de vida</label>
       </fieldset>
       <input name="status" type="hidden" value="ACTIVE" />
       <label className="span-2">Observações<textarea name="notes" rows={2} /></label>
@@ -164,9 +172,11 @@ function EmployeeDrawer({ employee, token, user, onClose, onAction, onSaved }: {
       <Info label="CPF" value={formatCpf(employee.employee.cpf)} />
       <Info label="E-mail" value={employee.email} />
       <Info label="Telefone" value={employee.phone} />
+      <Info label="Supervisor" value={employee.supervisor_name || "-"} />
       <Info label="Centro atual" value={`${employee.result_center.code} - ${employee.result_center.name}`} />
       <Info label="Modalidade" value={employee.employment_type.name} />
       <Info label="Custo estimado do mês" value={money.format(estimatedCost)} />
+      <Info label="Endereço" value={[employee.street, employee.address_number, employee.neighborhood, employee.city, employee.state].filter(Boolean).join(", ") || "-"} />
       <Info label="Banco" value={employee.bank_name} />
       <Info label="Agência / conta" value={`${employee.bank_agency} / ${employee.bank_account}-${employee.bank_account_digit}`} />
       <Info label="PIX" value={`${employee.pix_key_type}: ${employee.pix_key}`} />

@@ -9,8 +9,9 @@ export type Page =
   | "audit"
   | "employees"
   | "movements"
+  | "benefits"
   | "payroll"
-  | "indicators"
+  | "report-maker"
   | "reports"
   | "import"
   | "backup"
@@ -31,8 +32,9 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "dashboard", label: "Dashboard", icon: "▦" },
   { page: "employees", label: "Colaboradores", icon: "ID" },
   { page: "movements", label: "Movimentações", icon: "MV" },
+  { page: "benefits", label: "Benefícios", icon: "BF" },
   { page: "payroll", label: "Custo / Folha", icon: "CF" },
-  { page: "indicators", label: "Indicadores", icon: "Σ" },
+  { page: "report-maker", label: "Relatório Maker", icon: "MK" },
   { page: "reports", label: "Relatórios", icon: "RP" },
   { page: "closing", label: "Fechamento", icon: "✓" },
   { page: "alerts", label: "Alertas", icon: "!" },

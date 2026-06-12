@@ -1,9 +1,9 @@
 import { EmploymentType, ResultCenter, User } from "./types";
 import { consolidatedIndicators, dashboardCards, payrollRows } from "./mocks/demoCalculations";
-import { createDemoCostAllocations, createDemoEmployees, createDemoMovements, demoCompanies, demoCompetencies, demoEmploymentTypes, demoResultCenters } from "./mocks/demoData";
-import { DemoAlert, DemoAuditEntry, DemoBackup, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMovement, DemoSettings } from "./mocks/demoTypes";
+import { createDemoBenefitDistributions, createDemoCostAllocations, createDemoEmployees, createDemoMovements, demoBenefitDefinitions, demoCompanies, demoCompetencies, demoEmploymentTypes, demoResultCenters } from "./mocks/demoData";
+import { DemoAlert, DemoAuditEntry, DemoBackup, DemoBenefitDefinition, DemoBenefitDistribution, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMovement, DemoSettings } from "./mocks/demoTypes";
 
-const STORAGE_KEY = "indicadores-demo-state-v5";
+const STORAGE_KEY = "indicadores-demo-state-v6";
 const ALL_COMPANIES_ID = 0;
 
 const demoUsers: Record<string, User & { password: string; token: string }> = {
@@ -18,6 +18,8 @@ interface DemoState {
   employees: DemoEmployee[];
   movements: DemoMovement[];
   allocations: DemoCostAllocation[];
+  benefitDefinitions: DemoBenefitDefinition[];
+  benefitDistributions: DemoBenefitDistribution[];
   auditLogs: DemoAuditEntry[];
 }
 
@@ -30,6 +32,8 @@ function defaultState(): DemoState {
     employees,
     movements: createDemoMovements(employees),
     allocations: createDemoCostAllocations(),
+    benefitDefinitions: JSON.parse(JSON.stringify(demoBenefitDefinitions)) as DemoBenefitDefinition[],
+    benefitDistributions: createDemoBenefitDistributions(employees),
     auditLogs: [
       {
         id: 1,
@@ -50,19 +54,45 @@ function loadState(): DemoState {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) return defaultState();
   try {
-    const parsed = { ...defaultState(), ...JSON.parse(stored) } as DemoState;
+    const defaults = defaultState();
+    const parsed = { ...defaults, ...JSON.parse(stored) } as DemoState;
     const fallbackRates = demoCompanies[0].settings.payroll_rates;
     parsed.companies = parsed.companies.map(company => ({
       ...company,
       settings: {
         ...demoCompanies[0].settings,
         ...company.settings,
+        company_logo: company.settings?.company_logo ?? "",
         payroll_rates: { ...fallbackRates, ...(company.settings?.payroll_rates ?? {}) }
       }
     }));
-    parsed.employees = parsed.employees.map(employee => ({
-      ...employee,
-      benefits: employee.benefits ?? []
+    parsed.employees = parsed.employees.map((employee, index) => {
+      const fallback = defaults.employees[index % defaults.employees.length];
+      return {
+        ...employee,
+        supervisor_name: employee.supervisor_name ?? fallback.supervisor_name ?? "",
+        street: employee.street ?? fallback.street ?? "",
+        address_number: employee.address_number ?? fallback.address_number ?? "",
+        neighborhood: employee.neighborhood ?? fallback.neighborhood ?? "",
+        city: employee.city ?? fallback.city ?? "",
+        state: employee.state ?? fallback.state ?? "",
+        benefits: Array.isArray(employee.benefits) && employee.benefits.length ? employee.benefits : fallback.benefits ?? []
+      };
+    });
+    parsed.benefitDefinitions = (parsed.benefitDefinitions ?? demoBenefitDefinitions).map(item => ({
+      ...item,
+      active: item.active ?? true,
+      applies_to: item.applies_to ?? ["ADM", "IND", "COM", "DIR"],
+      notes: item.notes ?? ""
+    }));
+    parsed.benefitDistributions = (parsed.benefitDistributions ?? createDemoBenefitDistributions(parsed.employees as DemoEmployee[])).map(item => ({
+      ...item,
+      source: item.source ?? "Lote",
+      description: item.description ?? "",
+      monthly_value: Number(item.monthly_value ?? 0),
+      value_per_day: Number(item.value_per_day ?? 0),
+      days_worked: Number(item.days_worked ?? 0),
+      amount: Number(item.amount ?? 0)
     }));
     return parsed;
   } catch {
@@ -121,9 +151,54 @@ function scopeAuditLogs(state: DemoState, companyId: number) {
   return state.auditLogs.filter(item => item.company_id === companyId);
 }
 
+function scopeBenefitDistributions(state: DemoState, companyId: number) {
+  if (companyId === ALL_COMPANIES_ID) return state.benefitDistributions;
+  return state.benefitDistributions.filter(item => item.company_id === companyId);
+}
+
 function companyNameFor(state: DemoState, companyId: number) {
   if (companyId === ALL_COMPANIES_ID) return "Todas as empresas";
   return state.companies.find(company => company.id === companyId)?.name ?? "Sem empresa";
+}
+
+function normalizeBenefitCode(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function normalizeText(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function benefitLabelFor(code: string) {
+  return {
+    VT: "Vale transporte",
+    AL: "Alimentação",
+    PS: "Plano de saúde",
+    SV: "Seguro de vida"
+  }[normalizeBenefitCode(code)] ?? code;
+}
+
+function companyBenefitDistributionsFor(state: DemoState, companyId: number, competency: string) {
+  return scopeBenefitDistributions(state, companyId).filter(item => item.competency === competency);
+}
+
+function missingBenefitDistributions(state: DemoState, companyId: number, competency: string) {
+  const activeEmployees = scopeEmployees(state, companyId).filter(employee => employee.status === "ACTIVE");
+  const monthlyDistributions = companyBenefitDistributionsFor(state, companyId, competency);
+  return activeEmployees.flatMap(employee => {
+    return (employee.benefits ?? []).flatMap(rawBenefit => {
+      const label = normalizeText(String(rawBenefit));
+      const requiredCodes = label === "vale transporte" || label === "transporte" ? ["VT"] : label === "alimentação" ? ["AL"] : label === "plano de saúde" || label === "plano de saude" ? ["PS"] : label === "seguro de vida" || label === "seguro" ? ["SV"] : [];
+      return requiredCodes.flatMap(code => {
+        if (monthlyDistributions.some(item => item.employee_id === employee.id && normalizeBenefitCode(item.benefit_code) === code)) return [];
+        return [{ employee_name: employee.employee.full_name, benefit: benefitLabelFor(code) }];
+      });
+    });
+  });
 }
 
 function appendAudit(state: DemoState, entry: Omit<DemoAuditEntry, "id" | "created_at" | "company_name"> & { company_name?: string }) {
@@ -221,6 +296,10 @@ function body<T>(options: RequestInit): T {
   return JSON.parse(String(options.body ?? "{}")) as T;
 }
 
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
 export async function demoApi<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   await new Promise(resolve => window.setTimeout(resolve, 160));
   const method = options.method ?? "GET";
@@ -254,7 +333,8 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const competency = params.get("competency") ?? "2026-06";
     const scopedEmployees = scopeEmployees(state, companyId);
     const scopedMovements = scopeMovements(state, companyId);
-    const cards = dashboardCards(scopedEmployees, scopedMovements, competency);
+    const benefitDistributions = companyBenefitDistributionsFor(state, companyId, competency);
+    const cards = dashboardCards(scopedEmployees, scopedMovements, competency, benefitDistributions);
     return {
       company: { id: company.id, code: company.code, name: company.name, kind: company.kind, group: company.group, group_name: company.group },
       month: Number(competency.slice(5, 7)),
@@ -280,6 +360,12 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
   if (route === "/result-centers" && method === "GET") return state.resultCenters as T;
   if (route === "/employment-types" && method === "GET") return state.employmentTypes as T;
   if (route === "/employees" && method === "GET") return scopeEmployees(state, companyId) as T;
+  if (route === "/demo/benefits/catalog" && method === "GET") return state.benefitDefinitions as T;
+  if (route === "/demo/benefit-distributions" && method === "GET") {
+    const competency = params.get("competency") ?? "2026-06";
+    const benefitCode = params.get("benefit_code");
+    return companyBenefitDistributionsFor(state, companyId, competency).filter(item => !benefitCode || normalizeBenefitCode(item.benefit_code) === normalizeBenefitCode(benefitCode)) as T;
+  }
 
   if (route === "/result-centers" && method === "POST") {
     assertAdmin(token);
@@ -297,6 +383,103 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     state.employmentTypes = [...state.employmentTypes, item];
     saveState(state);
     return item as T;
+  }
+
+  if (route === "/demo/benefits/catalog" && method === "POST") {
+    assertAdmin(token);
+    const payload = body<Partial<DemoBenefitDefinition>>(options);
+    const code = normalizeBenefitCode(String(payload.code ?? ""));
+    const item: DemoBenefitDefinition = {
+      id: nextId(state.benefitDefinitions),
+      code: code || `B${nextId(state.benefitDefinitions)}`,
+      name: String(payload.name ?? "").trim(),
+      active: payload.active ?? true,
+      mode: payload.mode ?? "DAILY",
+      applies_to: Array.isArray(payload.applies_to) ? payload.applies_to.map(String) : ["ADM", "IND", "COM", "DIR"],
+      notes: String(payload.notes ?? "")
+    };
+    state.benefitDefinitions = [...state.benefitDefinitions.filter(def => normalizeBenefitCode(def.code) !== item.code), item];
+    saveState(state);
+    return item as T;
+  }
+
+  if (route === "/demo/benefit-distributions" && method === "POST") {
+    assertAdmin(token);
+    if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para distribuir benefícios.");
+    const payload = body<{
+      competency?: string;
+      benefit_code?: string;
+      employee_ids?: number[];
+      items?: Array<{
+        employee_id?: number;
+        days_worked?: number;
+        value_per_day?: number;
+        monthly_value?: number;
+      }>;
+      description?: string;
+      source?: "Lote" | "Individual";
+      days_worked?: number;
+      value_per_day?: number;
+      monthly_value?: number;
+    }>(options);
+    const competency = payload.competency ?? "2026-06";
+    const benefitCode = normalizeBenefitCode(String(payload.benefit_code ?? ""));
+    const benefit = state.benefitDefinitions.find(item => normalizeBenefitCode(item.code) === benefitCode);
+    if (!benefit || !benefit.active) throw new Error("Selecione um benefício ativo.");
+    const employeeIds = Array.isArray(payload.employee_ids) ? [...new Set(payload.employee_ids.map(Number))] : [];
+    if (!employeeIds.length) throw new Error("Selecione ao menos um colaborador.");
+    const description = String(payload.description ?? "").trim();
+    if (!description) throw new Error("Informe a descrição da distribuição.");
+    if (benefit.mode === "DAILY" && (Number(payload.days_worked ?? 0) <= 0 || Number(payload.value_per_day ?? 0) <= 0)) {
+      throw new Error("Informe dias trabalhados e valor por dia maiores que zero.");
+    }
+    if (benefit.mode === "MONTHLY" && Number(payload.monthly_value ?? 0) <= 0) {
+      throw new Error("Informe um valor mensal maior que zero.");
+    }
+    const companyEmployees = scopeEmployees(state, companyId).filter(employee => employee.status === "ACTIVE");
+    const eligibleEmployees = companyEmployees.filter(employee => employeeIds.includes(employee.id) && employee.benefits.some(item => normalizeText(item) === normalizeText(benefit.name) || normalizeText(item) === normalizeText(benefitLabelFor(benefit.code))));
+    if (!eligibleEmployees.length) throw new Error("Nenhum colaborador elegível foi encontrado para este benefício.");
+    const itemMap = new Map((payload.items ?? []).filter(item => Number(item.employee_id) > 0).map(item => [Number(item.employee_id), item]));
+    let nextDistributionId = nextId(state.benefitDistributions);
+    const created: DemoBenefitDistribution[] = eligibleEmployees.map(employee => {
+      const item = itemMap.get(employee.id);
+      const daysWorked = benefit.mode === "DAILY" ? Number(item?.days_worked ?? payload.days_worked ?? 0) : 0;
+      const valuePerDay = benefit.mode === "DAILY" ? Number(item?.value_per_day ?? payload.value_per_day ?? 0) : 0;
+      const monthlyValue = benefit.mode === "MONTHLY" ? Number(item?.monthly_value ?? payload.monthly_value ?? 0) : 0;
+      const amount = benefit.mode === "DAILY" ? roundMoney(daysWorked * valuePerDay) : roundMoney(monthlyValue);
+      return {
+        id: nextDistributionId++,
+        company_id: companyId,
+        competency,
+        benefit_code: benefit.code,
+        benefit_name: benefit.name,
+        employee_id: employee.id,
+        employee_name: employee.employee.full_name,
+        result_center: employee.result_center,
+        supervisor_name: employee.supervisor_name,
+        employment_type: employee.employment_type.name,
+        state: employee.state,
+        days_worked: daysWorked,
+        value_per_day: valuePerDay,
+        monthly_value: monthlyValue,
+        amount,
+        source: payload.source ?? "Lote",
+        description,
+        created_at: new Date().toLocaleString("pt-BR"),
+        created_by: currentUser.full_name
+      };
+    });
+    state.benefitDistributions = [...created, ...state.benefitDistributions];
+    appendAudit(state, {
+      company_id: companyId,
+      module: "Benefícios",
+      action: "Distribuição de benefício",
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${benefit.name} | ${description} | ${created.length} colaborador(es)`
+    });
+    saveState(state);
+    return { created: created.length, items: created } as T;
   }
 
   if (route === "/employees" && method === "POST") {
@@ -320,6 +503,12 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       status: "ACTIVE",
       daily_hours: String(payload.daily_hours ?? "8.80"),
       notes: String(payload.notes ?? ""),
+      supervisor_name: String(payload.supervisor_name ?? ""),
+      street: String(payload.street ?? ""),
+      address_number: String(payload.address_number ?? ""),
+      neighborhood: String(payload.neighborhood ?? ""),
+      city: String(payload.city ?? ""),
+      state: String(payload.state ?? ""),
       bank_name: String(payload.bank_name ?? "Banco Demo"),
       bank_agency: String(payload.bank_agency ?? "0001"),
       bank_account: String(payload.bank_account ?? "12345"),
@@ -517,8 +706,8 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     return item as T;
   }
 
-  if (route === "/demo/payroll" && method === "GET") return payrollRows(scopeEmployees(state, companyId), params.get("competency") ?? "2026-06") as T;
-  if (route === "/demo/indicators" && method === "GET") return consolidatedIndicators(scopeEmployees(state, companyId), scopeMovements(state, companyId), params.get("competency") ?? "2026-06") as T;
+  if (route === "/demo/payroll" && method === "GET") return payrollRows(scopeEmployees(state, companyId), params.get("competency") ?? "2026-06", companyBenefitDistributionsFor(state, companyId, params.get("competency") ?? "2026-06")) as T;
+  if (route === "/demo/indicators" && method === "GET") return consolidatedIndicators(scopeEmployees(state, companyId), scopeMovements(state, companyId), params.get("competency") ?? "2026-06", companyBenefitDistributionsFor(state, companyId, params.get("competency") ?? "2026-06")) as T;
   if (route === "/demo/settings" && method === "GET") return company.settings as T;
   if (route === "/demo/settings" && method === "POST") {
     assertAdmin(token);
@@ -550,10 +739,17 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     saveState(state);
     return { message: "Backup gerado com sucesso em modo demonstração.", backup: item } as T;
   }
-  if (route === "/demo/closing" && method === "GET") return company.closing as T;
+  if (route === "/demo/closing" && method === "GET") {
+    const competency = company.closing.competency ?? "2026-06";
+    return { ...company.closing, warnings: missingBenefitDistributions(state, companyId, competency).map(item => `${item.employee_name} - ${item.benefit}`) } as T;
+  }
   if (route === "/demo/closing" && method === "POST") {
     assertAdmin(token);
-    const payload = body<{ status: "OPEN" | "CLOSED" }>(options);
+    const payload = body<{ status: "OPEN" | "CLOSED"; justification?: string }>(options);
+    const missing = missingBenefitDistributions(state, companyId, company.closing.competency ?? "2026-06");
+    if (payload.status === "CLOSED" && missing.length && !String(payload.justification ?? "").trim()) {
+      throw new Error(`Há benefícios pendentes para fechamento: ${missing.map(item => `${item.employee_name} (${item.benefit})`).join(", ")}. Informe a justificativa para registrar a pendência.`);
+    }
     updateCompany(state, companyId, current => ({ ...current, closing: { ...current.closing, status: payload.status } }));
     appendAudit(state, {
       company_id: companyId,
@@ -561,16 +757,36 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       action: payload.status === "CLOSED" ? "Competência fechada" : "Competência reaberta",
       performed_by: currentUser.full_name,
       performed_role: currentUser.role,
-      details: `Status alterado para ${payload.status}`
+      details: payload.status === "CLOSED" ? `Status alterado para ${payload.status}${payload.justification ? ` | Justificativa: ${payload.justification}` : ""}` : `Status alterado para ${payload.status}`
     });
+    if (payload.status === "CLOSED" && payload.justification) {
+      state.movements = [
+        {
+          id: nextId(state.movements),
+          company_id: companyId,
+          competency: company.closing.competency ?? "2026-06",
+          employee_id: 0,
+          employee_name: "Sistema",
+          type: "afastamento",
+          start_date: new Date().toISOString().slice(0, 10),
+          end_date: null,
+          days: 0,
+          hour_impact: 0,
+          result_center: state.resultCenters[0],
+          observation: `Fechamento mensal com justificativa: ${payload.justification}`,
+          status: "Aplicada"
+        },
+        ...state.movements
+      ];
+    }
     saveState(state);
-    return getCompany(state, companyId).closing as T;
+    return { ...getCompany(state, companyId).closing, warnings: missingBenefitDistributions(state, companyId, company.closing.competency ?? "2026-06").map(item => `${item.employee_name} - ${item.benefit}`) } as T;
   }
   if (route === "/demo/report-preview" && method === "GET") {
     const scopedEmployees = scopeEmployees(state, companyId);
     const scopedMovements = scopeMovements(state, companyId);
     const competency = params.get("competency") ?? "2026-06";
-    return { company: company.settings.company_name, competency, cards: dashboardCards(scopedEmployees, scopedMovements, competency) } as T;
+    return { company: company.settings.company_name, company_logo: company.settings.company_logo ?? "", competency, cards: dashboardCards(scopedEmployees, scopedMovements, competency, companyBenefitDistributionsFor(state, companyId, competency)) } as T;
   }
   if (route === "/demo/import-preview" && method === "POST") {
     assertAdmin(token);

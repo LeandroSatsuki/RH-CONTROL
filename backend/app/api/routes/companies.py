@@ -26,6 +26,7 @@ def create_company(payload: CompanyCreate, db: DbSession, _: AdminUser) -> Compa
                 id=item.id,
                 company_id=item.id,
                 company_name=item.name,
+                company_logo="",
                 backup_directory="",
                 auto_backup_on_start=True,
                 include_saturdays=False,

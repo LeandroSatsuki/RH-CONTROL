@@ -13,8 +13,10 @@
     "desktop:build": "cross-env VITE_DEMO_MODE=true npm run build && electron-builder --win portable"
   },
   "dependencies": {
+    "jspdf": "^4.2.1",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/react": "^19.1.6",

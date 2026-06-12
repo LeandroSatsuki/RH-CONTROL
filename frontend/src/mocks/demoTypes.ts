@@ -60,6 +60,7 @@ export interface PayrollRow {
   pro_labore: number;
   profit_distribution: number;
   cost_aid: number;
+  transport: number;
   meal: number;
   lodging: number;
   insurance: number;
@@ -170,6 +171,7 @@ export interface IndicatorSummary {
 export interface DemoSettings {
   company_name: string;
   cnpj: string;
+  company_logo: string;
   initial_month: string;
   default_daily_hours: number;
   include_saturdays: boolean;
@@ -204,6 +206,48 @@ export interface DemoClosing {
   competency: string;
   status: CompetencyStatus;
   checklist: Record<string, boolean>;
+  warnings?: string[];
+}
+
+export type BenefitDistributionMode = "DAILY" | "MONTHLY";
+
+export interface DemoBenefitDefinition {
+  id: number;
+  code: "VT" | "AL" | "PS" | "SV" | string;
+  name: string;
+  active: boolean;
+  mode: BenefitDistributionMode;
+  applies_to: string[];
+  notes: string;
+}
+
+export interface DemoBenefitDistribution {
+  id: number;
+  company_id: number;
+  competency: string;
+  benefit_code: string;
+  benefit_name: string;
+  employee_id: number;
+  employee_name: string;
+  result_center: ResultCenter;
+  supervisor_name: string;
+  employment_type: string;
+  state: string;
+  days_worked: number;
+  value_per_day: number;
+  monthly_value: number;
+  amount: number;
+  source: "Lote" | "Individual";
+  description: string;
+  created_at: string;
+  created_by: string;
+}
+
+export interface DemoReportTemplateField {
+  source: string;
+  field: string;
+  label: string;
+  aggregator: "none" | "sum" | "avg" | "count" | "min" | "max" | "multiply";
 }
 
 export type DemoCompanyKind = "MATRIZ" | "FILIAL" | "OUTRA";

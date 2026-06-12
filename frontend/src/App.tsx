@@ -3,10 +3,12 @@ import { API_URL, IS_DEMO_MODE, api } from "./api";
 import { AppError } from "./components/Feedback";
 import { Layout, Page } from "./components/Layout";
 import { DashboardPage } from "./pages/DashboardPage";
-import { AlertsPage, AuditPage, BackupPage, ClosingPage, ImportPage, IndicatorsPage, MovementsPage, PayrollPage, ReportsPage, SettingsPage } from "./pages/DemoPages";
+import { AlertsPage, AuditPage, BackupPage, ClosingPage, ImportPage, MovementsPage, PayrollPage, ReportsPage, SettingsPage } from "./pages/DemoPages";
+import { BenefitsPage } from "./pages/BenefitsPage";
 import { EmployeesPage } from "./pages/EmployeesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SetupPage } from "./pages/SetupPage";
+import { ReportMakerPage } from "./pages/ReportMakerPage";
 import { DemoScopeProvider, ScopedCompany } from "./context/DemoScope";
 import { Company, User } from "./types";
 import { demoCompanies } from "./mocks/demoData";
@@ -243,8 +245,9 @@ export default function App() {
         {page === "audit" && <AuditPage token={token} user={user} />}
         {page === "employees" && <EmployeesPage token={token} user={user} />}
         {page === "movements" && <MovementsPage token={token} user={user} />}
+        {page === "benefits" && <BenefitsPage token={token} user={user} />}
         {page === "payroll" && <PayrollPage token={token} user={user} />}
-        {page === "indicators" && <IndicatorsPage token={token} />}
+        {page === "report-maker" && <ReportMakerPage token={token} user={user} />}
         {page === "reports" && <ReportsPage token={token} />}
         {page === "import" && <ImportPage token={token} user={user} />}
         {page === "backup" && <BackupPage token={token} user={user} />}

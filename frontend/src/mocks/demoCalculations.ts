@@ -1,43 +1,29 @@
 import { DashboardCard, ResultCenter } from "../types";
 import { demoCompanies, demoEmploymentTypes, demoResultCenters } from "./demoData";
-import { DemoEmployee, DemoMovement, IndicatorSummary, PayrollRow } from "./demoTypes";
+import { DemoBenefitDistribution, DemoEmployee, DemoMovement, IndicatorSummary, PayrollRow, DemoSettings } from "./demoTypes";
 
-export function payrollRows(employees: DemoEmployee[], competency = "2026-06"): PayrollRow[] {
+export function payrollRows(employees: DemoEmployee[], competency = "2026-06", benefitDistributions: DemoBenefitDistribution[] = []): PayrollRow[] {
   const [year, month] = competency.split("-").map(Number);
   return employees.filter(item => item.status !== "INACTIVE").map(employee => {
     const company = demoCompanies.find(item => item.id === employee.company_id) ?? demoCompanies[0];
     const rates = company.settings.payroll_rates;
-    const benefitTags = new Set((employee.benefits ?? []).map(normalizeLabel));
+    const benefitMap = benefitDistributions
+      .filter(item => item.employee_id === employee.id && item.competency === competency)
+      .reduce<Record<string, DemoBenefitDistribution[]>>((acc, item) => {
+        const key = normalizeLabel(item.benefit_name);
+        acc[key] = [...(acc[key] ?? []), item];
+        return acc;
+      }, {});
     const salary = employee.employment_type.name === "CLT" ? employee.salary_base : 0;
     const proLabore = employee.employment_type.name === "Pró-labore" ? employee.salary_base : 0;
     const profitDistribution = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
     const costAid = employee.employment_type.name === "CLT" ? 320 : Math.round(employee.salary_base * 0.08);
-    const meal = benefitTags.has("alimentacao") ? (employee.employment_type.name === "CLT" ? 620 : 480) : 0;
-    const lodging = benefitTags.has("hospedagem") ? (employee.result_center.code === "DIR" ? 900 : 550) : 0;
-    const insurance = benefitTags.has("seguro") ? (employee.employment_type.name === "CLT" ? 65 : 40) : 0;
-    const healthPlan = benefitTags.has("plano de saude") ? (employee.result_center.code === "DIR" ? 900 : employee.employment_type.name === "CLT" ? 480 : 360) : 0;
-    const subtotalEarnings = roundMoney(salary + proLabore + profitDistribution + costAid + meal + lodging + insurance + healthPlan);
-    const inss = roundMoney(subtotalEarnings * (rates.inss / 100));
-    const rat = roundMoney(subtotalEarnings * (rates.rat / 100));
-    const terceiros = roundMoney(subtotalEarnings * (rates.terceiros / 100));
-    const fgts = roundMoney(subtotalEarnings * (rates.fgts / 100));
-    const charges = roundMoney(inss + rat + terceiros + fgts);
-
-    const vacation = roundMoney(employee.salary_base / 12);
-    const vacationThird = roundMoney(vacation / 3);
-    const fgtsVacation = roundMoney((vacation + vacationThird) * (rates.fgts_vacation / 100));
-    const thirteenthSalary = roundMoney(employee.salary_base / 12);
-    const fgtsThirteenthSalary = roundMoney(thirteenthSalary * (rates.fgts_thirteenth / 100));
-    const noticeIndemnity = roundMoney(employee.salary_base / 12);
-    const fgtsNotice = roundMoney(noticeIndemnity * (rates.fgts_notice / 100));
-    const fgtsFine = roundMoney((fgts + fgtsVacation + fgtsThirteenthSalary + fgtsNotice) * (rates.multa_fgts / 100));
-    const employerContribution = roundMoney((vacation + vacationThird + thirteenthSalary + noticeIndemnity) * (rates.patronal / 100));
-    const totalProvisions = roundMoney(vacation + vacationThird + fgtsVacation + thirteenthSalary + fgtsThirteenthSalary + noticeIndemnity + fgtsNotice + fgtsFine + employerContribution);
-    const grossPayroll = subtotalEarnings;
-    const netPayroll = roundMoney(subtotalEarnings + charges);
-    const totalCost = roundMoney(subtotalEarnings + charges + totalProvisions);
-
-    return {
+    const transport = sumBenefit(benefitMap["vale transporte"] ?? []);
+    const meal = sumBenefit(benefitMap["alimentacao"] ?? []);
+    const lodging = employee.benefits.some(item => normalizeLabel(item) === "hospedagem") ? (employee.result_center.code === "DIR" ? 900 : 550) : 0;
+    const insurance = sumBenefit(benefitMap["seguro de vida"] ?? []);
+    const healthPlan = sumBenefit(benefitMap["plano de saude"] ?? []);
+    return recalculatePayrollRow({
       employee_id: employee.id,
       employee_name: employee.employee.full_name,
       result_center: employee.result_center,
@@ -46,32 +32,81 @@ export function payrollRows(employees: DemoEmployee[], competency = "2026-06"): 
       pro_labore: proLabore,
       profit_distribution: profitDistribution,
       cost_aid: costAid,
+      transport,
       meal,
       lodging,
       insurance,
       health_plan: healthPlan,
-      subtotal_earnings: subtotalEarnings,
-      inss,
-      rat,
-      terceiros,
-      fgts,
-      charges,
-      vacation,
-      vacation_third: vacationThird,
-      fgts_vacation: fgtsVacation,
-      thirteenth_salary: thirteenthSalary,
-      fgts_thirteenth_salary: fgtsThirteenthSalary,
-      notice_indemnity: noticeIndemnity,
-      fgts_notice: fgtsNotice,
-      fgts_fine: fgtsFine,
-      employer_contribution: employerContribution,
-      total_provisions: totalProvisions,
-      gross_payroll: grossPayroll,
-      net_payroll: netPayroll,
-      total_cost: totalCost,
-      grand_total: totalCost
-    };
+      subtotal_earnings: 0,
+      inss: 0,
+      rat: 0,
+      terceiros: 0,
+      fgts: 0,
+      charges: 0,
+      vacation: 0,
+      vacation_third: 0,
+      fgts_vacation: 0,
+      thirteenth_salary: 0,
+      fgts_thirteenth_salary: 0,
+      notice_indemnity: 0,
+      fgts_notice: 0,
+      fgts_fine: 0,
+      employer_contribution: 0,
+      total_provisions: 0,
+      gross_payroll: 0,
+      net_payroll: 0,
+      total_cost: 0,
+      grand_total: 0
+    }, rates);
   });
+}
+
+export function recalculatePayrollRow(row: PayrollRow, rates: DemoSettings["payroll_rates"]): PayrollRow {
+  const subtotalEarnings = roundMoney(row.salary + row.pro_labore + row.profit_distribution + row.cost_aid + row.transport + row.meal + row.lodging + row.insurance + row.health_plan);
+  const inss = roundMoney(subtotalEarnings * (rates.inss / 100));
+  const rat = roundMoney(subtotalEarnings * (rates.rat / 100));
+  const terceiros = roundMoney(subtotalEarnings * (rates.terceiros / 100));
+  const fgts = roundMoney(subtotalEarnings * (rates.fgts / 100));
+  const charges = roundMoney(inss + rat + terceiros + fgts);
+
+  const salaryBase = Math.max(row.salary, row.pro_labore, row.profit_distribution, row.cost_aid, 0);
+  const vacation = roundMoney(salaryBase / 12);
+  const vacationThird = roundMoney(vacation / 3);
+  const fgtsVacation = roundMoney((vacation + vacationThird) * (rates.fgts_vacation / 100));
+  const thirteenthSalary = roundMoney(salaryBase / 12);
+  const fgtsThirteenthSalary = roundMoney(thirteenthSalary * (rates.fgts_thirteenth / 100));
+  const noticeIndemnity = roundMoney(salaryBase / 12);
+  const fgtsNotice = roundMoney(noticeIndemnity * (rates.fgts_notice / 100));
+  const fgtsFine = roundMoney((fgts + fgtsVacation + fgtsThirteenthSalary + fgtsNotice) * (rates.multa_fgts / 100));
+  const employerContribution = roundMoney((vacation + vacationThird + thirteenthSalary + noticeIndemnity) * (rates.patronal / 100));
+  const totalProvisions = roundMoney(vacation + vacationThird + fgtsVacation + thirteenthSalary + fgtsThirteenthSalary + noticeIndemnity + fgtsNotice + fgtsFine + employerContribution);
+  const grossPayroll = subtotalEarnings;
+  const netPayroll = roundMoney(subtotalEarnings + charges);
+  const totalCost = roundMoney(subtotalEarnings + charges + totalProvisions);
+
+  return {
+    ...row,
+    subtotal_earnings: subtotalEarnings,
+    inss,
+    rat,
+    terceiros,
+    fgts,
+    charges,
+    vacation,
+    vacation_third: vacationThird,
+    fgts_vacation: fgtsVacation,
+    thirteenth_salary: thirteenthSalary,
+    fgts_thirteenth_salary: fgtsThirteenthSalary,
+    notice_indemnity: noticeIndemnity,
+    fgts_notice: fgtsNotice,
+    fgts_fine: fgtsFine,
+    employer_contribution: employerContribution,
+    total_provisions: totalProvisions,
+    gross_payroll: grossPayroll,
+    net_payroll: netPayroll,
+    total_cost: totalCost,
+    grand_total: totalCost
+  };
 }
 
 export function centerSummary(rows: PayrollRow[], centers: ResultCenter[] = demoResultCenters) {
@@ -87,8 +122,8 @@ export function centerSummary(rows: PayrollRow[], centers: ResultCenter[] = demo
   });
 }
 
-export function dashboardCards(employees: DemoEmployee[], movements: DemoMovement[], competency = "2026-06"): DashboardCard[] {
-  const rows = payrollRows(employees, competency);
+export function dashboardCards(employees: DemoEmployee[], movements: DemoMovement[], competency = "2026-06", benefitDistributions: DemoBenefitDistribution[] = []): DashboardCard[] {
+  const rows = payrollRows(employees, competency, benefitDistributions);
   const [year, month] = competency.split("-").map(Number);
   return demoResultCenters.map(center => {
     const centerEmployees = employees.filter(item => item.result_center.id === center.id && item.status !== "INACTIVE");
@@ -123,8 +158,8 @@ export function dashboardCards(employees: DemoEmployee[], movements: DemoMovemen
   });
 }
 
-export function consolidatedIndicators(employees: DemoEmployee[], movements: DemoMovement[], competency = "2026-06"): IndicatorSummary {
-  const rows = payrollRows(employees, competency);
+export function consolidatedIndicators(employees: DemoEmployee[], movements: DemoMovement[], competency = "2026-06", benefitDistributions: DemoBenefitDistribution[] = []): IndicatorSummary {
+  const rows = payrollRows(employees, competency, benefitDistributions);
   const active = employees.filter(item => item.status !== "INACTIVE").length;
   const competencyMovements = movements.filter(item => item.competency === competency);
   const admissions = competencyMovements.filter(item => item.type === "admissão").length;
@@ -187,6 +222,10 @@ function normalizeLabel(value: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function sumBenefit(items: DemoBenefitDistribution[]) {
+  return items.reduce((acc, item) => acc + Number(item.amount ?? 0), 0);
 }
 
 function scheduledHoursForEmployee(employee: DemoEmployee, year: number, month: number) {
