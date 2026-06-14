@@ -3,7 +3,7 @@ import { API_URL, IS_DEMO_MODE, api } from "./api";
 import { AppError } from "./components/Feedback";
 import { Layout, Page } from "./components/Layout";
 import { DashboardPage } from "./pages/DashboardPage";
-import { AlertsPage, AuditPage, BackupPage, ClosingPage, ImportPage, MovementsPage, PayrollPage, ReportsPage, SettingsPage } from "./pages/DemoPages";
+import { AlertsPage, AuditPage, BackupPage, ClosingPage, ImportPage, MeiContractsPage, MovementsPage, PayrollPage, ReportsPage, SettingsPage } from "./pages/DemoPages";
 import { BenefitsPage } from "./pages/BenefitsPage";
 import { EmployeesPage } from "./pages/EmployeesPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -245,6 +245,7 @@ export default function App() {
         {page === "audit" && <AuditPage token={token} user={user} />}
         {page === "employees" && <EmployeesPage token={token} user={user} />}
         {page === "movements" && <MovementsPage token={token} user={user} />}
+        {page === "mei-contracts" && <MeiContractsPage token={token} user={user} />}
         {page === "benefits" && <BenefitsPage token={token} user={user} />}
         {page === "payroll" && <PayrollPage token={token} user={user} />}
         {page === "report-maker" && <ReportMakerPage token={token} user={user} />}

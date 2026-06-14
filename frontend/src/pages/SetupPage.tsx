@@ -42,7 +42,7 @@ export function SetupPage({ onComplete }: { onComplete: () => void }) {
         <p>Estas opções poderão ser ajustadas por um administrador.</p>
         <div className="form-grid">
           <label className="span-2">Nome da empresa<input name="company_name" required /></label>
-          <label className="span-2">Pasta de backup<input name="backup_directory" defaultValue="C:\\SistemaIndicadoresFolha\\backups" /></label>
+          <label className="span-2">Pasta de backup<input name="backup_directory" defaultValue="C:\\Nexo\\backups" /></label>
           <label>Jornada padrão diária<input name="default_daily_hours" type="number" step="0.1" defaultValue="8.8" required /></label>
           <label className="check"><input name="auto_backup_on_start" type="checkbox" defaultChecked /> Backup automático ao abrir</label>
           <label className="check"><input name="include_saturdays" type="checkbox" /> Incluir sábados no cálculo</label>

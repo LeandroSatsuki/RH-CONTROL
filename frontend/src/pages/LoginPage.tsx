@@ -35,11 +35,11 @@ export function LoginPage({ onLogin, initialError = "" }: Props) {
     <div className="auth-page">
       <section className="auth-intro">
         <span className="eyebrow">Controle de RH</span>
-        <h1>Indicadores claros.<br />Decisões melhores.</h1>
+        <h1>Nexo conecta<br />pessoas e custos.</h1>
         <p>Pessoas e custos organizados em um único lugar, na sua rede local.</p>
       </section>
       <form className="auth-card" onSubmit={submit}>
-        <div className="brand-mark large">IF</div>
+        <div className="brand-mark large">NX</div>
         <h2>Bem-vindo</h2>
         <p>{IS_DEMO_MODE ? "Protótipo de apresentação com dados fictícios." : "Entre para acessar o painel."}</p>
         {IS_DEMO_MODE && <div className="demo-credentials">admin/admin<br />consultor/consultor</div>}
