@@ -1,6 +1,6 @@
-# Sistema de Indicadores de Folha
+# Nexo
 
-Primeiro marco funcional para substituir a planilha `Indicadores Folha 2026.xlsx`. A solução usa um servidor local com PostgreSQL e FastAPI; os demais computadores acessam o frontend pela rede interna.
+Primeiro marco funcional para substituir a planilha-base atual de custos e pessoas. A solução usa um servidor local com PostgreSQL e FastAPI; os demais computadores acessam o frontend pela rede interna.
 
 ## Arquitetura revisada
 
@@ -8,7 +8,7 @@ Primeiro marco funcional para substituir a planilha `Indicadores Folha 2026.xlsx
 - **Clientes da rede:** navegador apontando para o endereço do servidor. Nenhum banco é compartilhado por pasta.
 - **Modelo relacional:** CPF identifica a pessoa; cada contratação é um vínculo separado, preservando histórico e permitindo recontratação futura.
 - **Permissões:** Administrador altera dados; Consultor acessa consultas e dashboard.
-- **Instalação futura:** estrutura alvo documentada em `deploy/README.md`, com pasta padrão `C:\SistemaIndicadoresFolha`.
+- **Instalação futura:** estrutura alvo documentada em `deploy/README.md`, com pasta padrão `C:\Nexo`.
 
 ## O que já funciona
 
@@ -271,13 +271,13 @@ npm.cmd run desktop:build
 Arquivo final:
 
 ```text
-frontend/release/Sistema-Indicadores-de-Folha-Demo-0.1.0-Portable.exe
+frontend/release/Nexo-Demo-0.1.0-Portable.exe
 ```
 
 Também fica disponível uma pasta descompactada para teste:
 
 ```text
-frontend/release/win-unpacked/Sistema Indicadores de Folha - Demo.exe
+frontend/release/win-unpacked/Nexo - Demo.exe
 ```
 
 Observação: se o ambiente tiver `ELECTRON_RUN_AS_NODE=1`, o script `desktop:dev` remove essa variável no launcher local. Para abrir manualmente o Electron, remova a variável antes.
@@ -295,4 +295,4 @@ Observação: se o ambiente tiver `ELECTRON_RUN_AS_NODE=1`, o script `desktop:de
 9. Backup: mostrar status, lista de backups e simulação de geração/restauração.
 10. Fechamento mensal: mostrar checklist, status da competência e permissões de fechar/reabrir apenas para Administrador.
 11. Configurações: mostrar empresa, jornada, encargos, modalidades, permissões e backup.
-12. Build: explicar que a demo pode ser entregue como site estático (`frontend/dist`) ou portable Windows (`frontend/release/Sistema-Indicadores-de-Folha-Demo-0.1.0-Portable.exe`).
+12. Build: explicar que a demo pode ser entregue como site estático (`frontend/dist`) ou portable Windows (`frontend/release/Nexo-Demo-0.1.0-Portable.exe`).

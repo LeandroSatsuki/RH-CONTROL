@@ -9,7 +9,9 @@ export type MovementType =
   | "afastamento"
   | "férias"
   | "transferência de Centro de Resultado"
-  | "alteração salarial";
+  | "alteração salarial"
+  | "contrato não assinado"
+  | "contrato MEI a vencer";
 
 export interface Competency {
   id: string;
@@ -104,12 +106,35 @@ export interface DemoAlert {
   id: number;
   company_id: number;
   company_name: string;
-  type: "Férias vencendo" | "Retorno de afastamento" | "Contrato próximo do vencimento" | "Ajuste pendente";
+  type: "Férias vencendo" | "Retorno de afastamento" | "Contrato próximo do vencimento" | "Contrato não assinado" | "Ajuste pendente";
   employee_name: string;
   result_center: ResultCenter;
   due_date: string;
   message: string;
   severity: "Baixa" | "Média" | "Alta";
+}
+
+export interface DemoMeiContract {
+  id: number;
+  company_id: number;
+  employee_id: number;
+  employee_name: string;
+  employee_code: string;
+  result_center: ResultCenter;
+  employment_type: string;
+  status: "Pendente de assinatura" | "Ativo";
+  start_date: string;
+  end_date: string;
+  attachment_name: string | null;
+  attachment_data_url: string | null;
+  created_at: string;
+  signed_at: string | null;
+  signed_by: string | null;
+  notified_not_signed: boolean;
+  notified_15: boolean;
+  notified_10: boolean;
+  notified_5: boolean;
+  movement_created_5: boolean;
 }
 
 export interface DemoAuditEntry {
@@ -236,6 +261,8 @@ export interface DemoBenefitDistribution {
   days_worked: number;
   value_per_day: number;
   monthly_value: number;
+  dependents_count?: number;
+  dependent_value?: number;
   amount: number;
   source: "Lote" | "Individual";
   description: string;

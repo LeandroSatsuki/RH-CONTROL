@@ -37,6 +37,23 @@ interface ReportTemplate {
 
 const STORAGE_KEY = "indicadores-report-maker-templates-v1";
 
+function normalizeText(value: string) {
+  return value.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function matchesTemplateQuery(template: ReportTemplate, query: string) {
+  const needle = normalizeText(query);
+  if (!needle) return true;
+  const haystack = [
+    template.name,
+    template.source,
+    template.groupBy,
+    ...Object.values(template.filters ?? {}),
+    ...template.fields.map(field => field.id)
+  ].join(" ");
+  return normalizeText(haystack).includes(needle);
+}
+
 const fieldLibrary: FieldMeta[] = [
   { id: "employee_name", source: "Colaboradores", label: "Colaborador", extractor: row => row.employee_name ?? row.full_name ?? "" },
   { id: "employee_code", source: "Colaboradores", label: "Matrícula", extractor: row => row.employee_code ?? "" },
@@ -108,6 +125,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
   const [templateName, setTemplateName] = useState("Relatório customizado");
   const [templates, setTemplates] = useState<ReportTemplate[]>(loadTemplates());
   const [activeTemplateId, setActiveTemplateId] = useState<number | null>(null);
+  const [templateSearch, setTemplateSearch] = useState("");
   const applyingTemplate = useRef(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -179,14 +197,14 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
       return;
     }
     const item: ReportTemplate = {
-      id: activeTemplateId ?? Date.now(),
+      id: Date.now(),
       name: templateName.trim() || "Relatório customizado",
       source,
       groupBy,
       fields: selectedFields,
       filters: { center: filterCenter, state: filterState, type: filterType, benefit: filterBenefit, query }
     };
-    const next = [item, ...templates.filter(existing => existing.id !== item.id)];
+    const next = [item, ...templates];
     saveTemplates(next);
     setActiveTemplateId(item.id);
     setSuccess("Template salvo para uso futuro.");
@@ -210,6 +228,8 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
     saveTemplates(templates.filter(item => item.id !== id));
     if (activeTemplateId === id) setActiveTemplateId(null);
   }
+
+  const filteredTemplates = useMemo(() => templates.filter(template => matchesTemplateQuery(template, templateSearch)), [templateSearch, templates]);
 
   function applyAwayPreset() {
     applyingTemplate.current = true;
@@ -306,9 +326,12 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
       </div>
 
       <div className="panel report-template-panel">
-        <label>Nome do template<input value={templateName} onChange={event => setTemplateName(event.target.value)} /></label>
+        <div className="report-template-toolbar">
+          <label>Nome do template<input value={templateName} onChange={event => setTemplateName(event.target.value)} /></label>
+          <label>Buscar modelos<input value={templateSearch} onChange={event => setTemplateSearch(event.target.value)} placeholder="Digite parte do nome, campo ou filtro" /></label>
+        </div>
         <div className="report-template-list">
-          {templates.length ? templates.map(template => (
+          {filteredTemplates.length ? filteredTemplates.map(template => (
             <div className={`report-template-item ${template.id === activeTemplateId ? "active" : ""}`} key={template.id}>
               <div>
                 <strong>{template.name}</strong>

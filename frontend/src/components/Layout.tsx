@@ -9,6 +9,7 @@ export type Page =
   | "audit"
   | "employees"
   | "movements"
+  | "mei-contracts"
   | "benefits"
   | "payroll"
   | "report-maker"
@@ -32,6 +33,7 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "dashboard", label: "Dashboard", icon: "▦" },
   { page: "employees", label: "Colaboradores", icon: "ID" },
   { page: "movements", label: "Movimentações", icon: "MV" },
+  { page: "mei-contracts", label: "Contratos MEI", icon: "ME" },
   { page: "benefits", label: "Benefícios", icon: "BF" },
   { page: "payroll", label: "Custo / Folha", icon: "CF" },
   { page: "report-maker", label: "Relatório Maker", icon: "MK" },
@@ -55,8 +57,8 @@ export function Layout({ user, page, onPage, onLogout, children }: Props) {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">IF</div>
-          <div><strong>Indicadores</strong><span>Custos & Pessoas</span></div>
+          <div className="brand-mark">NX</div>
+          <div><strong>Nexo</strong><span>Custos & Pessoas</span></div>
         </div>
         <nav>
           {menu.filter(item => !item.adminOnly || user.role === "ADMIN").map(item => (

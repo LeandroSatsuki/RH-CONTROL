@@ -1,5 +1,5 @@
 {
-  "name": "indicadores-folha-frontend",
+  "name": "nexo-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -31,8 +31,8 @@
     "wait-on": "^9.0.10"
   },
   "build": {
-    "appId": "br.com.indicadoresfolha.demo",
-    "productName": "Sistema Indicadores de Folha - Demo",
+    "appId": "br.com.nexo.demo",
+    "productName": "Nexo - Demo",
     "directories": {
       "output": "release"
     },
@@ -51,7 +51,7 @@
           ]
         }
       ],
-      "artifactName": "Sistema-Indicadores-de-Folha-Demo-${version}-Portable.${ext}"
+      "artifactName": "Nexo-Demo-${version}-Portable.${ext}"
     }
   }
 }

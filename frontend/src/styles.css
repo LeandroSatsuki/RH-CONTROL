@@ -240,6 +240,14 @@ tr.clickable:hover { background: var(--surface-2); }
 .benefits-table-header span { color: var(--muted); font-size: 12px; font-weight: 700; }
 .selected-panel { display: grid; gap: 12px; align-content: start; }
 .selected-panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.selected-monthly-stack { display: grid; gap: 8px; }
+.report-template-toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.mei-summary { grid-template-columns: repeat(5, minmax(150px, 1fr)); }
+.mei-contract-filters { grid-template-columns: 1.2fr 1fr 1fr auto; gap: 10px; align-items: end; }
+.mei-contract-form h2 { margin-bottom: 14px; }
+.mei-contract-drawer { margin-top: 12px; }
+.mei-sign-panel { margin-top: 12px; padding: 14px; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-2); }
+.mei-sign-panel h3 { margin-top: 0; }
 .selected-panel-head h2 { margin: 0; font-size: 18px; }
 .selected-panel-actions { display: flex; align-items: center; gap: 10px; }
 .selected-panel-head span { color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -317,7 +325,7 @@ tr.clickable:hover { background: var(--surface-2); }
   .span-2 { grid-column: span 1; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .metric.wide { grid-column: span 2; }
-  .summary-grid, .summary-grid.indicators, .report-grid, .settings-grid, .filters-panel, .report-maker-filters, .checklist, .detail-grid { grid-template-columns: 1fr; }
+  .summary-grid, .summary-grid.indicators, .report-grid, .settings-grid, .filters-panel, .report-maker-filters, .mei-contract-filters, .checklist, .detail-grid { grid-template-columns: 1fr; }
   .benefits-builder, .report-maker-grid, .benefits-amounts, .benefits-grid { grid-template-columns: 1fr; }
   .benefits-filters { grid-template-columns: 1fr; }
   .report-selected-row { grid-template-columns: 1fr; }

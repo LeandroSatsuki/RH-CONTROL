@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "Sistema de Indicadores de Folha"
+    app_name: str = "Nexo"
     api_prefix: str = "/api"
     database_url: str = (
         "postgresql+psycopg://indicadores:troque-esta-senha@127.0.0.1:5432/indicadores_folha"

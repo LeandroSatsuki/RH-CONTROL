@@ -1,5 +1,5 @@
 import { EmploymentType, ResultCenter } from "../types";
-import { Competency, DemoBackup, DemoBenefitDefinition, DemoBenefitDistribution, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMovement, DemoSettings, MovementType } from "./demoTypes";
+import { Competency, DemoBackup, DemoBenefitDefinition, DemoBenefitDistribution, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings, MovementType } from "./demoTypes";
 
 export const demoResultCenters: ResultCenter[] = [
   { id: 1, code: "ADM", name: "Administrativo", color: "#2563EB", active: true },
@@ -70,7 +70,7 @@ export const demoCompanies: DemoCompany[] = [
     settings: buildSettings(
       "Alfa Matriz Ltda.",
       "12.345.678/0001-90",
-      "C:\\SistemaIndicadoresFolha\\AlfaMatriz\\backups",
+      "C:\\Nexo\\AlfaMatriz\\backups",
       8.8,
       ["01/01/2026", "21/04/2026", "01/05/2026"],
       [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 1.5 }, { name: "Terceiros", rate: 5.8 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }],
@@ -104,7 +104,7 @@ export const demoCompanies: DemoCompany[] = [
     settings: buildSettings(
       "Alfa Filial Indústria",
       "12.345.678/0002-71",
-      "C:\\SistemaIndicadoresFolha\\AlfaFilial\\backups",
+      "C:\\Nexo\\AlfaFilial\\backups",
       8.6,
       ["01/01/2026", "21/04/2026", "07/09/2026"],
       [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 2 }, { name: "Terceiros", rate: 6.2 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }],
@@ -138,7 +138,7 @@ export const demoCompanies: DemoCompany[] = [
     settings: buildSettings(
       "Beta Industrial S.A.",
       "45.987.321/0001-55",
-      "C:\\SistemaIndicadoresFolha\\BetaIndustrial\\backups",
+      "C:\\Nexo\\BetaIndustrial\\backups",
       8.0,
       ["01/01/2026", "07/09/2026", "12/10/2026"],
       [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 3 }, { name: "Terceiros", rate: 7.5 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }],
@@ -171,7 +171,7 @@ export const demoCompanies: DemoCompany[] = [
     settings: buildSettings(
       "Gamma Comércio Ltda.",
       "78.901.234/0001-11",
-      "C:\\SistemaIndicadoresFolha\\GammaComercio\\backups",
+      "C:\\Nexo\\GammaComercio\\backups",
       7.5,
       ["01/01/2026", "21/04/2026", "25/12/2026"],
       [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 1 }, { name: "Terceiros", rate: 5.2 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }],
@@ -417,6 +417,10 @@ export function createDemoBenefitDistributions(employees = createDemoEmployees()
         });
       }
       if (employee.benefits.includes("Plano de saúde")) {
+        const dependentsCount = index % 4 === 0 ? 2 : index % 4 === 1 ? 1 : 0;
+        const dependentValue = employee.result_center.code === "DIR" ? 150 : employee.employment_type.name === "CLT" ? 110 : 95;
+        const baseMonthlyValue = employee.result_center.code === "DIR" ? 860 : employee.employment_type.name === "CLT" ? 490 : 360;
+        const totalValue = roundMoney(baseMonthlyValue + dependentsCount * dependentValue);
         items.push({
           id: items.length + 1,
           company_id: company.id,
@@ -431,10 +435,12 @@ export function createDemoBenefitDistributions(employees = createDemoEmployees()
           state: employee.state,
           days_worked: 0,
           value_per_day: 0,
-          monthly_value: employee.result_center.code === "DIR" ? 860 : employee.employment_type.name === "CLT" ? 490 : 360,
-          amount: employee.result_center.code === "DIR" ? 860 : employee.employment_type.name === "CLT" ? 490 : 360,
+          monthly_value: baseMonthlyValue,
+          dependents_count: dependentsCount,
+          dependent_value: dependentValue,
+          amount: totalValue,
           source: "Lote",
-          description: "Distribuição inicial de plano de saúde",
+          description: dependentsCount > 0 ? `Distribuição inicial de plano de saúde com ${dependentsCount} dependente(s)` : "Distribuição inicial de plano de saúde",
           created_at: "2026-06-01 08:00",
           created_by: "Sistema Demo"
         });
@@ -491,6 +497,7 @@ export const demoSettings = demoCompanies[0].settings;
 export const demoBackups = demoCompanies[0].backups;
 export const demoClosing = demoCompanies[0].closing;
 export const demoBenefitDistributions = createDemoBenefitDistributions();
+export const demoMeiContracts = createDemoMeiContracts();
 
 export function createDemoCostAllocations(): DemoCostAllocation[] {
   return [
@@ -500,6 +507,41 @@ export function createDemoCostAllocations(): DemoCostAllocation[] {
     { id: 4, company_id: 3, competency: "2026-06", result_center: demoResultCenters[2], category: "Comercial", description: "Campanhas e apoio comercial", amount: 11980, source: "Lancto manual", allocated_at: "2026-06-05 11:00", status: "Lançado" },
     { id: 5, company_id: 4, competency: "2026-06", result_center: demoResultCenters[3], category: "Diretoria", description: "Custos executivos e representação", amount: 18500, source: "Lancto manual", allocated_at: "2026-06-05 16:45", status: "Revisado" }
   ];
+}
+
+export function createDemoMeiContracts(employees = createDemoEmployees()): DemoMeiContract[] {
+  const meiEmployees = employees.filter(employee => employee.employment_type.name === "MEI" && employee.status === "ACTIVE");
+  const baseDate = new Date("2026-06-14T00:00:00");
+  const offsets = [20, 14, 9, 4];
+  return meiEmployees.slice(0, 4).map((employee, index) => {
+    const start = new Date(baseDate);
+    start.setDate(start.getDate() - (20 + index * 11));
+    const end = new Date(baseDate);
+    end.setDate(end.getDate() + (offsets[index] ?? 14));
+    const signed = index > 0;
+    return {
+      id: index + 1,
+      company_id: employee.company_id,
+      employee_id: employee.id,
+      employee_name: employee.employee.full_name,
+      employee_code: employee.employee_code,
+      result_center: employee.result_center,
+      employment_type: employee.employment_type.name,
+      status: signed ? "Ativo" : "Pendente de assinatura",
+      start_date: start.toISOString().slice(0, 10),
+      end_date: end.toISOString().slice(0, 10),
+      attachment_name: signed ? "contrato_mei_assinado.pdf" : null,
+      attachment_data_url: null,
+      created_at: "2026-06-01 08:00",
+      signed_at: signed ? "2026-06-01 10:00" : null,
+      signed_by: signed ? "Sistema Demo" : null,
+      notified_not_signed: !signed,
+      notified_15: signed ? (offsets[index] ?? 14) <= 15 : false,
+      notified_10: signed ? (offsets[index] ?? 14) <= 10 : false,
+      notified_5: signed ? (offsets[index] ?? 14) <= 5 : false,
+      movement_created_5: signed ? (offsets[index] ?? 14) <= 5 : false
+    };
+  });
 }
 
 function roundMoney(value: number) {

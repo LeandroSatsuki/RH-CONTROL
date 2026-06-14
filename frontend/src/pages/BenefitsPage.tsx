@@ -25,6 +25,8 @@ interface SelectedOverride {
   daysWorked: number;
   valuePerDay: number;
   monthlyValue: number;
+  dependentsCount: number;
+  dependentValue: number;
   manual: boolean;
 }
 
@@ -36,6 +38,8 @@ interface ExportRow {
   daysWorked: number;
   valuePerDay: number;
   monthlyValue: number;
+  dependentsCount: number;
+  dependentValue: number;
   amount: number;
 }
 
@@ -77,6 +81,8 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
   const [daysWorked, setDaysWorked] = useState(22);
   const [valuePerDay, setValuePerDay] = useState(0);
   const [monthlyValue, setMonthlyValue] = useState(0);
+  const [dependentsCount, setDependentsCount] = useState(0);
+  const [dependentValue, setDependentValue] = useState(0);
   const [addPanelOpen, setAddPanelOpen] = useState(false);
   const [employeeQuery, setEmployeeQuery] = useState("");
   const [overrideCandidate, setOverrideCandidate] = useState<DemoEmployee | null>(null);
@@ -149,13 +155,13 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
     .filter((employee): employee is DemoEmployee => Boolean(employee))
     .map(employee => ({
       employee,
-      override: selectedOverrides[employee.id] ?? buildDefaultOverride(employee, activeBenefit, daysWorked, valuePerDay, monthlyValue, false)
+      override: selectedOverrides[employee.id] ?? buildDefaultOverride(employee, activeBenefit, daysWorked, valuePerDay, monthlyValue, dependentsCount, dependentValue, false)
     }));
   const selectedEmployees = eligibleEmployees.filter(employee => selectedIds.includes(employee.id));
   const pendingCount = Math.max(eligibleEmployees.length - selectedEmployees.length, 0);
   const previewTotal = selectedEmployeeRows.reduce((total, item) => {
     if (activeBenefit?.mode === "DAILY") return total + item.override.daysWorked * item.override.valuePerDay;
-    return total + item.override.monthlyValue;
+    return total + item.override.monthlyValue + item.override.dependentsCount * item.override.dependentValue;
   }, 0);
 
   useEffect(() => {
@@ -164,8 +170,12 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
       setDaysWorked(22);
       setValuePerDay(activeBenefit.code === "VT" ? 14.8 : 24);
       setMonthlyValue(0);
+      setDependentsCount(0);
+      setDependentValue(0);
     } else {
       setMonthlyValue(activeBenefit.code === "PS" ? 490 : 75);
+      setDependentsCount(activeBenefit.code === "PS" ? 1 : 0);
+      setDependentValue(activeBenefit.code === "PS" ? 110 : 0);
       setDaysWorked(0);
       setValuePerDay(0);
     }
@@ -179,7 +189,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
     setAppliedFilter({ ...draft });
     const ids = eligibleEmployeeIds(employees, draft, activeBenefit);
     setSelectedIds(ids);
-    setSelectedOverrides(buildOverridesForSelection(employees, ids, activeBenefit, daysWorked, valuePerDay, monthlyValue, false));
+    setSelectedOverrides(buildOverridesForSelection(employees, ids, activeBenefit, daysWorked, valuePerDay, monthlyValue, dependentsCount, dependentValue, false));
     setConfirmOpen(false);
     setDescription("");
     setEmployeeQuery("");
@@ -212,7 +222,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
       if (employee) {
         setSelectedOverrides(currentOverrides => ({
           ...currentOverrides,
-          [id]: buildDefaultOverride(employee, activeBenefit, daysWorked, valuePerDay, monthlyValue, false)
+          [id]: buildDefaultOverride(employee, activeBenefit, daysWorked, valuePerDay, monthlyValue, dependentsCount, dependentValue, false)
         }));
       }
       return [...current, id];
@@ -222,7 +232,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
   function selectAll() {
     const ids = eligibleEmployees.map(item => item.id);
     setSelectedIds(ids);
-    setSelectedOverrides(buildOverridesForSelection(employees, ids, activeBenefit, daysWorked, valuePerDay, monthlyValue, false));
+    setSelectedOverrides(buildOverridesForSelection(employees, ids, activeBenefit, daysWorked, valuePerDay, monthlyValue, dependentsCount, dependentValue, false));
   }
 
   function clearSelection() {
@@ -234,7 +244,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
     setSelectedOverrides(current => ({
       ...current,
       [id]: {
-        ...buildDefaultOverride(employees.find(employee => employee.id === id) ?? employees[0], activeBenefit, daysWorked, valuePerDay, monthlyValue, false),
+        ...buildDefaultOverride(employees.find(employee => employee.id === id) ?? employees[0], activeBenefit, daysWorked, valuePerDay, monthlyValue, dependentsCount, dependentValue, false),
         ...(current[id] ?? {}),
         ...patch
       }
@@ -245,7 +255,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
     setSelectedIds(current => (current.includes(employee.id) ? current : [...current, employee.id]));
     setSelectedOverrides(current => ({
       ...current,
-      [employee.id]: buildDefaultOverride(employee, activeBenefit, daysWorked, valuePerDay, monthlyValue, manual)
+      [employee.id]: buildDefaultOverride(employee, activeBenefit, daysWorked, valuePerDay, monthlyValue, dependentsCount, dependentValue, manual)
     }));
     setEmployeeQuery("");
     setAddPanelOpen(true);
@@ -330,12 +340,16 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
           days_worked: daysWorked,
           value_per_day: valuePerDay,
           monthly_value: monthlyValue,
-            items: selectedEmployeeRows.map(item => ({
-              employee_id: item.employee.id,
-              days_worked: item.override.daysWorked,
-              value_per_day: item.override.valuePerDay,
-              monthly_value: item.override.monthlyValue
-            }))
+          dependents_count: dependentsCount,
+          dependent_value: dependentValue,
+          items: selectedEmployeeRows.map(item => ({
+            employee_id: item.employee.id,
+            days_worked: item.override.daysWorked,
+            value_per_day: item.override.valuePerDay,
+            monthly_value: item.override.monthlyValue,
+            dependents_count: item.override.dependentsCount,
+            dependent_value: item.override.dependentValue
+          }))
         })
       }, token);
       setSuccess("Distribuição confirmada e integrada ao custo/folha.");
@@ -354,9 +368,11 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
           daysWorked: item.override.daysWorked,
           valuePerDay: item.override.valuePerDay,
           monthlyValue: item.override.monthlyValue,
+          dependentsCount: item.override.dependentsCount,
+          dependentValue: item.override.dependentValue,
           amount: activeBenefit.mode === "DAILY"
             ? item.override.daysWorked * item.override.valuePerDay
-            : item.override.monthlyValue
+            : item.override.monthlyValue + item.override.dependentsCount * item.override.dependentValue
         }))
       });
       await load();
@@ -458,7 +474,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
 
             <div className="summary-grid benefits-summary">
               <Summary label="Valor estimado" value={money.format(previewTotal)} strong />
-              <Summary label="Modo" value={activeBenefit?.mode === "DAILY" ? `${daysWorked} dias x ${money.format(valuePerDay)}` : money.format(monthlyValue)} />
+              <Summary label="Modo" value={activeBenefit?.mode === "DAILY" ? `${daysWorked} dias x ${money.format(valuePerDay)}` : activeBenefit?.code === "PS" ? `${money.format(monthlyValue)} + ${dependentsCount} dependente(s)` : money.format(monthlyValue)} />
               <Summary label="Descrição" value={description || "Obrigatória na confirmação"} />
             </div>
 
@@ -470,6 +486,12 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
             ) : (
               <div className="benefits-amounts">
                 <label>Valor mensal<input type="number" min="0" step="0.01" value={monthlyValue} onChange={event => setMonthlyValue(Number(event.target.value))} /></label>
+                {activeBenefit.code === "PS" && (
+                  <>
+                    <label>Dependentes<input type="number" min="0" step="1" value={dependentsCount} onChange={event => setDependentsCount(Number(event.target.value))} /></label>
+                    <label>Valor por dependente<input type="number" min="0" step="0.01" value={dependentValue} onChange={event => setDependentValue(Number(event.target.value))} /></label>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -557,16 +579,38 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                       aria-label={`Valor por dia de ${employee.employee.full_name}`}
                     />
                   ) : (
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={override.monthlyValue}
-                      onChange={event => updateOverride(employee.id, { monthlyValue: Number(event.target.value) })}
-                      aria-label={`Valor mensal de ${employee.employee.full_name}`}
-                    />
+                    <div className="selected-monthly-stack">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={override.monthlyValue}
+                        onChange={event => updateOverride(employee.id, { monthlyValue: Number(event.target.value) })}
+                        aria-label={`Valor mensal de ${employee.employee.full_name}`}
+                      />
+                      {activeBenefit.code === "PS" && (
+                        <>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={override.dependentsCount}
+                            onChange={event => updateOverride(employee.id, { dependentsCount: Number(event.target.value) })}
+                            aria-label={`Dependentes de ${employee.employee.full_name}`}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={override.dependentValue}
+                            onChange={event => updateOverride(employee.id, { dependentValue: Number(event.target.value) })}
+                            aria-label={`Valor por dependente de ${employee.employee.full_name}`}
+                          />
+                        </>
+                      )}
+                    </div>
                   )}
-                  <strong>{money.format(activeBenefit?.mode === "DAILY" ? override.daysWorked * override.valuePerDay : override.monthlyValue)}</strong>
+                  <strong>{money.format(activeBenefit?.mode === "DAILY" ? override.daysWorked * override.valuePerDay : override.monthlyValue + override.dependentsCount * override.dependentValue)}</strong>
                 </div>
               )) : <Empty>Nenhum colaborador selecionado.</Empty>}
             </div>
@@ -658,6 +702,8 @@ function buildDefaultOverride(
   defaultDays: number,
   defaultValuePerDay: number,
   defaultMonthlyValue: number,
+  defaultDependentsCount: number,
+  defaultDependentValue: number,
   manual: boolean
 ): SelectedOverride {
   const daily = benefit?.mode === "DAILY";
@@ -665,6 +711,8 @@ function buildDefaultOverride(
     daysWorked: daily ? defaultDays : 0,
     valuePerDay: daily ? defaultValuePerDay : 0,
     monthlyValue: daily ? 0 : defaultMonthlyValue,
+    dependentsCount: daily ? 0 : defaultDependentsCount,
+    dependentValue: daily ? 0 : defaultDependentValue,
     manual
   };
 }
@@ -676,12 +724,14 @@ function buildOverridesForSelection(
   defaultDays: number,
   defaultValuePerDay: number,
   defaultMonthlyValue: number,
+  defaultDependentsCount: number,
+  defaultDependentValue: number,
   manual: boolean
 ) {
   return ids.reduce<Record<number, SelectedOverride>>((acc, id) => {
     const employee = employees.find(item => item.id === id);
     if (!employee) return acc;
-    acc[id] = buildDefaultOverride(employee, benefit, defaultDays, defaultValuePerDay, defaultMonthlyValue, manual);
+    acc[id] = buildDefaultOverride(employee, benefit, defaultDays, defaultValuePerDay, defaultMonthlyValue, defaultDependentsCount, defaultDependentValue, manual);
     return acc;
   }, {});
 }
@@ -698,6 +748,8 @@ function exportBenefitExcel(batch: ExportBatch) {
     Dias: row.daysWorked,
     "Valor por dia": row.valuePerDay,
     "Valor mensal": row.monthlyValue,
+    Dependentes: row.dependentsCount,
+    "Valor por dependente": row.dependentValue,
     Total: row.amount
   }));
   const sheet = XLSX.utils.json_to_sheet(rows);
@@ -707,7 +759,25 @@ function exportBenefitExcel(batch: ExportBatch) {
 
 function exportBenefitPdf(batch: ExportBatch) {
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-  const marginX = 36;
+  const marginX = 28;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const contentWidth = pageWidth - marginX * 2;
+  const columns = [
+    { key: "employeeName", label: "Colaborador", width: 150 },
+    { key: "employeeCode", label: "Código", width: 56 },
+    { key: "centerCode", label: "CR", width: 40 },
+    { key: "source", label: "Fonte", width: 54 },
+    { key: "daysWorked", label: "Dias", width: 34 },
+    { key: "valuePerDay", label: "Vlr/dia", width: 72 },
+    { key: "monthlyValue", label: "Vlr/mensal", width: 82 },
+    { key: "dependentsCount", label: "Dep.", width: 36 },
+    { key: "dependentValue", label: "Vlr dep.", width: 70 },
+    { key: "amount", label: "Total", width: 86 }
+  ] as const;
+  const scale = contentWidth / columns.reduce((acc, column) => acc + column.width, 0);
+  const widths = columns.map(column => Math.floor(column.width * scale));
+  const headerHeight = 18;
+  const rowHeight = 15;
   let y = 42;
   doc.setFontSize(16);
   doc.text(`Benefícios - ${batch.benefitName}`, marginX, y);
@@ -716,26 +786,63 @@ function exportBenefitPdf(batch: ExportBatch) {
   doc.text(`Competência: ${batch.competency} | Fonte: ${batch.source}`, marginX, y);
   y += 18;
   doc.text(`Total de colaboradores: ${batch.rows.length}`, marginX, y);
-  y += 18;
+  y += 20;
+
+  function drawHeader() {
+    let x = marginX;
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    columns.forEach((column, index) => {
+      doc.text(truncatePdfText(column.label, widths[index] - 4, doc), x, y);
+      x += widths[index];
+    });
+    y += headerHeight;
+    doc.setFont("helvetica", "normal");
+  }
+
+  drawHeader();
 
   batch.rows.forEach((row, index) => {
-    if (y > 540) {
+    if (y > doc.internal.pageSize.getHeight() - 28) {
       doc.addPage();
       y = 42;
+      drawHeader();
     }
-    doc.setFontSize(11);
-    doc.text(`${index + 1}. ${row.employeeName} - ${row.employeeCode} - ${row.centerCode}`, marginX, y);
-    y += 14;
-    doc.setFontSize(9);
-    const amount = row.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-    const detail = row.daysWorked > 0
-      ? `Dias: ${row.daysWorked} | Valor/dia: ${row.valuePerDay.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} | Total: ${amount}`
-      : `Valor mensal: ${row.monthlyValue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} | Total: ${amount}`;
-    doc.text(detail, marginX + 12, y);
-    y += 16;
+    const values: Record<string, string> = {
+      employeeName: row.employeeName,
+      employeeCode: row.employeeCode,
+      centerCode: row.centerCode,
+      source: row.source,
+      daysWorked: String(row.daysWorked),
+      valuePerDay: money.format(row.valuePerDay),
+      monthlyValue: money.format(row.monthlyValue),
+      dependentsCount: String(row.dependentsCount),
+      dependentValue: money.format(row.dependentValue),
+      amount: money.format(row.amount)
+    };
+    let x = marginX;
+    doc.setFontSize(8);
+    columns.forEach((column, colIndex) => {
+      const text = truncatePdfText(values[column.key], widths[colIndex] - 4, doc);
+      doc.text(text, x, y);
+      x += widths[colIndex];
+    });
+    y += rowHeight;
   });
 
   doc.save(`beneficios-${batch.competency}-${batch.benefitName.replace(/\s+/g, "-").toLowerCase()}.pdf`);
+}
+
+function truncatePdfText(value: string, maxWidth: number, doc: jsPDF) {
+  const text = String(value ?? "");
+  if (!text) return "-";
+  if (doc.getTextWidth(text) <= maxWidth) return text;
+  const ellipsis = "...";
+  let current = text;
+  while (current.length > 0 && doc.getTextWidth(`${current}${ellipsis}`) > maxWidth) {
+    current = current.slice(0, -1);
+  }
+  return `${current}${ellipsis}`;
 }
 
 function DemoOnly() {

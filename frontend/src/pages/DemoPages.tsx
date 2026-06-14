@@ -4,7 +4,7 @@ import { IS_DEMO_MODE, api } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { demoBenefitDefinitions, demoCompetencies, demoResultCenters, demoSettings } from "../mocks/demoData";
-import { DemoAlert, DemoAuditEntry, DemoBackup, DemoBenefitDistribution, DemoClosing, DemoCostAllocation, DemoEmployee, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
+import { DemoAlert, DemoAuditEntry, DemoBackup, DemoBenefitDistribution, DemoClosing, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
 import { recalculatePayrollRow } from "../mocks/demoCalculations";
 import { CentersPage, TypesPage } from "./CatalogPages";
 import { User } from "../types";
@@ -90,6 +90,194 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
       setSelected(updated);
       void load();
     }} />}
+  </PageShell>;
+}
+
+export function MeiContractsPage({ token, user }: { token: string; user: User }) {
+  if (!IS_DEMO_MODE) return <DemoOnly />;
+  const { selectedCompany } = useDemoScope();
+  const [employees, setEmployees] = useState<DemoEmployee[]>([]);
+  const [contracts, setContracts] = useState<DemoMeiContract[]>([]);
+  const [employeeId, setEmployeeId] = useState("");
+  const [startDate, setStartDate] = useState("2026-06-14");
+  const [endDate, setEndDate] = useState("2026-07-14");
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
+  const [selected, setSelected] = useState<DemoMeiContract | null>(null);
+  const [attachmentName, setAttachmentName] = useState("");
+  const [attachmentDataUrl, setAttachmentDataUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const fb = useFeedback();
+
+  async function load() {
+    setLoading(true);
+    fb.setError("");
+    try {
+      const [employeeList, contractList] = await Promise.all([
+        api<DemoEmployee[]>("/employees", {}, token),
+        api<DemoMeiContract[]>("/demo/mei-contracts", {}, token)
+      ]);
+      setEmployees(employeeList);
+      setContracts(contractList);
+    } catch (err) {
+      fb.fail(err instanceof Error ? err.message : "Erro ao carregar contratos MEI");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, [token, selectedCompany.id]);
+
+  const meis = useMemo(() => employees.filter(item => item.status === "ACTIVE" && item.employment_type.name === "MEI"), [employees]);
+  const filtered = useMemo(() => contracts.filter(contract => (!status || contract.status === status) && (!query || `${contract.employee_name} ${contract.employee_code} ${contract.result_center.code} ${contract.end_date}`.toLowerCase().includes(query.toLowerCase()))), [contracts, query, status]);
+  const summary = useMemo(() => ({
+    pending: contracts.filter(item => item.status === "Pendente de assinatura").length,
+    active: contracts.filter(item => item.status === "Ativo").length,
+    due15: contracts.filter(item => item.status === "Ativo" && meiDaysLeft(item.end_date) <= 15 && meiDaysLeft(item.end_date) > 10).length,
+    due10: contracts.filter(item => item.status === "Ativo" && meiDaysLeft(item.end_date) <= 10 && meiDaysLeft(item.end_date) > 5).length,
+    due5: contracts.filter(item => item.status === "Ativo" && meiDaysLeft(item.end_date) <= 5).length
+  }), [contracts]);
+
+  async function createContract() {
+    if (restricted(user, fb.fail)) return;
+    if (selectedCompany.id === 0) return fb.fail("Selecione uma empresa específica para lançar contratos MEI.");
+    try {
+      await api("/demo/mei-contracts", {
+        method: "POST",
+        body: JSON.stringify({ employee_id: Number(employeeId), start_date: startDate, end_date: endDate })
+      }, token);
+      fb.notify("Contrato MEI lançado com sucesso.");
+      setEmployeeId("");
+      await load();
+    } catch (err) {
+      fb.fail(err instanceof Error ? err.message : "Erro ao lançar contrato MEI");
+    }
+  }
+
+  async function signContract() {
+    if (restricted(user, fb.fail)) return;
+    if (!selected) return;
+    if (!attachmentName) return fb.fail("Anexe o contrato para concluir a assinatura.");
+    try {
+      await api(`/demo/mei-contracts/${selected.id}/sign`, {
+        method: "PATCH",
+        body: JSON.stringify({ attachment_name: attachmentName, attachment_data_url: attachmentDataUrl })
+      }, token);
+      fb.notify("Contrato assinado e ativado.");
+      setSelected(null);
+      setAttachmentName("");
+      setAttachmentDataUrl("");
+      await load();
+    } catch (err) {
+      fb.fail(err instanceof Error ? err.message : "Erro ao assinar contrato");
+    }
+  }
+
+  function handleAttachment(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setAttachmentName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => setAttachmentDataUrl(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+  }
+
+  return <PageShell title="Contratos MEI" subtitle="Controle simples de contratos de MEI, com assinatura, anexo e alertas de vigência." error={fb.error} success={fb.success}>
+    <div className="summary-grid mei-summary">
+      <Summary label="Total" value={String(contracts.length)} />
+      <Summary label="Pendentes" value={String(summary.pending)} />
+      <Summary label="Ativos" value={String(summary.active)} />
+      <Summary label="Crítico" value={String(summary.due5)} strong />
+    </div>
+
+    <div className="panel mei-contract-form">
+      <h2>Novo contrato</h2>
+      <div className="filters-panel mei-contract-filters">
+        <select value={employeeId} onChange={event => setEmployeeId(event.target.value)} disabled={selectedCompany.id === 0}>
+          <option value="">Selecione um MEI</option>
+          {meis.map(employee => (
+            <option key={employee.id} value={employee.id}>
+              {employee.employee.full_name} • {employee.employee_code} • {employee.result_center.code}
+            </option>
+          ))}
+        </select>
+        <label>Vigência inicial<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label>
+        <label>Vigência final<input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></label>
+        <button className="primary" type="button" onClick={createContract} disabled={selectedCompany.id === 0}>Lançar contrato</button>
+      </div>
+      <p className="note">Ao lançar, o contrato entra como pendente de assinatura e já aparece em alertas e movimentações.</p>
+    </div>
+
+    <div className="panel filters-panel mei-contract-filters">
+      <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar colaborador, CR ou data" />
+      <select value={status} onChange={event => setStatus(event.target.value)}>
+        <option value="">Todos os status</option>
+        <option value="Pendente de assinatura">Pendente de assinatura</option>
+        <option value="Ativo">Ativo</option>
+      </select>
+    </div>
+
+    <DataTable loading={loading} empty="Nenhum contrato MEI encontrado.">
+      <table>
+        <thead>
+          <tr>
+            <th>Colaborador</th>
+            <th>CR</th>
+            <th>Vigência</th>
+            <th>Status</th>
+            <th>Dias</th>
+            <th>Anexo</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map(contract => {
+            const daysLeft = meiDaysLeft(contract.end_date);
+            return (
+              <tr key={contract.id} className="clickable" onClick={() => setSelected(contract)}>
+                <td>{contract.employee_name}<small>{contract.employee_code}</small></td>
+                <td><span className="color-dot" style={{ background: contract.result_center.color }} />{contract.result_center.code}</td>
+                <td>{date(contract.start_date)} a {date(contract.end_date)}</td>
+                <td><span className={meiStatusClass(contract, daysLeft)}>{contract.status}</span></td>
+                <td>{contract.status === "Ativo" ? daysLeft : "-"}</td>
+                <td>{contract.attachment_name ?? "-"}</td>
+                <td>{contract.status === "Pendente de assinatura" ? "Assinar" : "Ativo"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {!filtered.length && !loading && <Empty>Nenhum contrato MEI encontrado.</Empty>}
+    </DataTable>
+
+    {selected && (
+      <div className="panel mei-contract-drawer">
+        <div className="selected-panel-head">
+          <div>
+            <span className="eyebrow">Contrato selecionado</span>
+            <h2>{selected.employee_name}</h2>
+          </div>
+          <button className="ghost" type="button" onClick={() => setSelected(null)}>Fechar</button>
+        </div>
+        <div className="detail-grid">
+          <Summary label="Status" value={selected.status} />
+          <Summary label="Vigência" value={`${date(selected.start_date)} a ${date(selected.end_date)}`} />
+          <Summary label="Dias restantes" value={selected.status === "Ativo" ? String(meiDaysLeft(selected.end_date)) : "-"} />
+          <Summary label="Anexo" value={selected.attachment_name ?? "Pendente"} />
+        </div>
+        {selected.status === "Pendente de assinatura" ? (
+          <div className="panel mei-sign-panel">
+            <h3>Assinar contrato</h3>
+            <label>Anexar contrato<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={handleAttachment} /></label>
+            <button className="primary" type="button" onClick={signContract}>Assinar e ativar</button>
+          </div>
+        ) : (
+          <p className="note">Este contrato já está ativo. Quando faltar 15 dias, entra em alerta; com 10 dias, fica laranja; com 5 dias, fica vermelho e gera movimentação.</p>
+        )}
+      </div>
+    )}
   </PageShell>;
 }
 
@@ -411,7 +599,7 @@ export function AlertsPage({ token }: { token: string; user: User }) {
     </div>
     <div className="panel filters-panel">
       <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por colaborador ou mensagem" />
-      <select value={type} onChange={event => setType(event.target.value)}><option value="">Todos os tipos</option>{["Férias vencendo", "Retorno de afastamento", "Contrato próximo do vencimento", "Ajuste pendente"].map(item => <option key={item}>{item}</option>)}</select>
+      <select value={type} onChange={event => setType(event.target.value)}><option value="">Todos os tipos</option>{["Férias vencendo", "Retorno de afastamento", "Contrato próximo do vencimento", "Contrato não assinado", "Ajuste pendente"].map(item => <option key={item}>{item}</option>)}</select>
       <select value={severity} onChange={event => setSeverity(event.target.value)}><option value="">Todas as prioridades</option><option>Baixa</option><option>Média</option><option>Alta</option></select>
     </div>
     <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Os alertas servem para lembrar o usuário do que precisa de atenção.</p>
@@ -459,7 +647,7 @@ export function AuditPage({ token, user }: { token: string; user: User }) {
     </div>
     <div className="panel filters-panel">
       <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por ação, detalhe ou usuário" />
-      <select value={module} onChange={event => setModule(event.target.value)}><option value="">Todos os módulos</option>{["Colaboradores", "Movimentações", "Custos", "Configurações", "Backup", "Fechamento"].map(item => <option key={item}>{item}</option>)}</select>
+      <select value={module} onChange={event => setModule(event.target.value)}><option value="">Todos os módulos</option>{["Colaboradores", "Movimentações", "Contratos MEI", "Custos", "Configurações", "Backup", "Fechamento"].map(item => <option key={item}>{item}</option>)}</select>
     </div>
     <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Usuário logado: <strong>{user.full_name}</strong>.</p>
     <DataTable loading={loading} empty="Nenhum registro de auditoria encontrado.">
@@ -570,7 +758,7 @@ export function IndicatorsPage({ token }: { token: string }) {
     ["Custo líquido", money.format(summary.net_payroll)], ["Salário per capita", money.format(summary.salary_per_capita)], ["Custo total", money.format(summary.total_cost)], ["Dias produtivos", summary.productive_days],
     ["Horas não produtivas", summary.non_productive_hours.toFixed(1)]
   ] : [];
-  return <PageShell title="Indicadores" subtitle={`Leitura consolidada da competência na empresa ${selectedCompany.name}.`} error={error}>
+  return <PageShell title="Painel Nexo" subtitle={`Leitura consolidada da competência na empresa ${selectedCompany.name}.`} error={error}>
     <div className="panel filters-panel"><select value={competency} onChange={e => setCompetency(e.target.value)}>{demoCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select><select><option>Todos os CRs</option></select><select><option>Todas modalidades</option></select></div>
     {loading && <div className="inline-loading">Carregando indicadores...</div>}
     <div className="summary-grid indicators">{cards.map(([label, value]) => <Summary key={label} label={String(label)} value={String(value)} />)}</div>
@@ -1407,7 +1595,21 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
   return <PageShell title="Importação" subtitle="Fluxo visual para validar planilhas antes de confirmar dados." error={fb.error} success={fb.success}>{content}</PageShell>;
 }
 
-const movementTypes = ["admissão", "desligamento", "falta", "atestado", "afastamento", "férias", "transferência de Centro de Resultado", "alteração salarial"];
+const movementTypes = ["admissão", "desligamento", "falta", "atestado", "afastamento", "férias", "transferência de Centro de Resultado", "alteração salarial", "contrato não assinado", "contrato MEI a vencer"];
+
+function meiDaysLeft(endDate: string) {
+  const target = new Date(`${endDate}T00:00:00`);
+  const today = new Date();
+  return Math.ceil((target.getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) / 86400000);
+}
+
+function meiStatusClass(contract: DemoMeiContract, daysLeft: number) {
+  if (contract.status === "Pendente de assinatura") return "status-inactive";
+  if (daysLeft <= 5) return "severity-pill severity-high";
+  if (daysLeft <= 10) return "severity-pill severity-medium";
+  if (daysLeft <= 15) return "severity-pill severity-low";
+  return "status-active";
+}
 
 function PageShell({ title, subtitle, error = "", success = "", actions, children }: { title: string; subtitle: string; error?: string; success?: string; actions?: ReactNode; children: ReactNode }) {
   return <><div className="page-title"><div><span className="eyebrow">Demo</span><h1>{title}</h1><p>{subtitle}</p></div>{actions && <div className="actions">{actions}</div>}</div><ErrorMessage message={error} /><SuccessMessage message={success} />{children}</>;
