@@ -172,6 +172,41 @@ tr.clickable:hover { background: var(--surface-2); }
 .summary-card span { color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; }
 .summary-card strong { overflow: hidden; font-size: 18px; text-overflow: ellipsis; }
 .summary-card.strong { border-color: #9fc3e7; box-shadow: inset 0 3px var(--primary), var(--shadow); }
+.indicator-topbar { display: grid; gap: 12px; }
+.indicator-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.indicator-tabs button { border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--text); padding: 9px 14px; font-size: 12px; font-weight: 700; }
+.indicator-tabs button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.indicator-overview { display: grid; grid-template-columns: 1.2fr 1.2fr .9fr; gap: 12px; margin-bottom: 16px; }
+.indicator-callout { display: grid; gap: 8px; margin-bottom: 0; }
+.indicator-callout strong { font-size: 15px; }
+.indicator-callout.compact p { max-width: 320px; }
+.indicator-center-comparison { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.center-mini-card { display: grid; gap: 4px; border: 1px solid var(--line); border-top: 4px solid var(--center-color); border-radius: 10px; background: var(--surface); padding: 14px; box-shadow: var(--shadow); }
+.center-mini-card span { color: var(--center-color); font-size: 10px; font-weight: 800; letter-spacing: .8px; }
+.center-mini-card strong { font-size: 15px; }
+.center-mini-card small { color: var(--muted); font-size: 11px; }
+.indicator-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.indicator-grid.lower { grid-template-columns: 1fr; }
+.indicator-sheet, .indicator-chart-panel { display: grid; gap: 14px; }
+.indicator-sheet-header { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.indicator-sheet-header h2 { margin-bottom: 0; font-size: 18px; }
+.indicator-chip { border-radius: 99px; background: #eef4fb; color: var(--primary); padding: 6px 10px; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.indicator-finance-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 520px); gap: 12px; align-items: start; }
+.indicator-table-shell { display: grid; gap: 8px; }
+.indicator-table-title { color: var(--text); font-size: 13px; font-weight: 800; }
+.indicator-table { min-width: 100%; font-size: 12px; }
+.indicator-table th, .indicator-table td { padding: 8px 10px; }
+.indicator-table th { position: sticky; top: 0; z-index: 1; background: var(--surface-2); }
+.indicator-table .row-label { font-weight: 800; white-space: nowrap; }
+.indicator-table .total-cell { font-weight: 800; }
+.indicator-table-shell.compact .indicator-table { font-size: 11px; }
+.indicator-chart-card { display: grid; gap: 8px; }
+.indicator-chart { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+.chart-grid-line { stroke: #d7dfe8; stroke-width: 1; }
+.chart-axis-text { fill: var(--muted); font-size: 10px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 10px 14px; padding-left: 4px; font-size: 11px; color: var(--muted); }
+.chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chart-legend i { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
 .alerts-panel { display: flex; justify-content: space-between; align-items: center; gap: 18px; }
 .alerts-panel h2 { margin: 3px 0 0; font-size: 18px; }
 .alert-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
