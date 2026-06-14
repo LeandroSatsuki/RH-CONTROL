@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { IS_DEMO_MODE } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { User } from "../types";
+import nexoLogoMark from "../assets/nexo-logo-mark.png";
 
 export type Page =
   | "dashboard"
@@ -59,7 +60,7 @@ export function Layout({ user, page, onPage, onLogout, children }: Props) {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">NX</div>
+          <img className="brand-logo-mark" src={nexoLogoMark} alt="Nexo" />
           <div><strong>Nexo</strong><span>Custos & Pessoas</span></div>
         </div>
         <nav>
