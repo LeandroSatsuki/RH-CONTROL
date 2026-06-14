@@ -37,6 +37,16 @@ export interface DemoEmployee extends Employment {
   leaves: { period: string; reason: string; days: number }[];
 }
 
+export interface DemoAppUser {
+  id: number;
+  username: string;
+  full_name: string;
+  role: "ADMIN" | "CONSULTANT";
+  active: boolean;
+  password: string;
+  token: string;
+}
+
 export interface DemoMovement {
   id: number;
   company_id: number;
@@ -217,6 +227,7 @@ export interface DemoSettings {
   backup_directory: string;
   auto_backup_on_start: boolean;
   backup_retention: number;
+  job_titles: string[];
 }
 
 export interface DemoBackup {

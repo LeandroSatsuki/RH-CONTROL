@@ -285,14 +285,16 @@ Observação: se o ambiente tiver `ELECTRON_RUN_AS_NODE=1`, o script `desktop:de
 ## Roteiro de Apresentação ao Cliente
 
 1. Login demo: entrar como `admin/admin` para mostrar o perfil Administrador; depois, se útil, entrar como `consultor/consultor` para demonstrar permissões de consulta.
-2. Dashboard geral: apresentar o painel consolidado, cards por Centro de Resultado, alertas do mês, comparação com mês anterior e top 3 custos.
-3. Detalhe por Centro de Resultado: clicar em “Ver detalhes” em ADM, IND, COM ou DIR para mostrar a leitura executiva.
-4. Colaboradores: demonstrar busca, filtros por CR/modalidade/status, tabela completa e ficha lateral com histórico salarial, movimentações, férias, afastamentos e custo estimado.
-5. Movimentações: selecionar competência, filtrar tipos e explicar como eventos mensais alimentam folha e indicadores.
-6. Folha: mostrar resumo geral, resumo por CR, tabela por colaborador e modal “Detalhar custo”.
-7. Indicadores: explicar efetivo, absenteísmo, turnover, custo total, salário per capita e fórmulas exibidas na tela.
-8. Relatórios: abrir a prévia do relatório mensal e acionar exportar Excel/PDF/imprimir em modo demonstração.
-9. Backup: mostrar status, lista de backups e simulação de geração/restauração.
-10. Fechamento mensal: mostrar checklist, status da competência e permissões de fechar/reabrir apenas para Administrador.
-11. Configurações: mostrar empresa, jornada, encargos, modalidades, permissões e backup.
-12. Build: explicar que a demo pode ser entregue como site estático (`frontend/dist`) ou portable Windows (`frontend/release/Nexo-Demo-0.1.0-Portable.exe`).
+2. Dashboard geral: apresentar o painel consolidado e os cards por Centro de Resultado.
+3. Colaboradores: demonstrar busca, filtros por CR/modalidade/status, CPF/CNPJ, matrícula automática, supervisor, cargo/função, CEP, dados bancários, PIX obrigatório e ficha lateral.
+4. Multimodalidade: mostrar CLT, MEI, pró-labore, freelancer e outros nas telas de colaboradores e custo/folha.
+5. Custo / Folha: abrir a tela, usar filtros por competência, CR e modalidade, entrar em modo edição e demonstrar subtotais, encargos, provisões e total geral.
+6. Benefícios: selecionar competência, benefício, modalidade e filtros; travar o filtro, distribuir em lote, ajustar valores individuais, adicionar/remover colaboradores e confirmar exportação.
+7. Fechamento mensal: mostrar que benefícios marcados e não distribuídos geram alerta e exigem justificativa para seguir.
+8. Relatórios: abrir relatórios financeiros, afastamentos e benefícios, usando filtros básicos no topo.
+9. Relatório Maker: montar um relatório personalizado, salvar múltiplos modelos e reabrir respeitando o período filtrado.
+10. Indicadores: abrir a tela de indicadores e comparar custo, turnover, absenteísmo e CRs com gráficos e planilhas no estilo da planilha do cliente.
+11. Contratos MEI: cadastrar contrato, mostrar alerta de não assinado, anexar contrato e conferir mudança para ativo.
+12. Ajustes do sistema: demonstrar multiempresas, configurações por empresa, usuários, cargos/funções, Centros de Resultado, modalidades, importação, backup e logo para relatórios.
+13. Alertas e auditoria: mostrar lembretes operacionais, severidade por cor e registro das ações feitas pelos usuários.
+14. Build: explicar que a demo pode ser entregue como site estático (`frontend/dist`) ou portable Windows (`frontend/release/Nexo-Demo-0.1.0-Portable.exe`).

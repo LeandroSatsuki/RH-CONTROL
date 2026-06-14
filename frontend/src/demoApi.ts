@@ -1,21 +1,17 @@
 import { EmploymentType, ResultCenter, User } from "./types";
 import { consolidatedIndicators, dashboardCards, payrollRows } from "./mocks/demoCalculations";
 import { createDemoBenefitDistributions, createDemoCostAllocations, createDemoEmployees, createDemoMeiContracts, createDemoMovements, demoBenefitDefinitions, demoCompanies, demoCompetencies, demoEmploymentTypes, demoResultCenters } from "./mocks/demoData";
-import { DemoAlert, DemoAuditEntry, DemoBackup, DemoBenefitDefinition, DemoBenefitDistribution, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings } from "./mocks/demoTypes";
+import { DemoAlert, DemoAppUser, DemoAuditEntry, DemoBackup, DemoBenefitDefinition, DemoBenefitDistribution, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings } from "./mocks/demoTypes";
 
 const STORAGE_KEY = "indicadores-demo-state-v6";
 const ALL_COMPANIES_ID = 0;
-
-const demoUsers: Record<string, User & { password: string; token: string }> = {
-  admin: { id: 1, username: "admin", full_name: "Administrador Demo", role: "ADMIN", active: true, password: "admin", token: "demo-admin" },
-  consultor: { id: 2, username: "consultor", full_name: "Consultor Demo", role: "CONSULTANT", active: true, password: "consultor", token: "demo-consultor" }
-};
 
 interface DemoState {
   companies: DemoCompany[];
   resultCenters: ResultCenter[];
   employmentTypes: EmploymentType[];
   employees: DemoEmployee[];
+  users: DemoAppUser[];
   meiContracts: DemoMeiContract[];
   movements: DemoMovement[];
   allocations: DemoCostAllocation[];
@@ -31,6 +27,10 @@ function defaultState(): DemoState {
     resultCenters: demoResultCenters,
     employmentTypes: demoEmploymentTypes,
     employees,
+    users: [
+      { id: 1, username: "admin", full_name: "Administrador Demo", role: "ADMIN", active: true, password: "admin", token: "demo-admin" },
+      { id: 2, username: "consultor", full_name: "Consultor Demo", role: "CONSULTANT", active: true, password: "consultor", token: "demo-consultor" }
+    ],
     meiContracts: createDemoMeiContracts(employees),
     movements: createDemoMovements(employees),
     allocations: createDemoCostAllocations(),
@@ -65,8 +65,15 @@ function loadState(): DemoState {
         ...demoCompanies[0].settings,
         ...company.settings,
         company_logo: company.settings?.company_logo ?? "",
-        payroll_rates: { ...fallbackRates, ...(company.settings?.payroll_rates ?? {}) }
+        payroll_rates: { ...fallbackRates, ...(company.settings?.payroll_rates ?? {}) },
+        job_titles: company.settings?.job_titles ?? demoCompanies[0].settings.job_titles
       }
+    }));
+    parsed.users = (parsed.users ?? defaults.users).map(user => ({
+      ...user,
+      active: user.active ?? true,
+      password: user.password ?? user.username,
+      token: user.token ?? `demo-${user.username.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`
     }));
     parsed.employees = parsed.employees.map((employee, index) => {
       const fallback = defaults.employees[index % defaults.employees.length];
@@ -78,6 +85,7 @@ function loadState(): DemoState {
         neighborhood: employee.neighborhood ?? fallback.neighborhood ?? "",
         city: employee.city ?? fallback.city ?? "",
         state: employee.state ?? fallback.state ?? "",
+        cep: employee.cep ?? fallback.cep ?? "",
         benefits: Array.isArray(employee.benefits) && employee.benefits.length ? employee.benefits : fallback.benefits ?? []
       };
     });
@@ -407,7 +415,8 @@ function cleanUser(user: User & { password: string; token: string }): User {
 }
 
 function getTokenUser(token?: string | null): User | null {
-  const found = Object.values(demoUsers).find(user => user.token === token);
+  const state = loadState();
+  const found = state.users.find(user => user.token === token);
   return found ? cleanUser(found) : null;
 }
 
@@ -443,8 +452,9 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
 
   if (route === "/auth/login" && method === "POST") {
     const payload = body<{ username?: string; password?: string }>(options);
-    const user = payload.username ? demoUsers[payload.username.trim()] : undefined;
-    if (!user || payload.password !== user.password) throw new Error("Usuário ou senha inválidos. Use admin/admin ou consultor/consultor.");
+    const username = String(payload.username ?? "").trim();
+    const user = username ? state.users.find(item => item.username === username) : undefined;
+    if (!user || !user.active || payload.password !== user.password) throw new Error("Usuário ou senha inválidos. Use admin/admin, consultor/consultor ou um usuário cadastrado e ativo.");
     return { access_token: user.token, user: cleanUser(user) } as T;
   }
 
@@ -729,6 +739,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       notes: String(payload.notes ?? ""),
       supervisor_name: String(payload.supervisor_name ?? ""),
       street: String(payload.street ?? ""),
+      cep: String(payload.cep ?? ""),
       address_number: String(payload.address_number ?? ""),
       neighborhood: String(payload.neighborhood ?? ""),
       city: String(payload.city ?? ""),
@@ -849,7 +860,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     assertAdmin(token);
     const movementId = Number(route.split("/")[3]);
     const payload = body<Partial<DemoMovement> & { password?: string }>(options);
-    const currentPassword = demoUsers[currentUser.username as keyof typeof demoUsers]?.password;
+    const currentPassword = state.users.find(item => item.username === currentUser.username)?.password;
     if (!payload.password || payload.password !== currentPassword) {
       throw new Error("Senha de confirmação inválida.");
     }
@@ -946,6 +957,57 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     });
     saveState(state);
     return getCompany(state, companyId).settings as T;
+  }
+  if (route === "/demo/users" && method === "GET") {
+    return state.users.map(cleanUser) as T;
+  }
+  if (route === "/demo/users" && method === "POST") {
+    assertAdmin(token);
+    const payload = body<{ username?: string; full_name?: string; role?: User["role"]; password?: string }>(options);
+    const username = String(payload.username ?? "").trim().toLowerCase();
+    const fullName = String(payload.full_name ?? "").trim();
+    const password = String(payload.password ?? "").trim();
+    const role = (payload.role as User["role"]) ?? "CONSULTANT";
+    if (!username || !fullName || !password) throw new Error("Informe usuário, nome e senha.");
+    if (state.users.some(item => item.username.toLowerCase() === username)) throw new Error("Já existe um usuário com esse login.");
+    const item: DemoAppUser = {
+      id: nextId(state.users),
+      username,
+      full_name: fullName,
+      role,
+      active: true,
+      password,
+      token: `demo-${username.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`
+    };
+    state.users = [...state.users, item];
+    appendAudit(state, {
+      company_id: companyId,
+      module: "Usuários",
+      action: "Usuário cadastrado",
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${item.username} (${item.role})`
+    });
+    saveState(state);
+    return cleanUser(item) as T;
+  }
+  if (route === "/demo/users" && method === "PATCH") {
+    assertAdmin(token);
+    const payload = body<{ id?: number; active?: boolean; password?: string }>(options);
+    const item = state.users.find(user => user.id === Number(payload.id));
+    if (!item) throw new Error("Usuário não encontrado.");
+    if (typeof payload.active === "boolean") item.active = payload.active;
+    if (payload.password) item.password = String(payload.password);
+    appendAudit(state, {
+      company_id: companyId,
+      module: "Usuários",
+      action: "Usuário atualizado",
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${item.username} | ${item.active ? "ativo" : "inativo"}`
+    });
+    saveState(state);
+    return cleanUser(item) as T;
   }
   if (route === "/demo/backups" && method === "GET") return company.backups as T;
   if (route === "/demo/backups" && method === "POST") {

@@ -4,7 +4,7 @@ import { IS_DEMO_MODE, api } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { demoBenefitDefinitions, demoCompetencies, demoResultCenters, demoSettings } from "../mocks/demoData";
-import { DemoAlert, DemoAuditEntry, DemoBackup, DemoBenefitDistribution, DemoClosing, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
+import { DemoAlert, DemoAppUser, DemoAuditEntry, DemoBackup, DemoBenefitDistribution, DemoClosing, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
 import { recalculatePayrollRow } from "../mocks/demoCalculations";
 import { CentersPage, TypesPage } from "./CatalogPages";
 import { User } from "../types";
@@ -286,10 +286,12 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
   const { selectedCompany } = useDemoScope();
   const [competency, setCompetency] = useState("2026-06");
   const [center, setCenter] = useState("");
+  const [employmentType, setEmploymentType] = useState("");
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<PayrollRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [showCenterSummary, setShowCenterSummary] = useState(true);
   const fb = useFeedback();
   const payrollRates = selectedCompany.settings?.payroll_rates ?? demoSettings.payroll_rates;
 
@@ -310,7 +312,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     void load();
   }, [competency, token, selectedCompany.id]);
 
-  const filtered = rows.filter(item => (!center || item.result_center.code === center) && (!query || `${item.employee_name} ${item.result_center.code} ${item.employment_type.name}`.toLowerCase().includes(query.toLowerCase())));
+  const filtered = rows.filter(item => (!center || item.result_center.code === center) && (!employmentType || item.employment_type.name === employmentType) && (!query || `${item.employee_name} ${item.result_center.code} ${item.employment_type.name}`.toLowerCase().includes(query.toLowerCase())));
   const totals = filtered.reduce((acc, item) => ({
     salary: acc.salary + item.salary,
     proLabore: acc.proLabore + item.pro_labore,
@@ -362,7 +364,6 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     success={fb.success}
     actions={
       <>
-        <button className="secondary" onClick={() => downloadPayrollCsv(filtered, selectedCompany, competency)}>Baixar Excel</button>
         <button
           className={editMode ? "primary" : "secondary"}
           onClick={() => {
@@ -389,18 +390,35 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     <div className="panel filters-panel payroll-filters">
       <select value={competency} onChange={e => setCompetency(e.target.value)}>{demoCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       <select value={center} onChange={e => setCenter(e.target.value)}><option value="">Todos os CRs</option>{demoResultCenters.map(item => <option key={item.id} value={item.code}>{item.code}</option>)}</select>
+      <select value={employmentType} onChange={e => setEmploymentType(e.target.value)}>
+        <option value="">Todas as modalidades</option>
+        {Array.from(new Set(rows.map(item => item.employment_type.name))).sort((a, b) => a.localeCompare(b, "pt-BR")).map(type => <option key={type} value={type}>{type}</option>)}
+      </select>
       <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar colaborador ou modalidade" />
     </div>
     <p className="note">Empresa selecionada: <strong>{selectedCompany.id === 0 ? "Todas as empresas" : selectedCompany.name}</strong>. Na visão consolidada, os percentuais podem variar por empresa.</p>
-    <div className="panel list payroll-centers">
-      {Object.entries(centerTotals).map(([code, amount]) => (
-        <div className="list-row payroll-center" key={code}>
-          <span className="color-dot" style={{ background: demoResultCenters.find(item => item.code === code)?.color ?? "#999" }} />
-          <strong>{code}</strong>
-          <span>Total da competência</span>
-          <span>{money.format(amount)}</span>
+    <div className="panel payroll-centers-shell">
+      <div className="payroll-centers-head">
+        <div>
+          <span className="eyebrow">Resumo por Centro</span>
+          <strong>Totais da competência</strong>
         </div>
-      ))}
+        <button className="secondary" type="button" onClick={() => setShowCenterSummary(value => !value)}>
+          {showCenterSummary ? "Recolher" : "Expandir"}
+        </button>
+      </div>
+      {showCenterSummary && (
+        <div className="list payroll-centers">
+          {Object.entries(centerTotals).map(([code, amount]) => (
+            <div className="list-row payroll-center" key={code}>
+              <span className="color-dot" style={{ background: demoResultCenters.find(item => item.code === code)?.color ?? "#999" }} />
+              <strong>{code}</strong>
+              <span>Total da competência</span>
+              <span>{money.format(amount)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
     <DataTable loading={loading} empty="Nenhum registro encontrado." className="payroll-table-shell">
       <table className="payroll-table">
@@ -554,6 +572,9 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
       </table>
       {!filtered.length && !loading && <Empty>Nenhum registro de custo/folha encontrado.</Empty>}
     </DataTable>
+    <div className="payroll-footer">
+      <button className="secondary" type="button" onClick={() => downloadPayrollCsv(filtered, selectedCompany, competency)}>Baixar Excel</button>
+    </div>
   </PageShell>;
 }
 
@@ -1406,13 +1427,17 @@ function formatReportCell(value: unknown, display?: ReportColumn["display"]) {
   return String(value ?? "-");
 }
 
-type SystemSection = "general" | "centers" | "types" | "backup" | "import";
+type SystemSection = "general" | "users" | "centers" | "types" | "backup" | "import";
 
 export function SettingsPage({ token, user }: { token: string; user: User }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [settings, setSettings] = useState<DemoSettings | null>(null);
   const [companyLogo, setCompanyLogo] = useState("");
+  const [jobTitles, setJobTitles] = useState<string[]>(demoSettings.job_titles);
+  const [jobTitleDraft, setJobTitleDraft] = useState("");
+  const [users, setUsers] = useState<DemoAppUser[]>([]);
+  const [userDraft, setUserDraft] = useState({ username: "", full_name: "", password: "", role: "CONSULTANT" as DemoAppUser["role"] });
   const fb = useFeedback();
   const [loading, setLoading] = useState(false);
   const lockedCompany = selectedCompany.id === 0;
@@ -1424,10 +1449,15 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
       setLoading(true);
       fb.setError("");
       try {
-        const response = await api<DemoSettings>("/demo/settings", {}, token);
+        const [response, systemUsers] = await Promise.all([
+          api<DemoSettings>("/demo/settings", {}, token),
+          api<DemoAppUser[]>("/demo/users", {}, token)
+        ]);
         if (active) {
           setSettings(response);
           setCompanyLogo(response.company_logo ?? "");
+          setJobTitles(response.job_titles?.length ? response.job_titles : demoSettings.job_titles);
+          setUsers(systemUsers);
         }
       } catch (err) {
         if (active) fb.fail(err instanceof Error ? err.message : "Erro ao carregar configurações");
@@ -1445,13 +1475,51 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
     if (restricted(user, fb.fail)) return;
     const form = new FormData(event.currentTarget);
     try {
-      const updated = await api<DemoSettings>("/demo/settings", { method: "POST", body: JSON.stringify({ company_name: form.get("company_name"), default_daily_hours: Number(form.get("default_daily_hours")), company_logo: companyLogo }) }, token);
+      const updated = await api<DemoSettings>("/demo/settings", { method: "POST", body: JSON.stringify({ company_name: form.get("company_name"), default_daily_hours: Number(form.get("default_daily_hours")), company_logo: companyLogo, job_titles: jobTitles }) }, token);
       setSettings(updated);
       setCompanyLogo(updated.company_logo ?? companyLogo);
+      setJobTitles(updated.job_titles?.length ? updated.job_titles : jobTitles);
       fb.notify("Configurações salvas em modo demonstração.");
     } catch (err) {
       fb.fail(err instanceof Error ? err.message : "Erro ao salvar configurações");
     }
+  }
+  async function saveUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (restricted(user, fb.fail)) return;
+    try {
+      const created = await api<DemoAppUser>("/demo/users", {
+        method: "POST",
+        body: JSON.stringify(userDraft)
+      }, token);
+      setUsers(current => [created, ...current]);
+      setUserDraft({ username: "", full_name: "", password: "", role: "CONSULTANT" });
+      fb.notify(`Usuário ${created.username} cadastrado com sucesso.`);
+    } catch (err) {
+      fb.fail(err instanceof Error ? err.message : "Erro ao cadastrar usuário");
+    }
+  }
+  async function toggleUserActive(item: DemoAppUser) {
+    if (restricted(user, fb.fail)) return;
+    try {
+      const updated = await api<DemoAppUser>("/demo/users", {
+        method: "PATCH",
+        body: JSON.stringify({ id: item.id, active: !item.active })
+      }, token);
+      setUsers(current => current.map(currentUser => currentUser.id === updated.id ? { ...currentUser, active: updated.active } : currentUser));
+      fb.notify(`Usuário ${updated.username} ${updated.active ? "ativado" : "inativado"}.`);
+    } catch (err) {
+      fb.fail(err instanceof Error ? err.message : "Erro ao atualizar usuário");
+    }
+  }
+  function addJobTitle() {
+    const value = jobTitleDraft.trim();
+    if (!value) return;
+    setJobTitles(current => current.some(item => item.toLowerCase() === value.toLowerCase()) ? current : [...current, value]);
+    setJobTitleDraft("");
+  }
+  function removeJobTitle(value: string) {
+    setJobTitles(current => current.filter(item => item !== value));
   }
   function handleLogoUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -1469,6 +1537,7 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
   return <PageShell title="Ajustes do sistema" subtitle={`Área administrativa da empresa ${selectedCompany.name}. Cadastros, backup e importação ficam reunidos aqui.`} error={fb.error} success={fb.success}>
     <div className="segment-tabs">
       <button className={section === "general" ? "active" : ""} onClick={() => setSection("general")}>Geral</button>
+      <button className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>Usuários</button>
       <button className={section === "centers" ? "active" : ""} onClick={() => setSection("centers")}>Centros de Resultado</button>
       <button className={section === "types" ? "active" : ""} onClick={() => setSection("types")}>Modalidades</button>
       <button className={section === "backup" ? "active" : ""} onClick={() => setSection("backup")}>Backup</button>
@@ -1478,9 +1547,49 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
       <SectionCard title="Empresa"><label>Nome<input name="company_name" defaultValue={settings?.company_name ?? selectedCompany.name} disabled={user.role !== "ADMIN"} /></label><InfoLine label="CNPJ" value={settings?.cnpj ?? "-"} /><InfoLine label="Mês inicial" value={settings?.initial_month ?? "-"} /><div className="logo-upload"><label>Logo da empresa<input type="file" accept="image/*" onChange={handleLogoUpload} disabled={user.role !== "ADMIN"} /></label>{companyLogo ? <img className="company-logo-preview" src={companyLogo} alt={`Logo de ${settings?.company_name ?? selectedCompany.name}`} /> : <div className="company-logo-placeholder">Nenhum logo enviado</div>}</div></SectionCard>
       <SectionCard title="Jornada"><label>Jornada padrão<input name="default_daily_hours" type="number" step="0.1" defaultValue={settings?.default_daily_hours ?? 8.8} disabled={user.role !== "ADMIN"} /></label><InfoLine label="Considerar sábado" value={settings?.include_saturdays ? "Sim" : "Não"} /><InfoLine label="Feriados" value={settings?.holidays.join(", ") ?? ""} /></SectionCard>
       <SectionCard title="Encargos">{settings?.charges.map(item => <InfoLine key={item.name} label={item.name} value={`${item.rate}%`} />)}</SectionCard>
+      <SectionCard title="Cargos e funções">
+        <div className="inline-form">
+          <input value={jobTitleDraft} onChange={event => setJobTitleDraft(event.target.value)} placeholder="Novo cargo" disabled={user.role !== "ADMIN"} />
+          <button className="secondary" type="button" onClick={addJobTitle} disabled={user.role !== "ADMIN"}>Adicionar</button>
+        </div>
+        <div className="chip-list">
+          {jobTitles.map(title => <button key={title} type="button" className="chip-button" onClick={() => removeJobTitle(title)} disabled={user.role !== "ADMIN"}>{title} ×</button>)}
+        </div>
+      </SectionCard>
       <SectionCard title="Usuários e permissões"><InfoLine label="Administrador" value="Controle total" /><InfoLine label="Consultor" value="Consulta e exportação" /></SectionCard>
       {user.role === "ADMIN" && <button className="primary">Salvar configurações</button>}
     </form>}
+    {section === "users" && <section className="panel report-saved-panel">
+      <div className="report-saved-head">
+        <div>
+          <span className="eyebrow">Cadastro de acesso</span>
+          <h2>Usuários do sistema</h2>
+          <p>Cadastre usuários que poderão acessar o sistema demo com perfil de administrador ou consultor.</p>
+        </div>
+        <span className="report-saved-count">{users.length} usuário(s)</span>
+      </div>
+      <ErrorMessage message={fb.error} />
+      <SuccessMessage message={fb.success} />
+      <form className="panel form-grid compact" onSubmit={saveUser}>
+        <label>Usuário<input value={userDraft.username} onChange={event => setUserDraft(current => ({ ...current, username: event.target.value.replace(/\s+/g, "").toLowerCase() }))} placeholder="nome_login" disabled={user.role !== "ADMIN"} required /></label>
+        <label>Nome completo<input value={userDraft.full_name} onChange={event => setUserDraft(current => ({ ...current, full_name: event.target.value }))} placeholder="Nome e sobrenome" disabled={user.role !== "ADMIN"} required /></label>
+        <label>Senha<input value={userDraft.password} onChange={event => setUserDraft(current => ({ ...current, password: event.target.value }))} placeholder="Senha de acesso" disabled={user.role !== "ADMIN"} required /></label>
+        <label>Perfil<select value={userDraft.role} onChange={event => setUserDraft(current => ({ ...current, role: event.target.value as DemoAppUser["role"] }))} disabled={user.role !== "ADMIN"}><option value="CONSULTANT">Consultor</option><option value="ADMIN">Administrador</option></select></label>
+        {user.role === "ADMIN" && <button className="primary" type="submit">Cadastrar usuário</button>}
+      </form>
+      <div className="panel report-template-list">
+        {users.map(item => <div key={item.id} className="report-template-item">
+          <div>
+            <strong>{item.full_name}</strong>
+            <p>@{item.username} • {item.role === "ADMIN" ? "Administrador" : "Consultor"} • {item.active ? "Ativo" : "Inativo"}</p>
+          </div>
+          <div className="drawer-actions">
+            <button className="secondary" type="button" onClick={() => toggleUserActive(item)} disabled={user.role !== "ADMIN"}>{item.active ? "Inativar" : "Ativar"}</button>
+          </div>
+        </div>)}
+        {!users.length && <Empty>Nenhum usuário cadastrado.</Empty>}
+      </div>
+    </section>}
     {section === "centers" && <CentersPage token={token} user={user} embedded />}
     {section === "types" && <TypesPage token={token} user={user} embedded />}
     {section === "backup" && <BackupPage token={token} user={user} embedded />}

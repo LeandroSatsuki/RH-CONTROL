@@ -53,6 +53,7 @@ export interface Employment {
   neighborhood: string;
   city: string;
   state: string;
+  cep: string;
   bank_name: string;
   bank_agency: string;
   bank_account: string;

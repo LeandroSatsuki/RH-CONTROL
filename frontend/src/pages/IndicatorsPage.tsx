@@ -324,6 +324,20 @@ function createDerivedDirSheet(card: NonNullable<DashboardResponseDemo["cards"]>
   };
 }
 
+function cloneFinanceRows(rows: FinanceRow[]) {
+  return rows.map(row => ({ ...row }));
+}
+
+function recalculateFinanceRow(row: FinanceRow) {
+  return {
+    ...row,
+    percent: row.faturamento > 0 ? row.custo / row.faturamento : 0,
+    costPerMetric: row.metric > 0 ? row.custo / row.metric : 0
+  };
+}
+
+type PresentationTarget = "all" | "cost" | "operational" | "finance" | "turnover" | "absenteeism";
+
 export function IndicatorsPage({ token }: { token: string }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
@@ -333,6 +347,9 @@ export function IndicatorsPage({ token }: { token: string }) {
   const [summary, setSummary] = useState<IndicatorSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [presentationTarget, setPresentationTarget] = useState<PresentationTarget | null>(null);
+  const [financeEditMode, setFinanceEditMode] = useState(false);
+  const [financeDrafts, setFinanceDrafts] = useState<Partial<Record<CenterCode, FinanceRow[]>>>({});
 
   useEffect(() => {
     let active = true;
@@ -365,6 +382,28 @@ export function IndicatorsPage({ token }: { token: string }) {
     return indicatorSheets[selectedCenter];
   }, [selectedCenter, selectedCard]);
   const comparativeCards = dashboard?.cards ?? [];
+  const financeRows = financeDrafts[selectedCenter] ?? sheet.financeRows;
+
+  useEffect(() => {
+    setFinanceDrafts(previous => {
+      if (previous[selectedCenter]) return previous;
+      return { ...previous, [selectedCenter]: cloneFinanceRows(sheet.financeRows) };
+    });
+  }, [selectedCenter, sheet.financeRows]);
+
+  function updateFinanceRow(month: string, field: "faturamento" | "custo", rawValue: number) {
+    setFinanceDrafts(previous => {
+      const baseRows = previous[selectedCenter] ?? cloneFinanceRows(sheet.financeRows);
+      const nextRows = baseRows.map(row => {
+        if (row.month !== month) return row;
+        const updated = field === "faturamento" ? { ...row, faturamento: rawValue } : { ...row, custo: rawValue };
+        return recalculateFinanceRow(updated);
+      });
+      return { ...previous, [selectedCenter]: nextRows };
+    });
+  }
+
+  const financeChartRows = financeRows;
 
   const summaryCards = summary ? [
     { label: "Efetivo inicial", value: summary.initial_headcount },
@@ -377,13 +416,300 @@ export function IndicatorsPage({ token }: { token: string }) {
     { label: "Custo total", value: money.format(summary.total_cost), strong: true }
   ] : [];
 
+  function renderCostSection(presentation = false) {
+    return (
+      <section className="panel indicator-sheet indicator-section">
+        <div className="indicator-sheet-header">
+          <div>
+            <span className="eyebrow">Custo Total (+ Provisões)</span>
+            <h2>{sheet.title}</h2>
+          </div>
+          <div className="indicator-header-actions">
+            <span className="indicator-chip">{sheet.subtitle}</span>
+            {!presentation && (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setPresentationTarget("cost")}
+                aria-label="Abrir Custo Total (+ Provisões) em modo de exibição"
+              >
+                ⤢
+              </button>
+            )}
+          </div>
+        </div>
+        <IndicatorTable
+          className="indicator-cost-table"
+          title="Custo Total (+ Provisões)"
+          monthColumns={months}
+          rows={sheet.costRows}
+          formatter={value => money.format(value)}
+        />
+      </section>
+    );
+  }
+
+  function renderOperationalSection(presentation = false) {
+    return (
+      <section className="panel indicator-sheet indicator-section">
+        <div className="indicator-sheet-header">
+          <div>
+            <span className="eyebrow">Indicadores operacionais</span>
+            <h2>{sheet.title}</h2>
+          </div>
+          <div className="indicator-header-actions">
+            <span className="indicator-chip">Jan a Dez</span>
+            {!presentation && (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setPresentationTarget("operational")}
+                aria-label="Abrir Indicadores operacionais em modo de exibição"
+              >
+                ⤢
+              </button>
+            )}
+          </div>
+        </div>
+        <IndicatorTable
+          className="indicator-operational-table"
+          title="Indicadores operacionais"
+          monthColumns={months}
+          rows={sheet.operationalRows}
+          formatter={value => plainValue(value)}
+        />
+      </section>
+    );
+  }
+
+  function renderFinanceSection(presentation = false) {
+    const financeHeaders = ["Faturam.", "Custo", "%", "Meta", sheet.financeMetricLabel, `Custo/${sheet.financeMetricLabel.replace(/\s+/g, "")}`];
+    return (
+      <section className="panel indicator-chart-panel indicator-section">
+        <div className="indicator-sheet-header">
+          <div>
+            <span className="eyebrow">Custo / Faturamento</span>
+            <h2>Comparação mensal</h2>
+          </div>
+          <div className="indicator-header-actions">
+            <span className="indicator-chip">{sheet.financeMetricLabel}</span>
+            {!presentation && (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setPresentationTarget("finance")}
+                aria-label="Abrir Custo / Faturamento em modo de exibição"
+              >
+                ⤢
+              </button>
+            )}
+            {!presentation && (
+              <button
+                type="button"
+                className={`icon-button ${financeEditMode ? "active" : ""}`}
+                onClick={() => setFinanceEditMode(value => !value)}
+                aria-label="Alternar edição de Custo / Faturamento"
+              >
+                ✎
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="indicator-section-note">
+          {financeEditMode && !presentation ? "Edição local de faturamento e custo ativada." : "Dados consolidados por competência e centro de resultado."}
+        </div>
+        <div className="indicator-topic-stack">
+          <div className="indicator-table-shell indicator-finance-table-shell">
+            <div className="indicator-table-title">Custo / Faturamento</div>
+            <table className="indicator-table indicator-finance-table">
+              <thead>
+                <tr>
+                  <th>Linha</th>
+                  {financeHeaders.map(label => <th key={label}>{label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {financeChartRows.map(row => (
+                  <tr key={row.month}>
+                    <td className="row-label">{row.month}</td>
+                    <td>
+                      {financeEditMode && !presentation ? (
+                        <input
+                          className="indicator-inline-input"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={Number.isFinite(row.faturamento) ? row.faturamento : 0}
+                          onChange={event => updateFinanceRow(row.month, "faturamento", Number(event.target.value || 0))}
+                        />
+                      ) : money.format(row.faturamento)}
+                    </td>
+                    <td>
+                      {financeEditMode && !presentation ? (
+                        <input
+                          className="indicator-inline-input"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={Number.isFinite(row.custo) ? row.custo : 0}
+                          onChange={event => updateFinanceRow(row.month, "custo", Number(event.target.value || 0))}
+                        />
+                      ) : money.format(row.custo)}
+                    </td>
+                    <td>{percent.format(row.percent)}</td>
+                    <td>{percent.format(row.meta)}</td>
+                    <td>{money.format(row.metric)}</td>
+                    <td>{money.format(row.costPerMetric)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ComboChart
+            title="Custo / Faturamento"
+            labels={financeChartRows.map(row => row.month)}
+            barSeries={[
+              { label: "Faturam.", values: financeChartRows.map(row => row.faturamento), color: "#1d5d88" },
+              { label: "Custo", values: financeChartRows.map(row => row.custo), color: "#ee7b33" }
+            ]}
+            lineSeries={[
+              { label: "%", values: financeChartRows.map(row => row.percent * 100), color: "#2b7a35" },
+              { label: "Meta", values: financeChartRows.map(row => row.meta * 100), color: "#17a2c7" }
+            ]}
+            yFormat={value => formatMoneyCompact(value)}
+            rightAxisFormat={value => `${decimal.format(value)}%`}
+          />
+        </div>
+      </section>
+    );
+  }
+
+  function renderTurnoverSection(presentation = false) {
+    return (
+      <section className="panel indicator-chart-panel indicator-section">
+        <div className="indicator-sheet-header">
+          <div>
+            <span className="eyebrow">Turnover</span>
+            <h2>Rotatividade de pessoal</h2>
+          </div>
+          <div className="indicator-header-actions">
+            <span className="indicator-chip">Meta {percent.format(sheet.turnoverMeta)}</span>
+            {!presentation && (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setPresentationTarget("turnover")}
+                aria-label="Abrir Turnover em modo de exibição"
+              >
+                ⤢
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="indicator-topic-stack">
+          <IndicatorTable
+            className="indicator-turnover-table"
+            title="Turnover"
+            monthColumns={months}
+            rows={sheet.turnoverRows.map(row => ({
+              label: row.month,
+              values: [row.admissions, row.terminations, row.employees, row.turnover * 100, row.average * 100, row.meta * 100],
+              total: row.turnover
+            }))}
+            formatter={(value, columnIndex) => {
+              if (columnIndex < 3) return plainValue(value);
+              return `${decimal.format(value)}%`;
+            }}
+            headerLabels={["Admissões", "Desligamentos", "Colaboradores", "Turnover", "Média", "Meta"]}
+            compact
+          />
+          <ComboChart
+            title="Turnover 2026"
+            labels={sheet.turnoverRows.map(row => row.month)}
+            barSeries={[
+              { label: "Turnover", values: sheet.turnoverRows.map(row => row.turnover * 100), color: "#1d5d88" }
+            ]}
+            lineSeries={[
+              { label: "Média", values: sheet.turnoverRows.map(row => row.average * 100), color: "#ee7b33" },
+              { label: "Meta", values: sheet.turnoverRows.map(row => row.meta * 100), color: "#2b7a35" }
+            ]}
+            yFormat={value => `${decimal.format(value)}%`}
+            rightAxisFormat={value => `${decimal.format(value)}%`}
+          />
+        </div>
+      </section>
+    );
+  }
+
+  function renderAbsenteeismSection(presentation = false) {
+    return (
+      <section className="panel indicator-chart-panel indicator-section">
+        <div className="indicator-sheet-header">
+          <div>
+            <span className="eyebrow">Absenteísmo</span>
+            <h2>Ausências no trabalho</h2>
+          </div>
+          <div className="indicator-header-actions">
+            <span className="indicator-chip">Meta {percent.format(sheet.absenteeismMeta)}</span>
+            {!presentation && (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setPresentationTarget("absenteeism")}
+                aria-label="Abrir Absenteísmo em modo de exibição"
+              >
+                ⤢
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="indicator-topic-stack">
+          <IndicatorTable
+            className="indicator-absenteeism-table"
+            title="Absenteísmo"
+            monthColumns={months}
+            rows={sheet.absenteeismRows.map(row => ({
+              label: row.month,
+              values: [row.planned, row.unproductive, row.absenteeism * 100, row.average * 100, row.meta * 100],
+              total: row.absenteeism
+            }))}
+            formatter={(value, columnIndex) => {
+              if (columnIndex < 2) return plainValue(value);
+              return `${decimal.format(value)}%`;
+            }}
+            headerLabels={["H Program", "H. N. Prod.", "Absenteísmo", "Média", "Meta"]}
+            compact
+          />
+          <ComboChart
+            title="Absenteísmo 2026"
+            labels={sheet.absenteeismRows.map(row => row.month)}
+            barSeries={[
+              { label: "Absenteísmo", values: sheet.absenteeismRows.map(row => row.absenteeism * 100), color: "#1d5d88" }
+            ]}
+            lineSeries={[
+              { label: "Média", values: sheet.absenteeismRows.map(row => row.average * 100), color: "#ee7b33" },
+              { label: "Meta", values: sheet.absenteeismRows.map(row => row.meta * 100), color: "#2b7a35" }
+            ]}
+            yFormat={value => `${decimal.format(value)}%`}
+            rightAxisFormat={value => `${decimal.format(value)}%`}
+          />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <PageShell title="Indicadores" subtitle={`Leitura da competência por Centro de Resultado na empresa ${selectedCompany.name}.`} error={error}>
       <div className="panel indicator-topbar">
-        <div className="indicator-tabs">
-          {demoCompetencies.map(item => (
-            <button key={item.id} className={competency === item.id ? "active" : ""} onClick={() => setCompetency(item.id)}>{item.label}</button>
-          ))}
+        <div className="indicator-topbar-head">
+          <div className="indicator-tabs">
+            {demoCompetencies.map(item => (
+              <button key={item.id} className={competency === item.id ? "active" : ""} onClick={() => setCompetency(item.id)}>{item.label}</button>
+            ))}
+          </div>
+          <button type="button" className="secondary indicator-present-all" onClick={() => setPresentationTarget("all")}>
+            Apresentar todos
+          </button>
         </div>
         <div className="indicator-tabs center-tabs">
           {demoResultCenters.map(center => (
@@ -394,21 +720,6 @@ export function IndicatorsPage({ token }: { token: string }) {
 
       <div className="summary-grid indicators">
         {summaryCards.map(item => <Summary key={item.label} label={item.label} value={item.value} strong={item.strong} />)}
-      </div>
-
-      <div className="indicator-overview">
-        <div className="panel indicator-callout">
-          <strong>Turnover</strong>
-          <p>Taxa na qual os profissionais saem e são substituídos no período. Até 3% é excelente para ADM; acima de 7% pede atenção imediata.</p>
-        </div>
-        <div className="panel indicator-callout">
-          <strong>Absenteísmo</strong>
-          <p>Medida das ausências não planejadas. Até 2% é excelente; acima de 4% já é sinal de alerta para investigar o motivo.</p>
-        </div>
-        <div className="panel indicator-callout compact">
-          <strong>Comparativo por CR</strong>
-          <p>Use os cards abaixo para ver o comportamento de ADM, IND, COM e DIR lado a lado.</p>
-        </div>
       </div>
 
       <div className="indicator-center-comparison">
@@ -423,171 +734,60 @@ export function IndicatorsPage({ token }: { token: string }) {
         ))}
       </div>
 
-      <div className="indicator-grid">
-        <section className="panel indicator-sheet">
-          <div className="indicator-sheet-header">
-            <div>
-              <span className="eyebrow">Custo Total (+ Provisões)</span>
-              <h2>{sheet.title}</h2>
-            </div>
-            <span className="indicator-chip">{sheet.subtitle}</span>
-          </div>
-          <IndicatorTable
-            className="indicator-cost-table"
-            title="Custo Total (+ Provisões)"
-            monthColumns={months}
-            rows={sheet.costRows}
-            formatter={value => money.format(value)}
-          />
-        </section>
-
-        <section className="panel indicator-sheet">
-          <div className="indicator-sheet-header">
-            <div>
-              <span className="eyebrow">Operacional</span>
-              <h2>{sheet.title}</h2>
-            </div>
-            <span className="indicator-chip">Jan a Dez</span>
-          </div>
-          <IndicatorTable
-            className="indicator-operational-table"
-            title="Indicadores operacionais"
-            monthColumns={months}
-            rows={sheet.operationalRows}
-            formatter={value => plainValue(value)}
-          />
-        </section>
+      <div className="indicator-stack">
+        {renderCostSection()}
+        {renderOperationalSection()}
+        {renderFinanceSection()}
+        {renderTurnoverSection()}
+        {renderAbsenteeismSection()}
       </div>
 
-      <div className="indicator-grid lower">
-        <section className="panel indicator-chart-panel">
-          <div className="indicator-sheet-header">
-            <div>
-              <span className="eyebrow">Custo / Faturamento</span>
-              <h2>Comparação mensal</h2>
+      {presentationTarget && (
+        <div className="presentation-modal" role="dialog" aria-modal="true" onClick={() => setPresentationTarget(null)}>
+          <div className="presentation-modal-panel" onClick={event => event.stopPropagation()}>
+            <div className="presentation-modal-header">
+              <div>
+                <span className="eyebrow">Modo de exibição</span>
+                <h2>
+                  {presentationTarget === "all"
+                    ? "Todos os indicadores"
+                    : presentationTarget === "cost"
+                      ? "Custo Total (+ Provisões)"
+                      : presentationTarget === "operational"
+                        ? "Indicadores operacionais"
+                        : presentationTarget === "finance"
+                          ? "Custo / Faturamento"
+                          : presentationTarget === "turnover"
+                            ? "Turnover"
+                            : "Absenteísmo"}
+                </h2>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setPresentationTarget(null)} aria-label="Fechar apresentação">
+                ✕
+              </button>
             </div>
-            <span className="indicator-chip">{sheet.financeMetricLabel}</span>
-          </div>
-          <div className="indicator-finance-layout">
-            <IndicatorTable
-              className="indicator-finance-table"
-              title="Custo / Faturamento"
-              monthColumns={months}
-              rows={sheet.financeRows.map(row => ({
-                label: row.month,
-                values: [row.faturamento, row.custo, row.percent * 100, row.meta * 100, row.metric, row.costPerMetric],
-                total: row.custo
-              }))}
-              formatter={(value, columnIndex) => {
-                if (columnIndex === 0 || columnIndex === 1 || columnIndex === 4 || columnIndex === 5) return money.format(value);
-                return `${decimal.format(value)}%`;
-              }}
-              headerLabels={["Faturam.", "Custo", "%", "Meta", sheet.financeMetricLabel, "Custo/" + sheet.financeMetricLabel.replace(/\s+/g, "")]}
-              compact
-            />
-            <ComboChart
-              title="Custo / Faturamento"
-              labels={sheet.financeRows.map(row => row.month)}
-              barSeries={[
-                { label: "Faturam.", values: sheet.financeRows.map(row => row.faturamento), color: "#1d5d88" },
-                { label: "Custo", values: sheet.financeRows.map(row => row.custo), color: "#ee7b33" }
-              ]}
-              lineSeries={[
-                { label: "%", values: sheet.financeRows.map(row => row.percent * 100), color: "#2b7a35" },
-                { label: "Meta", values: sheet.financeRows.map(row => row.meta * 100), color: "#17a2c7" }
-              ]}
-              yFormat={value => formatMoneyCompact(value)}
-              rightAxisFormat={value => `${decimal.format(value)}%`}
-            />
-          </div>
-        </section>
-      </div>
-
-      <div className="indicator-grid lower">
-        <section className="panel indicator-chart-panel">
-          <div className="indicator-sheet-header">
-            <div>
-              <span className="eyebrow">Turnover</span>
-              <h2>Rotatividade de pessoal</h2>
+            <div className="presentation-modal-body">
+              {presentationTarget === "all" ? (
+                <div className="presentation-stack">
+                  {renderCostSection(true)}
+                  {renderOperationalSection(true)}
+                  {renderFinanceSection(true)}
+                  {renderTurnoverSection(true)}
+                  {renderAbsenteeismSection(true)}
+                </div>
+              ) : (
+                <div className="presentation-stack">
+                  {presentationTarget === "cost" && renderCostSection(true)}
+                  {presentationTarget === "operational" && renderOperationalSection(true)}
+                  {presentationTarget === "finance" && renderFinanceSection(true)}
+                  {presentationTarget === "turnover" && renderTurnoverSection(true)}
+                  {presentationTarget === "absenteeism" && renderAbsenteeismSection(true)}
+                </div>
+              )}
             </div>
-            <span className="indicator-chip">Meta {percent.format(sheet.turnoverMeta)}</span>
           </div>
-          <div className="indicator-finance-layout">
-            <IndicatorTable
-              className="indicator-turnover-table"
-              title="Turnover"
-              monthColumns={months}
-              rows={sheet.turnoverRows.map(row => ({
-                label: row.month,
-                values: [row.admissions, row.terminations, row.employees, row.turnover * 100, row.average * 100, row.meta * 100],
-                total: row.turnover
-              }))}
-              formatter={(value, columnIndex) => {
-                if (columnIndex < 3) return plainValue(value);
-                return `${decimal.format(value)}%`;
-              }}
-              headerLabels={["Admissões", "Desligamentos", "Colaboradores", "Turnover", "Média", "Meta"]}
-              compact
-            />
-            <ComboChart
-              title="Turnover 2026"
-              labels={sheet.turnoverRows.map(row => row.month)}
-              barSeries={[
-                { label: "Turnover", values: sheet.turnoverRows.map(row => row.turnover * 100), color: "#1d5d88" }
-              ]}
-              lineSeries={[
-                { label: "Média", values: sheet.turnoverRows.map(row => row.average * 100), color: "#ee7b33" },
-                { label: "Meta", values: sheet.turnoverRows.map(row => row.meta * 100), color: "#2b7a35" }
-              ]}
-              yFormat={value => `${decimal.format(value)}%`}
-              rightAxisFormat={value => `${decimal.format(value)}%`}
-            />
-          </div>
-        </section>
-      </div>
-
-      <div className="indicator-grid lower">
-        <section className="panel indicator-chart-panel">
-          <div className="indicator-sheet-header">
-            <div>
-              <span className="eyebrow">Absenteísmo</span>
-              <h2>Ausências no trabalho</h2>
-            </div>
-            <span className="indicator-chip">Meta {percent.format(sheet.absenteeismMeta)}</span>
-          </div>
-          <div className="indicator-finance-layout">
-            <IndicatorTable
-              className="indicator-absenteeism-table"
-              title="Absenteísmo"
-              monthColumns={months}
-              rows={sheet.absenteeismRows.map(row => ({
-                label: row.month,
-                values: [row.planned, row.unproductive, row.absenteeism * 100, row.average * 100, row.meta * 100],
-                total: row.absenteeism
-              }))}
-              formatter={(value, columnIndex) => {
-                if (columnIndex < 2) return plainValue(value);
-                return `${decimal.format(value)}%`;
-              }}
-              headerLabels={["H Program", "H. N. Prod.", "Absenteísmo", "Média", "Meta"]}
-              compact
-            />
-            <ComboChart
-              title="Absenteísmo 2026"
-              labels={sheet.absenteeismRows.map(row => row.month)}
-              barSeries={[
-                { label: "Absenteísmo", values: sheet.absenteeismRows.map(row => row.absenteeism * 100), color: "#1d5d88" }
-              ]}
-              lineSeries={[
-                { label: "Média", values: sheet.absenteeismRows.map(row => row.average * 100), color: "#ee7b33" },
-                { label: "Meta", values: sheet.absenteeismRows.map(row => row.meta * 100), color: "#2b7a35" }
-              ]}
-              yFormat={value => `${decimal.format(value)}%`}
-              rightAxisFormat={value => `${decimal.format(value)}%`}
-            />
-          </div>
-        </section>
-      </div>
+        </div>
+      )}
     </PageShell>
   );
 }
@@ -675,14 +875,18 @@ function ComboChart({
   yFormat: (value: number) => string;
   rightAxisFormat?: (value: number) => string;
 }) {
-  const width = 760;
-  const height = 300;
-  const padding = { top: 28, right: 56, bottom: 42, left: 54 };
+  const width = 1260;
+  const height = 448;
+  const padding = { top: 32, right: 66, bottom: 58, left: 68 };
+  const xScale = 1;
+  const availableWidth = width - padding.left - padding.right;
+  const chartWidth = availableWidth * xScale;
+  const chartLeft = padding.left + (availableWidth - chartWidth) / 2;
+  const chartRight = chartLeft + chartWidth;
   const barMax = Math.max(...barSeries.flatMap(series => series.values), 1);
   const lineMax = Math.max(...lineSeries.flatMap(series => series.values), 1);
   const scaleBarY = (value: number) => height - padding.bottom - (value / barMax) * (height - padding.top - padding.bottom);
   const scaleLineY = (value: number) => height - padding.bottom - (value / lineMax) * (height - padding.top - padding.bottom);
-  const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const bandWidth = chartWidth / labels.length;
   const barWidth = Math.min(18, bandWidth / (barSeries.length + 1));
@@ -697,9 +901,9 @@ function ComboChart({
           const rightValue = lineMax * (1 - fraction);
           return (
             <g key={index}>
-              <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="chart-grid-line" />
+              <line x1={chartLeft} x2={chartRight} y1={y} y2={y} className="chart-grid-line" />
               <text x={padding.left - 10} y={y + 4} textAnchor="end" className="chart-axis-text">{yFormat(value)}</text>
-              {rightAxisFormat && <text x={width - padding.right + 8} y={y + 4} className="chart-axis-text">{rightAxisFormat(rightValue)}</text>}
+              {rightAxisFormat && <text x={chartRight + 8} y={y + 4} className="chart-axis-text">{rightAxisFormat(rightValue)}</text>}
             </g>
           );
         })}
@@ -707,7 +911,7 @@ function ComboChart({
         {barSeries.map((series, seriesIndex) => (
           <g key={series.label}>
             {series.values.map((value, index) => {
-              const x = padding.left + index * bandWidth + (seriesIndex + 0.5) * barWidth;
+              const x = chartLeft + index * bandWidth + (seriesIndex + 0.5) * barWidth;
               const y = scaleBarY(value);
               return <rect key={`${series.label}-${index}`} x={x} y={y} width={barWidth} height={height - padding.bottom - y} fill={series.color} rx="2" />;
             })}
@@ -715,19 +919,19 @@ function ComboChart({
         ))}
 
         {lineSeries.map(series => {
-          const points = series.values.map((value, index) => `${padding.left + index * bandWidth + bandWidth / 2},${scaleLineY(value)}`).join(" ");
+          const points = series.values.map((value, index) => `${chartLeft + index * bandWidth + bandWidth / 2},${scaleLineY(value)}`).join(" ");
           return (
             <g key={series.label}>
               <polyline points={points} fill="none" stroke={series.color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
               {series.values.map((value, index) => (
-                <circle key={`${series.label}-${index}`} cx={padding.left + index * bandWidth + bandWidth / 2} cy={scaleLineY(value)} r="3.5" fill={series.color} />
+                <circle key={`${series.label}-${index}`} cx={chartLeft + index * bandWidth + bandWidth / 2} cy={scaleLineY(value)} r="3.5" fill={series.color} />
               ))}
             </g>
           );
         })}
 
         {labels.map((label, index) => (
-          <text key={label} x={padding.left + index * bandWidth + bandWidth / 2} y={height - 12} textAnchor="middle" className="chart-axis-text">{label}</text>
+          <text key={label} x={chartLeft + index * bandWidth + bandWidth / 2} y={height - 12} textAnchor="middle" className="chart-axis-text">{label}</text>
         ))}
       </svg>
       <div className="chart-legend">

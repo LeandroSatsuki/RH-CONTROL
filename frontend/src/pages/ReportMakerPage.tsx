@@ -29,6 +29,7 @@ interface SelectedField {
 interface ReportTemplate {
   id: number;
   name: string;
+  competency?: string;
   source: SourceName;
   groupBy: string;
   fields: SelectedField[];
@@ -87,7 +88,6 @@ const fieldLibrary: FieldMeta[] = [
   { id: "payroll_meal", source: "Custo / Folha", label: "Alimentação", display: "currency", extractor: row => Number(row.meal ?? 0) },
   { id: "payroll_health", source: "Custo / Folha", label: "Plano de saúde", display: "currency", extractor: row => Number(row.health_plan ?? 0) },
   { id: "payroll_insurance", source: "Custo / Folha", label: "Seguro de vida", display: "currency", extractor: row => Number(row.insurance ?? 0) },
-  { id: "payroll_total", source: "Custo / Folha", label: "Total geral", display: "currency", extractor: row => Number(row.grand_total ?? 0) },
 
   { id: "abs_employee", source: "Afastamentos", label: "Colaborador", extractor: row => row.employee_name ?? "" },
   { id: "abs_center", source: "Afastamentos", label: "Centro de Resultado", extractor: row => row.center ?? row.result_center?.code ?? "" },
@@ -101,9 +101,19 @@ const sourceDefaults: Record<SourceName, string[]> = {
   "Colaboradores": ["employee_name", "center", "supervisor", "state", "employment_type", "salary_base"],
   "Movimentações": ["movement_employee", "movement_center", "movement_type", "movement_days", "movement_hours"],
   "Benefícios": ["benefit_employee", "benefit_center", "benefit_name", "benefit_days", "benefit_value_day", "benefit_amount"],
-  "Custo / Folha": ["payroll_employee", "payroll_center", "payroll_transport", "payroll_meal", "payroll_health", "payroll_insurance", "payroll_total"],
+  "Custo / Folha": ["payroll_employee", "payroll_center", "payroll_transport", "payroll_meal", "payroll_health", "payroll_insurance"],
   "Afastamentos": ["abs_employee", "abs_center", "abs_type", "abs_days", "abs_hours", "abs_observation"]
 };
+
+const hiddenFieldIds = new Set([
+  "payroll_employee",
+  "payroll_center",
+  "payroll_salary",
+  "payroll_transport",
+  "payroll_meal",
+  "payroll_health",
+  "payroll_insurance"
+]);
 
 export function ReportMakerPage({ token, user }: { token: string; user: User }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
@@ -126,6 +136,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
   const [templates, setTemplates] = useState<ReportTemplate[]>(loadTemplates());
   const [activeTemplateId, setActiveTemplateId] = useState<number | null>(null);
   const [templateSearch, setTemplateSearch] = useState("");
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const applyingTemplate = useRef(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -170,8 +181,6 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
   const filteredRows = useMemo(() => sourceRows.filter(row => applyFilters(row, { filterCenter, filterState, filterType, filterBenefit, query })), [filterBenefit, filterCenter, filterState, filterType, query, sourceRows]);
   const previewRows = useMemo(() => buildPreviewRows(filteredRows, groupBy, selectedFields), [filteredRows, groupBy, selectedFields]);
   const reportTotal = useMemo(() => calculateReportTotal(source, filteredRows), [filteredRows, source]);
-  const availableFields = fieldLibrary.filter(field => field.source === source);
-
   function addField(fieldId: string) {
     if (selectedFields.some(item => item.id === fieldId)) return;
     const meta = fieldLibrary.find(item => item.id === fieldId);
@@ -196,9 +205,18 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
       setError("Seu perfil possui acesso somente para consulta.");
       return;
     }
+    setTemplateModalOpen(true);
+  }
+
+  function confirmSaveTemplate() {
+    if (user.role !== "ADMIN") {
+      setError("Seu perfil possui acesso somente para consulta.");
+      return;
+    }
     const item: ReportTemplate = {
       id: Date.now(),
       name: templateName.trim() || "Relatório customizado",
+      competency,
       source,
       groupBy,
       fields: selectedFields,
@@ -208,12 +226,14 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
     saveTemplates(next);
     setActiveTemplateId(item.id);
     setSuccess("Template salvo para uso futuro.");
+    setTemplateModalOpen(false);
   }
 
   function loadTemplate(template: ReportTemplate) {
     applyingTemplate.current = true;
     setActiveTemplateId(template.id);
     setTemplateName(template.name);
+    setCompetency(template.competency ?? competency);
     setSource(template.source);
     setGroupBy(template.groupBy);
     setSelectedFields(template.fields);
@@ -291,60 +311,69 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
         <select value={filterBenefit} onChange={event => setFilterBenefit(event.target.value)}><option value="">Todos os benefícios</option>{Array.from(new Set(benefits.map(item => item.benefit_name))).map(benefit => <option key={benefit} value={benefit}>{benefit}</option>)}</select>
       </div>
 
-      <div className="report-maker-grid">
-        <section className="panel report-maker-panel">
-          <h2>Campos disponíveis</h2>
-          {availableFields.map(field => (
-            <button key={field.id} type="button" className="report-field-row" onClick={() => addField(field.id)}>
-              <span>{field.label}</span>
-              <small>{field.display === "currency" ? "moeda" : field.display === "number" ? "numérico" : "texto"}</small>
-            </button>
-          ))}
-        </section>
-
-        <section className="panel report-maker-panel">
-          <h2>Colunas do relatório</h2>
+      <section className="panel report-maker-panel report-maker-panel-wide">
+        <h2>Colunas do relatório</h2>
+        <div className="report-selected-list">
           {selectedFields.map(item => {
             const meta = fieldLibrary.find(field => field.id === item.id);
             return (
               <div className="report-selected-row" key={item.id}>
                 <strong>{meta?.label ?? item.id}</strong>
-                <select value={item.aggregator} onChange={event => updateField(item.id, event.target.value as Aggregator)}>
-                  <option value="none">Sem agregação</option>
-                  <option value="sum">Soma</option>
-                  <option value="avg">Média</option>
-                  <option value="count">Contagem</option>
-                  <option value="min">Mínimo</option>
-                  <option value="max">Máximo</option>
-                  <option value="multiply">Multiplicação</option>
-                </select>
-                <button type="button" className="ghost" onClick={() => removeField(item.id)}>Remover</button>
+                <div className="report-selected-controls">
+                  <select value={item.aggregator} onChange={event => updateField(item.id, event.target.value as Aggregator)}>
+                    <option value="none">Sem agregação</option>
+                    <option value="sum">Soma</option>
+                    <option value="avg">Média</option>
+                    <option value="count">Contagem</option>
+                    <option value="min">Mínimo</option>
+                    <option value="max">Máximo</option>
+                    <option value="multiply">Multiplicação</option>
+                  </select>
+                  <button type="button" className="ghost" onClick={() => removeField(item.id)}>Remover</button>
+                </div>
               </div>
             );
           })}
-        </section>
-      </div>
+        </div>
+      </section>
 
-      <div className="panel report-template-panel">
-        <div className="report-template-toolbar">
-          <label>Nome do template<input value={templateName} onChange={event => setTemplateName(event.target.value)} /></label>
-          <label>Buscar modelos<input value={templateSearch} onChange={event => setTemplateSearch(event.target.value)} placeholder="Digite parte do nome, campo ou filtro" /></label>
+      <section className="panel report-maker-panel report-saved-panel">
+        <div className="report-saved-head">
+          <div>
+            <h2>Relatórios Salvos</h2>
+            <p>Pesquise pelo nome e abra um modelo salvo.</p>
+          </div>
+          <span className="report-saved-count">{filteredTemplates.length} modelos</span>
         </div>
-        <div className="report-template-list">
-          {filteredTemplates.length ? filteredTemplates.map(template => (
-            <div className={`report-template-item ${template.id === activeTemplateId ? "active" : ""}`} key={template.id}>
-              <div>
-                <strong>{template.name}</strong>
-                <span>{template.source} • {fieldLibrary.find(field => field.id === template.groupBy)?.label ?? template.groupBy}</span>
-              </div>
-              <div className="actions">
-                <button className="secondary" type="button" onClick={() => loadTemplate(template)}>Abrir</button>
-                <button className="secondary" type="button" onClick={() => deleteTemplate(template.id)}>Excluir</button>
-              </div>
-            </div>
-          )) : <Empty>Nenhum template salvo ainda.</Empty>}
+        <div className="report-saved-picker">
+          <input
+            value={templateSearch}
+            onChange={event => setTemplateSearch(event.target.value)}
+            placeholder="Digite o nome do relatório"
+          />
+          <button type="button" className="secondary" onClick={() => setTemplateSearch("")}>Limpar</button>
         </div>
-      </div>
+        <div className="report-saved-select-row">
+          <label className="report-saved-select-label">
+            Modelo encontrado
+            <select
+              className="report-saved-select"
+              value={activeTemplateId ?? ""}
+              onChange={event => {
+                const chosen = templates.find(template => String(template.id) === event.target.value);
+                if (chosen) loadTemplate(chosen);
+              }}
+            >
+              <option value="">Selecione um relatório salvo</option>
+              {filteredTemplates.map(template => (
+                <option key={template.id} value={template.id}>
+                  {template.name} | {demoCompetencies.find(item => item.id === template.competency)?.label ?? template.competency ?? competency} | {template.source}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </section>
 
       <div className="panel table-wrap report-maker-shell">
         {loading && <div className="inline-loading">Carregando dados do relatório...</div>}
@@ -369,6 +398,46 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
         </table>
         {!previewRows.length && !loading && <Empty>Nenhum dado disponível para a combinação escolhida.</Empty>}
       </div>
+
+      {templateModalOpen && (
+        <div className="presentation-modal" role="dialog" aria-modal="true" onClick={() => setTemplateModalOpen(false)}>
+          <div className="presentation-modal-panel report-template-modal" onClick={event => event.stopPropagation()}>
+            <div className="presentation-modal-header">
+              <div>
+                <span className="eyebrow">Salvar modelo</span>
+                <h2>Configurar e armazenar template</h2>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setTemplateModalOpen(false)} aria-label="Fechar modal">
+                ✕
+              </button>
+            </div>
+            <div className="presentation-modal-body report-template-modal-body">
+              <div className="report-template-toolbar modal-toolbar">
+                <label>Nome do template<input value={templateName} onChange={event => setTemplateName(event.target.value)} /></label>
+                <label>Buscar modelos<input value={templateSearch} onChange={event => setTemplateSearch(event.target.value)} placeholder="Digite parte do nome, campo ou filtro" /></label>
+              </div>
+              <div className="report-template-list">
+                {filteredTemplates.length ? filteredTemplates.map(template => (
+                  <div className={`report-template-item ${template.id === activeTemplateId ? "active" : ""}`} key={template.id}>
+                    <div>
+                      <strong>{template.name}</strong>
+                      <span>{demoCompetencies.find(item => item.id === template.competency)?.label ?? template.competency ?? competency} • {template.source} • {fieldLibrary.find(field => field.id === template.groupBy)?.label ?? template.groupBy}</span>
+                    </div>
+                    <div className="actions">
+                      <button className="secondary" type="button" onClick={() => loadTemplate(template)}>Abrir</button>
+                      <button className="secondary" type="button" onClick={() => deleteTemplate(template.id)}>Excluir</button>
+                    </div>
+                  </div>
+                )) : <Empty>Nenhum template salvo ainda.</Empty>}
+              </div>
+              <div className="actions report-template-modal-actions">
+                <button className="secondary" type="button" onClick={() => setTemplateModalOpen(false)}>Cancelar</button>
+                <button className="primary" type="button" onClick={confirmSaveTemplate}>Confirmar salvamento</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -505,7 +505,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
               <div className="benefits-amounts">
                 <label>Dias trabalhados<input type="number" min="0" step="1" value={daysWorked} onChange={event => setDaysWorked(Number(event.target.value))} /></label>
                 <label>Valor por dia<input type="number" min="0" step="0.01" value={valuePerDay} onChange={event => setValuePerDay(Number(event.target.value))} /></label>
-                <button className="secondary benefits-ok" type="button" onClick={applyBatchValues} disabled={loading}>OK</button>
+                <button className="primary benefits-ok" type="button" onClick={applyBatchValues} disabled={loading}>OK</button>
               </div>
             ) : (
               <div className="benefits-amounts">
@@ -516,7 +516,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                     <label>Valor por dependente<input type="number" min="0" step="0.01" value={dependentValue} onChange={event => setDependentValue(Number(event.target.value))} /></label>
                   </>
                 )}
-                <button className="secondary benefits-ok" type="button" onClick={applyBatchValues} disabled={loading}>OK</button>
+                <button className="primary benefits-ok" type="button" onClick={applyBatchValues} disabled={loading}>OK</button>
               </div>
             )}
           </div>
