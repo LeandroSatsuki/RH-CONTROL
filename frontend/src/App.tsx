@@ -4,6 +4,7 @@ import { AppError } from "./components/Feedback";
 import { Layout, Page } from "./components/Layout";
 import { DashboardPage } from "./pages/DashboardPage";
 import { AlertsPage, AuditPage, BackupPage, ClosingPage, ImportPage, MeiContractsPage, MovementsPage, PayrollPage, ReportsPage, SettingsPage } from "./pages/DemoPages";
+import { IndicatorsPage } from "./pages/IndicatorsPage";
 import { BenefitsPage } from "./pages/BenefitsPage";
 import { EmployeesPage } from "./pages/EmployeesPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -248,6 +249,7 @@ export default function App() {
         {page === "mei-contracts" && <MeiContractsPage token={token} user={user} />}
         {page === "benefits" && <BenefitsPage token={token} user={user} />}
         {page === "payroll" && <PayrollPage token={token} user={user} />}
+        {page === "indicators" && <IndicatorsPage token={token} />}
         {page === "report-maker" && <ReportMakerPage token={token} user={user} />}
         {page === "reports" && <ReportsPage token={token} />}
         {page === "import" && <ImportPage token={token} user={user} />}

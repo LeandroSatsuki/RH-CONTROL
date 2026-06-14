@@ -12,6 +12,7 @@ export type Page =
   | "mei-contracts"
   | "benefits"
   | "payroll"
+  | "indicators"
   | "report-maker"
   | "reports"
   | "import"
@@ -36,6 +37,7 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "mei-contracts", label: "Contratos MEI", icon: "ME" },
   { page: "benefits", label: "Benefícios", icon: "BF" },
   { page: "payroll", label: "Custo / Folha", icon: "CF" },
+  { page: "indicators", label: "Indicadores", icon: "IG" },
   { page: "report-maker", label: "Relatório Maker", icon: "MK" },
   { page: "reports", label: "Relatórios", icon: "RP" },
   { page: "closing", label: "Fechamento", icon: "✓" },
