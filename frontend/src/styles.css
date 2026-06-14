@@ -267,6 +267,7 @@ tr.clickable:hover { background: var(--surface-2); }
 .benefit-card-head span { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
 .benefit-card small { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .benefits-amounts { display: grid; grid-template-columns: repeat(2, minmax(180px, 240px)); gap: 12px; margin-top: 14px; }
+.benefits-ok { grid-column: 1 / -1; justify-self: start; width: fit-content; }
 .benefit-review { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
 .benefit-confirm { border-left: 4px solid var(--primary); }
 .benefits-table-shell { max-height: min(58vh, 620px); }
