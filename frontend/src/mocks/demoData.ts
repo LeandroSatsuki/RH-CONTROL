@@ -39,7 +39,8 @@ function buildSettings(
   dailyHours: number,
   holidays: string[],
   charges: DemoSettings["charges"],
-  payrollRates: DemoSettings["payroll_rates"]
+  payrollRates: DemoSettings["payroll_rates"],
+  jobTitles: string[]
 ): DemoSettings {
   return {
     company_name: companyName,
@@ -54,9 +55,28 @@ function buildSettings(
     payroll_rates: payrollRates,
     backup_directory: backupDirectory,
     auto_backup_on_start: true,
-    backup_retention: 90
+    backup_retention: 90,
+    job_titles: jobTitles
   };
 }
+
+const defaultJobTitles = [
+  "Assistente Administrativo",
+  "Supervisor Administrativo",
+  "Analista Financeiro",
+  "Coordenadora de RH",
+  "Operador de Produção",
+  "Supervisor Industrial",
+  "Auxiliar de Logística",
+  "Executivo de Contas",
+  "Supervisor Comercial",
+  "Representante Comercial",
+  "Designer de Marketing",
+  "Diretora Executiva",
+  "Diretor Comercial",
+  "Controller",
+  "Assessora Executiva"
+];
 
 export const demoCompanies: DemoCompany[] = [
   {
@@ -74,7 +94,8 @@ export const demoCompanies: DemoCompany[] = [
       8.8,
       ["01/01/2026", "21/04/2026", "01/05/2026"],
       [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 1.5 }, { name: "Terceiros", rate: 5.8 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }],
-      { inss: 20, rat: 1.5, terceiros: 5.8, fgts: 8, fgts_vacation: 8, fgts_thirteenth: 8, fgts_notice: 8, multa_fgts: 50, patronal: 27.3 }
+      { inss: 20, rat: 1.5, terceiros: 5.8, fgts: 8, fgts_vacation: 8, fgts_thirteenth: 8, fgts_notice: 8, multa_fgts: 50, patronal: 27.3 },
+      defaultJobTitles
     ),
     backups: [
       { id: 1, date: "2026-06-05 08:10", file: "alfa_matriz_20260605_0810.dump", size: "42 MB", status: "Validado" },
@@ -108,7 +129,8 @@ export const demoCompanies: DemoCompany[] = [
       8.6,
       ["01/01/2026", "21/04/2026", "07/09/2026"],
       [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 2 }, { name: "Terceiros", rate: 6.2 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }],
-      { inss: 20, rat: 2, terceiros: 6.2, fgts: 8, fgts_vacation: 8, fgts_thirteenth: 8, fgts_notice: 8, multa_fgts: 50, patronal: 27.3 }
+      { inss: 20, rat: 2, terceiros: 6.2, fgts: 8, fgts_vacation: 8, fgts_thirteenth: 8, fgts_notice: 8, multa_fgts: 50, patronal: 27.3 },
+      defaultJobTitles
     ),
     backups: [
       { id: 1, date: "2026-06-05 09:15", file: "alfa_filial_20260605_0915.dump", size: "39 MB", status: "Validado" },
@@ -142,7 +164,8 @@ export const demoCompanies: DemoCompany[] = [
       8.0,
       ["01/01/2026", "07/09/2026", "12/10/2026"],
       [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 3 }, { name: "Terceiros", rate: 7.5 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }],
-      { inss: 20, rat: 3, terceiros: 7.5, fgts: 8, fgts_vacation: 8, fgts_thirteenth: 8, fgts_notice: 8, multa_fgts: 50, patronal: 27.3 }
+      { inss: 20, rat: 3, terceiros: 7.5, fgts: 8, fgts_vacation: 8, fgts_thirteenth: 8, fgts_notice: 8, multa_fgts: 50, patronal: 27.3 },
+      defaultJobTitles
     ),
     backups: [
       { id: 1, date: "2026-06-05 10:00", file: "beta_industrial_20260605_1000.dump", size: "44 MB", status: "Validado" }
@@ -175,7 +198,8 @@ export const demoCompanies: DemoCompany[] = [
       7.5,
       ["01/01/2026", "21/04/2026", "25/12/2026"],
       [{ name: "INSS", rate: 20 }, { name: "RAT", rate: 1 }, { name: "Terceiros", rate: 5.2 }, { name: "FGTS", rate: 8 }, { name: "Multa FGTS", rate: 50 }],
-      { inss: 20, rat: 1, terceiros: 5.2, fgts: 8, fgts_vacation: 8, fgts_thirteenth: 8, fgts_notice: 8, multa_fgts: 50, patronal: 27.3 }
+      { inss: 20, rat: 1, terceiros: 5.2, fgts: 8, fgts_vacation: 8, fgts_thirteenth: 8, fgts_notice: 8, multa_fgts: 50, patronal: 27.3 },
+      defaultJobTitles
     ),
     backups: [
       { id: 1, date: "2026-06-05 07:40", file: "gamma_comercio_20260605_0740.dump", size: "40 MB", status: "Concluído" }
@@ -210,9 +234,9 @@ const names = [
 ];
 
 const jobs = {
-  ADM: ["Analista de RH", "Assistente Administrativo", "Analista Financeiro", "Coordenadora de RH"],
+  ADM: ["Assistente Administrativo", "Supervisor Administrativo", "Analista Financeiro", "Coordenadora de RH"],
   IND: ["Operador de Produção", "Técnico de Manutenção", "Supervisor Industrial", "Auxiliar de Logística"],
-  COM: ["Executivo de Contas", "Analista Comercial", "Representante Comercial", "Designer de Marketing"],
+  COM: ["Executivo de Contas", "Supervisor Comercial", "Representante Comercial", "Designer de Marketing"],
   DIR: ["Diretora Executiva", "Diretor Comercial", "Controller", "Assessora Executiva"]
 };
 
@@ -260,6 +284,7 @@ function addressFor(index: number) {
   const states = ["SP", "RJ", "MG", "PR"];
 
   return {
+    cep: String(10000000 + (index * 371) % 89999999).padStart(8, "0"),
     street: `${streets[index % streets.length]}, ${100 + (index * 7) % 900}`,
     addressNumber: String(10 + (index * 13) % 220),
     neighborhood: neighborhoods[index % neighborhoods.length],
@@ -325,6 +350,7 @@ export function createDemoEmployees(): DemoEmployee[] {
       notes: "Registro fictício para demonstração comercial.",
       supervisor_name: supervisorName,
       street: address.street,
+      cep: address.cep,
       address_number: address.addressNumber,
       neighborhood: address.neighborhood,
       city: address.city,
