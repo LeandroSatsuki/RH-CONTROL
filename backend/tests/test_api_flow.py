@@ -176,6 +176,11 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     dashboard = client.get("/api/dashboard?month=6&year=2026", headers=admin)
     assert dashboard.status_code == 200
     assert [card["code"] for card in dashboard.json()["cards"]] == ["ADM", "COM", "DIR", "IND"]
+    assert dashboard.json()["consolidated"]["total_cost"] == 0
+    dashboard_by_competency = client.get("/api/dashboard?competency=2026-06", headers=admin)
+    assert dashboard_by_competency.status_code == 200
+    dashboard_default = client.get("/api/dashboard", headers=admin)
+    assert dashboard_default.status_code == 200
 
     company = client.post(
         "/api/companies",
