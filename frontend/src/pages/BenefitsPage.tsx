@@ -182,6 +182,13 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
     if (activeBenefit?.mode === "DAILY") return total + item.override.daysWorked * item.override.valuePerDay;
     return total + item.override.monthlyValue + item.override.dependentsCount * item.override.dependentValue;
   }, 0);
+  const isDailyBenefit = activeBenefit?.mode === "DAILY";
+  const isHealthPlan = activeBenefit?.code === "PS";
+  const selectedGridClass = isDailyBenefit
+    ? "selected-grid-daily"
+    : isHealthPlan
+      ? "selected-grid-health"
+      : "selected-grid-monthly";
 
   useEffect(() => {
     if (!activeBenefit) return;
@@ -539,10 +546,19 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
             </div>
 
             <div className="benefits-entry-grid">
-              <div className="summary-grid benefits-summary">
-                <Summary label="Valor estimado" value={money.format(previewTotal)} strong />
-                <Summary label="Padrão do lote" value={activeBenefit?.mode === "DAILY" ? `${daysWorked} dias x ${money.format(valuePerDay)}` : activeBenefit?.code === "PS" ? `${money.format(monthlyValue)} titular + ${dependentsCount} dependente(s)` : money.format(monthlyValue)} />
-                <Summary label="Descrição" value={description || "Obrigatória na confirmação"} />
+              <div className="benefit-compact-summary">
+                <div className="benefit-mini-card strong">
+                  <span>Valor estimado</span>
+                  <strong>{money.format(previewTotal)}</strong>
+                </div>
+                <div className="benefit-mini-card">
+                  <span>Padrão do lote</span>
+                  <strong>{isDailyBenefit ? `${daysWorked} dias x ${money.format(valuePerDay)}` : isHealthPlan ? `${money.format(monthlyValue)} + ${dependentsCount} dep.` : money.format(monthlyValue)}</strong>
+                </div>
+                <div className="benefit-mini-card">
+                  <span>Descrição</span>
+                  <strong>{description || "Pendente"}</strong>
+                </div>
               </div>
 
               <div className="benefits-batch-panel">
@@ -550,7 +566,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                   <span className="eyebrow">Padrão do lote</span>
                   <strong>Valores aplicados aos selecionados</strong>
                 </div>
-                {activeBenefit?.mode === "DAILY" ? (
+                {isDailyBenefit ? (
                   <div className="benefits-amounts">
                     <label>Dias trabalhados<input type="number" min="0" step="1" value={daysWorked} onChange={event => setDaysWorked(Number(event.target.value))} /></label>
                     <label>Valor por dia<input type="number" min="0" step="0.01" value={valuePerDay} onChange={event => setValuePerDay(Number(event.target.value))} /></label>
@@ -558,8 +574,8 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                   </div>
                 ) : (
                   <div className="benefits-amounts">
-                    <label>{activeBenefit.code === "PS" ? "Valor titular padrão" : "Valor mensal padrão"}<input type="number" min="0" step="0.01" value={monthlyValue} onChange={event => setMonthlyValue(Number(event.target.value))} /></label>
-                    {activeBenefit.code === "PS" && (
+                    <label>{isHealthPlan ? "Valor titular padrão" : "Valor mensal padrão"}<input type="number" min="0" step="0.01" value={monthlyValue} onChange={event => setMonthlyValue(Number(event.target.value))} /></label>
+                    {isHealthPlan && (
                       <>
                         <label>Dependentes padrão<input type="number" min="0" step="1" value={dependentsCount} onChange={event => setDependentsCount(Number(event.target.value))} /></label>
                         <label>Valor padrão por dependente<input type="number" min="0" step="0.01" value={dependentValue} onChange={event => setDependentValue(Number(event.target.value))} /></label>
@@ -620,76 +636,92 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                   ))}
               </div>
             )}
-            <div className="selected-grid-head">
+            <div className={`selected-grid-head ${selectedGridClass}`}>
               <span></span>
               <span>Colaborador</span>
               <span>CR</span>
-              <span>Dias</span>
-              <span>{activeBenefit?.mode === "DAILY" ? "Valor/dia" : activeBenefit?.code === "PS" ? "Titular / dep." : "Valor mensal"}</span>
+              {isDailyBenefit ? (
+                <>
+                  <span>Dias</span>
+                  <span>Valor/dia</span>
+                </>
+              ) : isHealthPlan ? (
+                <>
+                  <span>Titular</span>
+                  <span>Depend.</span>
+                  <span>Valor dep.</span>
+                </>
+              ) : (
+                <span>Valor mensal</span>
+              )}
               <span>Total</span>
             </div>
             <div className="selected-list">
               {selectedEmployeeRows.length ? selectedEmployeeRows.map(({ employee, override }) => (
-                <div key={employee.id} className="selected-row">
+                <div key={employee.id} className={`selected-row ${selectedGridClass}`}>
                   <button type="button" className="remove-chip" onClick={() => removeSelected(employee.id)}>X</button>
                   <div className="selected-identity">
                     <strong>{employee.employee.full_name}</strong>
                     <span>{employee.result_center.code} • {override.manual ? "Adicionado manualmente" : "Vindo do filtro"}</span>
                   </div>
                   <span>{employee.result_center.code}</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={override.daysWorked}
-                    onChange={event => updateOverride(employee.id, { daysWorked: Number(event.target.value) })}
-                    aria-label={`Dias trabalhados de ${employee.employee.full_name}`}
-                  />
-                  {activeBenefit?.mode === "DAILY" ? (
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={override.valuePerDay}
-                      onChange={event => updateOverride(employee.id, { valuePerDay: Number(event.target.value) })}
-                      aria-label={`Valor por dia de ${employee.employee.full_name}`}
-                    />
-                  ) : (
-                    <div className="selected-monthly-stack">
+                  {isDailyBenefit ? (
+                    <>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={override.daysWorked}
+                        onChange={event => updateOverride(employee.id, { daysWorked: Number(event.target.value) })}
+                        aria-label={`Dias trabalhados de ${employee.employee.full_name}`}
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={override.valuePerDay}
+                        onChange={event => updateOverride(employee.id, { valuePerDay: Number(event.target.value) })}
+                        aria-label={`Valor por dia de ${employee.employee.full_name}`}
+                      />
+                    </>
+                  ) : isHealthPlan ? (
+                    <>
                       <input
                         type="number"
                         min="0"
                         step="0.01"
                         value={override.monthlyValue}
                         onChange={event => updateOverride(employee.id, { monthlyValue: Number(event.target.value) })}
-                        aria-label={`Valor mensal de ${employee.employee.full_name}`}
-                        title="Valor do titular"
+                        aria-label={`Valor titular de ${employee.employee.full_name}`}
                       />
-                      {activeBenefit.code === "PS" && (
-                        <>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={override.dependentsCount}
-                            onChange={event => updateOverride(employee.id, { dependentsCount: Number(event.target.value) })}
-                            aria-label={`Dependentes de ${employee.employee.full_name}`}
-                            title="Quantidade de dependentes"
-                          />
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={override.dependentValue}
-                            onChange={event => updateOverride(employee.id, { dependentValue: Number(event.target.value) })}
-                            aria-label={`Valor por dependente de ${employee.employee.full_name}`}
-                            title="Valor por dependente"
-                          />
-                        </>
-                      )}
-                    </div>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={override.dependentsCount}
+                        onChange={event => updateOverride(employee.id, { dependentsCount: Number(event.target.value) })}
+                        aria-label={`Dependentes de ${employee.employee.full_name}`}
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={override.dependentValue}
+                        onChange={event => updateOverride(employee.id, { dependentValue: Number(event.target.value) })}
+                        aria-label={`Valor por dependente de ${employee.employee.full_name}`}
+                      />
+                    </>
+                  ) : (
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={override.monthlyValue}
+                      onChange={event => updateOverride(employee.id, { monthlyValue: Number(event.target.value) })}
+                      aria-label={`Valor mensal de ${employee.employee.full_name}`}
+                    />
                   )}
-                  <strong>{money.format(activeBenefit?.mode === "DAILY" ? override.daysWorked * override.valuePerDay : override.monthlyValue + override.dependentsCount * override.dependentValue)}</strong>
+                  <strong className="selected-total">{money.format(isDailyBenefit ? override.daysWorked * override.valuePerDay : override.monthlyValue + override.dependentsCount * override.dependentValue)}</strong>
                 </div>
               )) : <Empty>Nenhum colaborador selecionado.</Empty>}
             </div>
