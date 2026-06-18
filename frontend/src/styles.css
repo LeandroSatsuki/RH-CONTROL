@@ -295,6 +295,9 @@ tr.clickable:hover { background: var(--surface-2); }
 .add-suggestion span { color: var(--muted); font-size: 11px; }
 .benefits-filters { grid-template-columns: 1fr 1fr 1fr 1.2fr 1fr 1fr 1fr 1fr auto; }
 .benefits-workbench { display: grid; gap: 14px; }
+.benefits-entry-grid { display: grid; grid-template-columns: minmax(320px, .9fr) minmax(360px, 1.1fr); gap: 14px; align-items: stretch; }
+.benefits-batch-panel { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 14px; }
+.benefits-batch-panel strong { display: block; margin-top: 2px; }
 .benefits-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 360px); gap: 14px; align-items: start; }
 .benefits-builder { display: grid; grid-template-columns: 340px 1fr; gap: 14px; }
 .benefit-catalog-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-content: start; }
@@ -306,9 +309,10 @@ tr.clickable:hover { background: var(--surface-2); }
 .benefit-card-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
 .benefit-card-head span { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
 .benefit-card small { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
-.benefits-amounts { display: grid; grid-template-columns: repeat(2, minmax(180px, 240px)) auto; gap: 12px; margin-top: 14px; align-items: end; }
+.benefits-amounts { display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)) auto; gap: 12px; margin-top: 4px; align-items: end; }
 .benefits-ok { width: fit-content; height: fit-content; }
 .benefit-review { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.benefit-actionbar { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 340px; }
 .benefit-confirm { border-left: 4px solid var(--primary); }
 .benefits-table-shell { max-height: min(58vh, 620px); }
 .benefits-table-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 4px 2px 12px; }
@@ -415,8 +419,10 @@ tr.clickable:hover { background: var(--surface-2); }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .metric.wide { grid-column: span 2; }
   .summary-grid, .summary-grid.indicators, .report-grid, .settings-grid, .filters-panel, .report-maker-filters, .mei-contract-filters, .checklist, .detail-grid { grid-template-columns: 1fr; }
-  .benefits-builder, .report-maker-grid, .benefits-amounts, .benefits-grid, .report-selected-list, .report-saved-picker { grid-template-columns: 1fr; }
+  .benefits-builder, .report-maker-grid, .benefits-amounts, .benefits-entry-grid, .benefits-grid, .report-selected-list, .report-saved-picker { grid-template-columns: 1fr; }
   .benefits-filters { grid-template-columns: 1fr; }
+  .benefit-review, .selected-panel-head { flex-direction: column; align-items: stretch; }
+  .benefit-actionbar { justify-content: flex-start; min-width: 0; }
   .report-selected-controls { grid-template-columns: 1fr; }
   .drawer { width: 100%; }
 }

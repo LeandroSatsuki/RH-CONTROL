@@ -67,6 +67,26 @@ function defaultFilter(): BenefitFilter {
   };
 }
 
+function defaultBatchValues(benefit: DemoBenefitDefinition | undefined) {
+  if (benefit?.mode === "DAILY") {
+    return {
+      daysWorked: 22,
+      valuePerDay: benefit.code === "VT" ? 14.8 : 24,
+      monthlyValue: 0,
+      dependentsCount: 0,
+      dependentValue: 0
+    };
+  }
+
+  return {
+    daysWorked: 0,
+    valuePerDay: 0,
+    monthlyValue: benefit?.code === "PS" ? 490 : 75,
+    dependentsCount: benefit?.code === "PS" ? 1 : 0,
+    dependentValue: benefit?.code === "PS" ? 110 : 0
+  };
+}
+
 export function BenefitsPage({ token, user }: { token: string; user: User }) {
   const { selectedCompany } = useDemoScope();
   const [benefits, setBenefits] = useState<DemoBenefitDefinition[]>([]);
@@ -165,19 +185,12 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
 
   useEffect(() => {
     if (!activeBenefit) return;
-    if (activeBenefit.mode === "DAILY") {
-      setDaysWorked(22);
-      setValuePerDay(activeBenefit.code === "VT" ? 14.8 : 24);
-      setMonthlyValue(0);
-      setDependentsCount(0);
-      setDependentValue(0);
-    } else {
-      setMonthlyValue(activeBenefit.code === "PS" ? 490 : 75);
-      setDependentsCount(activeBenefit.code === "PS" ? 1 : 0);
-      setDependentValue(activeBenefit.code === "PS" ? 110 : 0);
-      setDaysWorked(0);
-      setValuePerDay(0);
-    }
+    const defaults = defaultBatchValues(activeBenefit);
+    setDaysWorked(defaults.daysWorked);
+    setValuePerDay(defaults.valuePerDay);
+    setMonthlyValue(defaults.monthlyValue);
+    setDependentsCount(defaults.dependentsCount);
+    setDependentValue(defaults.dependentValue);
   }, [activeBenefit?.code]);
 
   function applyFilter() {
@@ -205,6 +218,33 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
     setEmployeeQuery("");
     setOverrideCandidate(null);
     setAddPanelOpen(false);
+  }
+
+  function cancelOperation() {
+    const baseFilter = defaultFilter();
+    const benefitCode = benefits.some(item => item.code === baseFilter.benefitCode)
+      ? baseFilter.benefitCode
+      : benefits.find(item => item.active)?.code ?? benefits[0]?.code ?? baseFilter.benefitCode;
+    const nextBenefit = benefits.find(item => item.code === benefitCode);
+    const defaults = defaultBatchValues(nextBenefit);
+
+    setDraft({ ...baseFilter, benefitCode });
+    setAppliedFilter(null);
+    setSelectedIds([]);
+    setSelectedOverrides({});
+    setDaysWorked(defaults.daysWorked);
+    setValuePerDay(defaults.valuePerDay);
+    setMonthlyValue(defaults.monthlyValue);
+    setDependentsCount(defaults.dependentsCount);
+    setDependentValue(defaults.dependentValue);
+    setAddPanelOpen(false);
+    setEmployeeQuery("");
+    setOverrideCandidate(null);
+    setDescription("");
+    setConfirmOpen(false);
+    setLastExportBatch(null);
+    setError("");
+    setSuccess("");
   }
 
   function toggleEmployee(id: number) {
@@ -490,37 +530,46 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                 <h2>Lançamento do benefício</h2>
                 <p>Adicione ou remova colaboradores na lista abaixo. O mesmo benefício pode ser lançado mais de uma vez no mês com descrições diferentes.</p>
               </div>
-              <div className="actions">
+              <div className="benefit-actionbar">
+                <button className="secondary" type="button" onClick={cancelOperation}>Cancelar operação</button>
                 <button className="secondary" type="button" onClick={selectAll}>Selecionar todos</button>
                 <button className="secondary" type="button" onClick={clearSelection}>Limpar seleção</button>
                 <button className="primary" type="button" onClick={() => setConfirmOpen(true)} disabled={!selectedEmployeeRows.length || !activeBenefit}>Confirmar distribuição</button>
               </div>
             </div>
 
-            <div className="summary-grid benefits-summary">
-              <Summary label="Valor estimado" value={money.format(previewTotal)} strong />
-              <Summary label="Padrão do lote" value={activeBenefit?.mode === "DAILY" ? `${daysWorked} dias x ${money.format(valuePerDay)}` : activeBenefit?.code === "PS" ? `${money.format(monthlyValue)} titular + ${dependentsCount} dependente(s)` : money.format(monthlyValue)} />
-              <Summary label="Descrição" value={description || "Obrigatória na confirmação"} />
-            </div>
+            <div className="benefits-entry-grid">
+              <div className="summary-grid benefits-summary">
+                <Summary label="Valor estimado" value={money.format(previewTotal)} strong />
+                <Summary label="Padrão do lote" value={activeBenefit?.mode === "DAILY" ? `${daysWorked} dias x ${money.format(valuePerDay)}` : activeBenefit?.code === "PS" ? `${money.format(monthlyValue)} titular + ${dependentsCount} dependente(s)` : money.format(monthlyValue)} />
+                <Summary label="Descrição" value={description || "Obrigatória na confirmação"} />
+              </div>
 
-            {activeBenefit?.mode === "DAILY" ? (
-              <div className="benefits-amounts">
-                <label>Dias trabalhados<input type="number" min="0" step="1" value={daysWorked} onChange={event => setDaysWorked(Number(event.target.value))} /></label>
-                <label>Valor por dia<input type="number" min="0" step="0.01" value={valuePerDay} onChange={event => setValuePerDay(Number(event.target.value))} /></label>
-                <button className="primary benefits-ok" type="button" onClick={applyBatchValues} disabled={loading}>OK</button>
-              </div>
-            ) : (
-              <div className="benefits-amounts">
-                <label>{activeBenefit.code === "PS" ? "Valor titular padrão" : "Valor mensal padrão"}<input type="number" min="0" step="0.01" value={monthlyValue} onChange={event => setMonthlyValue(Number(event.target.value))} /></label>
-                {activeBenefit.code === "PS" && (
-                  <>
-                    <label>Dependentes padrão<input type="number" min="0" step="1" value={dependentsCount} onChange={event => setDependentsCount(Number(event.target.value))} /></label>
-                    <label>Valor padrão por dependente<input type="number" min="0" step="0.01" value={dependentValue} onChange={event => setDependentValue(Number(event.target.value))} /></label>
-                  </>
+              <div className="benefits-batch-panel">
+                <div>
+                  <span className="eyebrow">Padrão do lote</span>
+                  <strong>Valores aplicados aos selecionados</strong>
+                </div>
+                {activeBenefit?.mode === "DAILY" ? (
+                  <div className="benefits-amounts">
+                    <label>Dias trabalhados<input type="number" min="0" step="1" value={daysWorked} onChange={event => setDaysWorked(Number(event.target.value))} /></label>
+                    <label>Valor por dia<input type="number" min="0" step="0.01" value={valuePerDay} onChange={event => setValuePerDay(Number(event.target.value))} /></label>
+                    <button className="primary benefits-ok" type="button" onClick={applyBatchValues} disabled={loading}>OK</button>
+                  </div>
+                ) : (
+                  <div className="benefits-amounts">
+                    <label>{activeBenefit.code === "PS" ? "Valor titular padrão" : "Valor mensal padrão"}<input type="number" min="0" step="0.01" value={monthlyValue} onChange={event => setMonthlyValue(Number(event.target.value))} /></label>
+                    {activeBenefit.code === "PS" && (
+                      <>
+                        <label>Dependentes padrão<input type="number" min="0" step="1" value={dependentsCount} onChange={event => setDependentsCount(Number(event.target.value))} /></label>
+                        <label>Valor padrão por dependente<input type="number" min="0" step="0.01" value={dependentValue} onChange={event => setDependentValue(Number(event.target.value))} /></label>
+                      </>
+                    )}
+                    <button className="primary benefits-ok" type="button" onClick={applyBatchValues} disabled={loading}>OK</button>
+                  </div>
                 )}
-                <button className="primary benefits-ok" type="button" onClick={applyBatchValues} disabled={loading}>OK</button>
               </div>
-            )}
+            </div>
           </div>
 
           <div className="panel selected-panel">
