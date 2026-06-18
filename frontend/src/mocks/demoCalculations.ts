@@ -69,7 +69,7 @@ export function recalculatePayrollRow(row: PayrollRow, rates: DemoSettings["payr
   const fgts = roundMoney(subtotalEarnings * (rates.fgts / 100));
   const charges = roundMoney(inss + rat + terceiros + fgts);
 
-  const salaryBase = Math.max(row.salary, row.pro_labore, row.profit_distribution, row.cost_aid, 0);
+  const salaryBase = subtotalEarnings;
   const vacation = roundMoney(salaryBase / 12);
   const vacationThird = roundMoney(vacation / 3);
   const fgtsVacation = roundMoney((vacation + vacationThird) * (rates.fgts_vacation / 100));

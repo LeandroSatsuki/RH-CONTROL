@@ -82,10 +82,12 @@ function loadState(): DemoState {
         supervisor_name: employee.supervisor_name ?? fallback.supervisor_name ?? "",
         street: employee.street ?? fallback.street ?? "",
         address_number: employee.address_number ?? fallback.address_number ?? "",
+        address_complement: employee.address_complement ?? fallback.address_complement ?? "",
         neighborhood: employee.neighborhood ?? fallback.neighborhood ?? "",
         city: employee.city ?? fallback.city ?? "",
         state: employee.state ?? fallback.state ?? "",
         cep: employee.cep ?? fallback.cep ?? "",
+        bank_code: employee.bank_code ?? fallback.bank_code ?? "",
         benefits: Array.isArray(employee.benefits) && employee.benefits.length ? employee.benefits : fallback.benefits ?? []
       };
     });
@@ -201,6 +203,34 @@ function normalizeText(value: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isValidCpfCnpj(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 11) return isValidCpf(digits);
+  if (digits.length === 14) return isValidCnpj(digits);
+  return false;
+}
+
+function isValidCpf(value: string) {
+  if (/^(\d)\1+$/.test(value)) return false;
+  const calc = (length: number) => {
+    const sum = value.slice(0, length).split("").reduce((acc, digit, index) => acc + Number(digit) * (length + 1 - index), 0);
+    const rest = (sum * 10) % 11;
+    return rest === 10 ? 0 : rest;
+  };
+  return calc(9) === Number(value[9]) && calc(10) === Number(value[10]);
+}
+
+function isValidCnpj(value: string) {
+  if (/^(\d)\1+$/.test(value)) return false;
+  const calc = (length: 12 | 13) => {
+    const weights = length === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const sum = value.slice(0, length).split("").reduce((acc, digit, index) => acc + Number(digit) * weights[index], 0);
+    const rest = sum % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+  return calc(12) === Number(value[12]) && calc(13) === Number(value[13]);
 }
 
 function benefitLabelFor(code: string) {
@@ -660,16 +690,21 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     if (!employeeIds.length) throw new Error("Selecione ao menos um colaborador.");
     const description = String(payload.description ?? "").trim();
     if (!description) throw new Error("Informe a descrição da distribuição.");
-    if (benefit.mode === "DAILY" && (Number(payload.days_worked ?? 0) <= 0 || Number(payload.value_per_day ?? 0) <= 0)) {
+    const payloadItems = payload.items ?? [];
+    const hasDailyValue = Number(payload.days_worked ?? 0) > 0 && Number(payload.value_per_day ?? 0) > 0
+      || payloadItems.some(item => Number(item.days_worked ?? 0) > 0 && Number(item.value_per_day ?? 0) > 0);
+    const hasMonthlyValue = Number(payload.monthly_value ?? 0) > 0
+      || payloadItems.some(item => Number(item.monthly_value ?? 0) + Number(item.dependents_count ?? 0) * Number(item.dependent_value ?? 0) > 0);
+    if (benefit.mode === "DAILY" && !hasDailyValue) {
       throw new Error("Informe dias trabalhados e valor por dia maiores que zero.");
     }
-    if (benefit.mode === "MONTHLY" && Number(payload.monthly_value ?? 0) <= 0) {
+    if (benefit.mode === "MONTHLY" && !hasMonthlyValue) {
       throw new Error("Informe um valor mensal maior que zero.");
     }
     const companyEmployees = scopeEmployees(state, companyId).filter(employee => employee.status === "ACTIVE");
     const eligibleEmployees = companyEmployees.filter(employee => employeeIds.includes(employee.id) && employee.benefits.some(item => normalizeText(item) === normalizeText(benefit.name) || normalizeText(item) === normalizeText(benefitLabelFor(benefit.code))));
     if (!eligibleEmployees.length) throw new Error("Nenhum colaborador elegível foi encontrado para este benefício.");
-    const itemMap = new Map((payload.items ?? []).filter(item => Number(item.employee_id) > 0).map(item => [Number(item.employee_id), item]));
+    const itemMap = new Map(payloadItems.filter(item => Number(item.employee_id) > 0).map(item => [Number(item.employee_id), item]));
     let nextDistributionId = nextId(state.benefitDistributions);
     const created: DemoBenefitDistribution[] = eligibleEmployees.map(employee => {
       const item = itemMap.get(employee.id);
@@ -721,7 +756,8 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para cadastrar colaboradores.");
     const payload = body<Record<string, any>>(options);
     const cpf = String(payload.cpf ?? "").replace(/\D/g, "");
-    if (state.employees.some(item => item.employee.cpf === cpf)) throw new Error("CPF já cadastrado no modo demo.");
+    if (!isValidCpfCnpj(cpf)) throw new Error("CPF/CNPJ inválido.");
+    if (state.employees.some(item => item.employee.cpf === cpf)) throw new Error("CPF/CNPJ já cadastrado no modo demo.");
     const type = state.employmentTypes.find(item => item.id === Number(payload.employment_type_id)) ?? state.employmentTypes[0];
     const center = state.resultCenters.find(item => item.id === Number(payload.result_center_id)) ?? state.resultCenters[0];
     const id = nextId(state.employees);
@@ -741,9 +777,11 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       street: String(payload.street ?? ""),
       cep: String(payload.cep ?? ""),
       address_number: String(payload.address_number ?? ""),
+      address_complement: String(payload.address_complement ?? ""),
       neighborhood: String(payload.neighborhood ?? ""),
       city: String(payload.city ?? ""),
       state: String(payload.state ?? ""),
+      bank_code: String(payload.bank_code ?? ""),
       bank_name: String(payload.bank_name ?? "Banco Demo"),
       bank_agency: String(payload.bank_agency ?? "0001"),
       bank_account: String(payload.bank_account ?? "12345"),
