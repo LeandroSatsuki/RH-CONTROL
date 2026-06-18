@@ -34,7 +34,6 @@ function restricted(user: User, fail: (message: string) => void) {
 }
 
 export function MovementsPage({ token, user }: { token: string; user: User }) {
-  if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [competency, setCompetency] = useState("2026-06");
   const [type, setType] = useState("");
@@ -60,7 +59,7 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
     if (restricted(user, fb.fail)) return;
     try {
       await api("/demo/movements", { method: "POST", body: JSON.stringify({ competency, type: "falta", days: 1, observation: "Movimentação criada pela apresentação." }) }, token);
-      fb.notify("Movimentação criada em modo demonstração.");
+      fb.notify("Movimentação criada com sucesso.");
       void load();
     } catch (err) {
       fb.fail(err instanceof Error ? err.message : "Erro ao criar movimentação");

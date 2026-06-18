@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -9,10 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from app.api.dependencies import AdminUser, CurrentUser, DbSession
+from app.core.security import verify_password
 from app.models.benefit import BenefitDefinition, BenefitDistribution
 from app.models.company import Company
 from app.models.employment import Employment
 from app.models.enums import EmploymentStatus
+from app.models.movement import Movement
 from app.models.system_setting import SystemSetting
 
 router = APIRouter()
@@ -173,6 +176,38 @@ def distribution_to_dict(item: BenefitDistribution) -> dict[str, Any]:
     }
 
 
+def movement_to_dict(item: Movement) -> dict[str, Any]:
+    employment = item.employment
+    return {
+        "id": item.id,
+        "company_id": item.company_id,
+        "competency": item.competency,
+        "employee_id": item.employee_id,
+        "employee_name": employment.employee.full_name,
+        "type": item.type,
+        "start_date": item.start_date.isoformat(),
+        "end_date": item.end_date.isoformat() if item.end_date else None,
+        "days": item.days,
+        "hour_impact": as_float(item.hour_impact),
+        "result_center": result_center_to_dict(employment),
+        "observation": item.observation,
+        "status": item.status,
+    }
+
+
+def parse_date(value: Any, fallback: date | None = None) -> date:
+    if isinstance(value, date):
+        return value
+    if value:
+        try:
+            return date.fromisoformat(str(value))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Data inválida. Use o formato AAAA-MM-DD") from None
+    if fallback:
+        return fallback
+    raise HTTPException(status_code=422, detail="Data é obrigatória")
+
+
 def benefit_matches(employment: Employment, benefit: BenefitDefinition) -> bool:
     aliases = {
         "VT": "vale transporte",
@@ -270,6 +305,87 @@ def list_distributions(db: DbSession, _: CurrentUser, competency: str = "2026-06
     if company_id != 0:
         query = query.where(BenefitDistribution.company_id == company_id)
     return [distribution_to_dict(item) for item in db.scalars(query)]
+
+
+@router.get("/movements")
+def list_movements(db: DbSession, _: CurrentUser, competency: str | None = None, company_id: int = 1) -> list[dict[str, Any]]:
+    query = (
+        select(Movement)
+        .options(
+            joinedload(Movement.employment).joinedload(Employment.employee),
+            joinedload(Movement.employment).joinedload(Employment.result_center),
+        )
+        .order_by(Movement.start_date.desc(), Movement.id.desc())
+    )
+    if company_id != 0:
+        query = query.where(Movement.company_id == company_id)
+    if competency:
+        query = query.where(Movement.competency == competency)
+    return [movement_to_dict(item) for item in db.scalars(query)]
+
+
+@router.post("/movements", status_code=201)
+def create_movement(payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1) -> dict[str, Any]:
+    ensure_company(db, company_id)
+    employee_id = payload.get("employee_id")
+    employment_query = (
+        select(Employment)
+        .options(joinedload(Employment.employee), joinedload(Employment.result_center))
+        .where(Employment.company_id == company_id, Employment.status == EmploymentStatus.ACTIVE)
+        .order_by(Employment.id)
+    )
+    if employee_id:
+        employment_query = employment_query.where(Employment.id == int(employee_id))
+    employment = db.scalar(employment_query)
+    if not employment:
+        raise HTTPException(status_code=422, detail="Cadastre ao menos um colaborador ativo antes de lançar movimentações.")
+    start_date = parse_date(payload.get("start_date"), date.today())
+    movement = Movement(
+        company_id=company_id,
+        competency=str(payload.get("competency") or start_date.strftime("%Y-%m")),
+        employee_id=employment.id,
+        type=str(payload.get("type") or "falta"),
+        start_date=start_date,
+        end_date=parse_date(payload.get("end_date")) if payload.get("end_date") else None,
+        days=max(int(payload.get("days") or 1), 1),
+        hour_impact=Decimal(str(payload.get("hour_impact") or employment.daily_hours or 0)),
+        observation=str(payload.get("observation") or "Movimentação criada no modo oficial."),
+        status="Pendente",
+    )
+    db.add(movement)
+    db.commit()
+    db.refresh(movement)
+    return movement_to_dict(movement)
+
+
+@router.patch("/movements/{movement_id}")
+def update_movement(movement_id: int, payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1) -> dict[str, Any]:
+    if not verify_password(str(payload.get("password") or ""), user.password_hash):
+        raise HTTPException(status_code=403, detail="Senha de confirmação inválida.")
+    query = (
+        select(Movement)
+        .options(
+            joinedload(Movement.employment).joinedload(Employment.employee),
+            joinedload(Movement.employment).joinedload(Employment.result_center),
+        )
+        .where(Movement.id == movement_id)
+    )
+    if company_id != 0:
+        query = query.where(Movement.company_id == company_id)
+    movement = db.scalar(query)
+    if not movement:
+        raise HTTPException(status_code=404, detail="Movimentação não encontrada")
+    movement.competency = str(payload.get("competency") or movement.competency)
+    movement.type = str(payload.get("type") or movement.type)
+    movement.start_date = parse_date(payload.get("start_date"), movement.start_date)
+    movement.end_date = parse_date(payload.get("end_date")) if payload.get("end_date") else None
+    movement.days = max(int(payload.get("days") or movement.days), 1)
+    movement.hour_impact = Decimal(str(payload.get("hour_impact") or movement.hour_impact))
+    movement.observation = str(payload.get("observation") or movement.observation)
+    movement.status = str(payload.get("status") or movement.status)
+    db.commit()
+    db.refresh(movement)
+    return movement_to_dict(movement)
 
 
 @router.post("/benefit-distributions", status_code=201)
