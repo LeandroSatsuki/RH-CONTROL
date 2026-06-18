@@ -252,6 +252,10 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     row = payroll.json()[0]
     assert Decimal(str(row["transport"])) == Decimal("220.0")
     assert Decimal(str(row["subtotal_earnings"])) == Decimal("5020.0")
+    indicators = client.get("/api/demo/indicators?competency=2026-06", headers=admin)
+    assert indicators.status_code == 200
+    assert indicators.json()["final_headcount"] >= 1
+    assert Decimal(str(indicators.json()["total_cost"])) >= Decimal("0")
 
     for code, name, color in [
         ("IND", "Industrial", "#F59E0B"),

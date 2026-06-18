@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -233,6 +234,22 @@ def parse_date(value: Any, fallback: date | None = None) -> date:
     if fallback:
         return fallback
     raise HTTPException(status_code=422, detail="Data é obrigatória")
+
+
+def parse_competency(value: str) -> tuple[int, int, date, date]:
+    try:
+        year_raw, month_raw = value.split("-")
+        year = int(year_raw)
+        month = int(month_raw)
+        return year, month, date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Competência deve estar no formato AAAA-MM") from None
+
+
+def employment_active_in_period(employment: Employment, start: date, end: date) -> bool:
+    return employment.admission_date <= end and (
+        employment.termination_date is None or employment.termination_date >= start
+    )
 
 
 def benefit_matches(employment: Employment, benefit: BenefitDefinition) -> bool:
@@ -617,6 +634,62 @@ def payroll(db: DbSession, _: CurrentUser, competency: str = "2026-06", company_
         benefit_totals[item.employee_id][item.benefit_code.upper()] += item.amount
 
     return [payroll_row(employment, benefit_totals[employment.id], rates) for employment in employments]
+
+
+@router.get("/indicators")
+def indicators(db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> dict[str, Any]:
+    _, _, start, end = parse_competency(competency)
+    if company_id != 0:
+        ensure_company(db, company_id)
+    employment_query = (
+        select(Employment)
+        .options(joinedload(Employment.employee), joinedload(Employment.result_center), joinedload(Employment.employment_type))
+    )
+    if company_id != 0:
+        employment_query = employment_query.where(Employment.company_id == company_id)
+    employments = list(db.scalars(employment_query))
+
+    active = [
+        item
+        for item in employments
+        if employment_active_in_period(item, start, end) and item.status != EmploymentStatus.INACTIVE
+    ]
+    initial_headcount = sum(
+        employment_active_in_period(item, start, start) and item.status != EmploymentStatus.INACTIVE
+        for item in employments
+    )
+    final_headcount = len(active)
+    admissions = sum(start <= item.admission_date <= end for item in employments)
+    terminations = sum(bool(item.termination_date and start <= item.termination_date <= end) for item in employments)
+    average_headcount = (initial_headcount + final_headcount) / 2 if (initial_headcount or final_headcount) else 0
+
+    movement_query = select(Movement).where(Movement.competency == competency)
+    if company_id != 0:
+        movement_query = movement_query.where(Movement.company_id == company_id)
+    movements = list(db.scalars(movement_query))
+    non_productive_hours = sum(as_float(item.hour_impact) for item in movements)
+    scheduled_hours = sum(as_float(item.daily_hours) * 22 for item in active)
+
+    payroll_rows = payroll(db, user, competency, company_id)
+    gross_payroll = sum(float(row["gross_payroll"]) for row in payroll_rows)
+    net_payroll = sum(float(row["net_payroll"]) for row in payroll_rows)
+    total_cost = sum(float(row["total_cost"]) for row in payroll_rows)
+
+    return {
+        "initial_headcount": int(initial_headcount),
+        "admissions": int(admissions),
+        "terminations": int(terminations),
+        "final_headcount": int(final_headcount),
+        "average_headcount": average_headcount,
+        "absenteeism": non_productive_hours / scheduled_hours if scheduled_hours else 0,
+        "turnover": ((admissions + terminations) / 2 / final_headcount) if final_headcount else 0,
+        "gross_payroll": gross_payroll,
+        "net_payroll": net_payroll,
+        "salary_per_capita": gross_payroll / final_headcount if final_headcount else 0,
+        "total_cost": total_cost,
+        "productive_days": 22 if final_headcount else 0,
+        "non_productive_hours": non_productive_hours,
+    }
 
 
 def payroll_row(employment: Employment, benefits: dict[str, Decimal], rates: dict[str, Any]) -> dict[str, Any]:

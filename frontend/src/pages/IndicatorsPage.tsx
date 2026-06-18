@@ -1,5 +1,5 @@
 import { CSSProperties, ReactNode, useEffect, useMemo, useState } from "react";
-import { api, IS_DEMO_MODE } from "../api";
+import { api } from "../api";
 import { ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { useDemoScope } from "../context/DemoScope";
 import { demoCompetencies, demoResultCenters } from "../mocks/demoData";
@@ -339,7 +339,6 @@ function recalculateFinanceRow(row: FinanceRow) {
 type PresentationTarget = "all" | "cost" | "operational" | "finance" | "turnover" | "absenteeism";
 
 export function IndicatorsPage({ token }: { token: string }) {
-  if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [competency, setCompetency] = useState("2026-06");
   const [selectedCenter, setSelectedCenter] = useState<CenterCode>("IND");
@@ -792,16 +791,12 @@ export function IndicatorsPage({ token }: { token: string }) {
   );
 }
 
-function DemoOnly() {
-  return <div className="panel"><span className="eyebrow">Módulo demo</span><h2>Disponível na versão de apresentação</h2><p>Este módulo usa dados fictícios locais quando `VITE_DEMO_MODE=true`.</p></div>;
-}
-
 function PageShell({ title, subtitle, error = "", success = "", children }: { title: string; subtitle: string; error?: string; success?: string; children: ReactNode }) {
   return (
     <>
       <div className="page-title">
         <div>
-          <span className="eyebrow">Demo</span>
+          <span className="eyebrow">Gestão</span>
           <h1>{title}</h1>
           <p>{subtitle}</p>
         </div>
