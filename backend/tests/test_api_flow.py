@@ -69,7 +69,12 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         headers=admin,
         json={"name": "CLT", "has_charges": True, "active": True},
     )
-    assert center.status_code == employment_type.status_code == 201
+    mei_type = client.post(
+        "/api/employment-types",
+        headers=admin,
+        json={"name": "MEI", "has_charges": False, "active": True},
+    )
+    assert center.status_code == employment_type.status_code == mei_type.status_code == 201
 
     employee = {
         "cpf": "529.982.247-25",
@@ -178,6 +183,52 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     )
     assert updated_movement.status_code == 200
     assert updated_movement.json()["status"] == "Conferida"
+
+    mei_employee_payload = {
+        "cpf": "111.444.777-35",
+        "full_name": "Pessoa MEI",
+        "employee_code": "MEI-001",
+        "company_id": 1,
+        "employment_type_id": mei_type.json()["id"],
+        "result_center_id": center.json()["id"],
+        "job_title": "Prestador MEI",
+        "department": "",
+        "admission_date": "2026-06-01",
+        "status": "ACTIVE",
+        "daily_hours": 8.8,
+        "salary_base": 3000,
+        "notes": "",
+        "bank_name": "Banco Demo",
+        "bank_agency": "0001",
+        "bank_account": "54321",
+        "bank_account_digit": "1",
+        "pix_key_type": "CPF",
+        "pix_key": "11144477735",
+        "benefits": [],
+    }
+    mei_employee = client.post("/api/employees", headers=admin, json=mei_employee_payload)
+    assert mei_employee.status_code == 201
+    mei_contract = client.post(
+        "/api/demo/mei-contracts",
+        headers=admin,
+        json={
+            "employee_id": mei_employee.json()["id"],
+            "start_date": "2026-06-01",
+            "end_date": "2026-07-01",
+        },
+    )
+    assert mei_contract.status_code == 201
+    assert mei_contract.json()["status"] == "Pendente de assinatura"
+    mei_movements = client.get("/api/demo/movements?competency=2026-06", headers=admin)
+    assert any(item["type"] == "contrato não assinado" for item in mei_movements.json())
+    signed_contract = client.patch(
+        f"/api/demo/mei-contracts/{mei_contract.json()['id']}/sign",
+        headers=admin,
+        json={"attachment_name": "contrato-mei.pdf", "attachment_data_url": "data:application/pdf;base64,JVBERi0="},
+    )
+    assert signed_contract.status_code == 200
+    assert signed_contract.json()["status"] == "Ativo"
+    assert signed_contract.json()["attachment_name"] == "contrato-mei.pdf"
 
     benefits = client.get("/api/demo/benefits/catalog", headers=admin)
     assert benefits.status_code == 200
