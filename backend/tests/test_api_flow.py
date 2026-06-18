@@ -256,6 +256,11 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert indicators.status_code == 200
     assert indicators.json()["final_headcount"] >= 1
     assert Decimal(str(indicators.json()["total_cost"])) >= Decimal("0")
+    indicator_sheets = client.get("/api/demo/indicators/sheets?competency=2026-06", headers=admin)
+    assert indicator_sheets.status_code == 200
+    assert "ADM" in indicator_sheets.json()["sheets"]
+    adm_total = next(row for row in indicator_sheets.json()["sheets"]["ADM"]["costRows"] if row["label"] == "Total")
+    assert Decimal(str(adm_total["values"][5])) >= Decimal("0")
 
     for code, name, color in [
         ("IND", "Industrial", "#F59E0B"),

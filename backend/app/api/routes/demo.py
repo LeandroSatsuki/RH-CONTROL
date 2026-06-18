@@ -18,6 +18,7 @@ from app.models.employment import Employment
 from app.models.enums import EmploymentStatus
 from app.models.mei_contract import MeiContract
 from app.models.movement import Movement
+from app.models.result_center import ResultCenter
 from app.models.system_setting import SystemSetting
 
 router = APIRouter()
@@ -689,6 +690,180 @@ def indicators(db: DbSession, user: CurrentUser, competency: str = "2026-06", co
         "total_cost": total_cost,
         "productive_days": 22 if final_headcount else 0,
         "non_productive_hours": non_productive_hours,
+    }
+
+
+@router.get("/indicators/sheets")
+def indicator_sheets(db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> dict[str, Any]:
+    year, _, _, _ = parse_competency(competency)
+    if company_id != 0:
+        ensure_company(db, company_id)
+    centers_query = select(ResultCenter).where(ResultCenter.active.is_(True))
+    if company_id != 0:
+        centers_query = centers_query.where(ResultCenter.company_id == company_id)
+    centers = list(db.scalars(centers_query.order_by(ResultCenter.code)))
+    sheets = {center.code: build_indicator_sheet(db, user, year, center, company_id) for center in centers}
+    return {
+        "year": year,
+        "centers": [
+            {
+                "id": center.id,
+                "company_id": center.company_id,
+                "code": center.code,
+                "name": center.name,
+                "color": center.color,
+                "active": center.active,
+            }
+            for center in centers
+        ],
+        "sheets": sheets,
+    }
+
+
+def build_indicator_sheet(db: DbSession, user: CurrentUser, year: int, center: Any, company_id: int) -> dict[str, Any]:
+    month_labels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+    cost_keys = {
+        "Salário": "salary",
+        "Prolabore": "pro_labore",
+        "Dist. Lucro": "profit_distribution",
+        "Benefício": "benefits_total",
+        "Patronal": "employer_contribution",
+        "FGTS": "fgts",
+        "Provisão": "total_provisions",
+        "Total": "total_cost",
+    }
+    costs: dict[str, list[float]] = {label: [] for label in cost_keys}
+    operational: dict[str, list[float]] = {
+        "Efetivo Inicial (Un)": [],
+        "Afastamentos": [],
+        "Novas Contratações (Un)": [],
+        "Desligamentos (Un)": [],
+        "Horas Programadas": [],
+        "Horas não Produtivas": [],
+        "Efetivo Médio": [],
+        "Efetivo Final": [],
+    }
+    finance_rows: list[dict[str, Any]] = []
+    turnover_rows: list[dict[str, Any]] = []
+    absenteeism_rows: list[dict[str, Any]] = []
+    turnover_values: list[float] = []
+    absenteeism_values: list[float] = []
+
+    employment_query = select(Employment).where(Employment.result_center_id == center.id)
+    if company_id != 0:
+        employment_query = employment_query.where(Employment.company_id == company_id)
+    employments = list(db.scalars(employment_query))
+
+    for month in range(1, 13):
+        month_competency = f"{year}-{month:02d}"
+        _, _, start, end = parse_competency(month_competency)
+        month_payroll_rows = [
+            row
+            for row in payroll(db, user, month_competency, company_id)
+            if row["result_center"]["code"] == center.code
+        ]
+        month_movements = list(
+            db.scalars(
+                select(Movement).where(
+                    Movement.competency == month_competency,
+                    Movement.company_id == center.company_id,
+                )
+            )
+        )
+        month_movements = [
+            item
+            for item in month_movements
+            if item.employment and item.employment.result_center_id == center.id
+        ]
+        initial = sum(employment_active_in_period(item, start, start) and item.status != EmploymentStatus.INACTIVE for item in employments)
+        final = sum(employment_active_in_period(item, start, end) and item.status != EmploymentStatus.INACTIVE for item in employments)
+        active_month = [
+            item
+            for item in employments
+            if employment_active_in_period(item, start, end) and item.status != EmploymentStatus.INACTIVE
+        ]
+        admissions = sum(start <= item.admission_date <= end for item in employments)
+        terminations = sum(bool(item.termination_date and start <= item.termination_date <= end) for item in employments)
+        non_productive = sum(as_float(item.hour_impact) for item in month_movements)
+        scheduled = sum(as_float(item.daily_hours) * 22 for item in active_month)
+        absence_days = sum(
+            item.days
+            for item in month_movements
+            if any(marker in item.type.lower() for marker in ("afast", "falta", "ferias", "férias", "atestado"))
+        )
+        average_headcount = (initial + final) / 2 if (initial or final) else 0
+        turnover_value = ((admissions + terminations) / 2 / final) if final else 0
+        absenteeism_value = non_productive / scheduled if scheduled else 0
+        turnover_values.append(turnover_value)
+        absenteeism_values.append(absenteeism_value)
+
+        for label, key in cost_keys.items():
+            if key == "benefits_total":
+                value = sum(
+                    float(row["transport"]) + float(row["meal"]) + float(row["lodging"]) + float(row["insurance"]) + float(row["health_plan"])
+                    for row in month_payroll_rows
+                )
+            else:
+                value = sum(float(row[key]) for row in month_payroll_rows)
+            costs[label].append(round(value, 2))
+
+        operational["Efetivo Inicial (Un)"].append(float(initial))
+        operational["Afastamentos"].append(float(absence_days))
+        operational["Novas Contratações (Un)"].append(float(admissions))
+        operational["Desligamentos (Un)"].append(float(terminations))
+        operational["Horas Programadas"].append(round(scheduled, 2))
+        operational["Horas não Produtivas"].append(round(non_productive, 2))
+        operational["Efetivo Médio"].append(round(average_headcount, 2))
+        operational["Efetivo Final"].append(float(final))
+
+        total_cost = costs["Total"][-1]
+        finance_rows.append(
+            {
+                "month": month_labels[month - 1],
+                "faturamento": 0,
+                "custo": total_cost,
+                "percent": 0,
+                "meta": 0,
+                "metric": final,
+                "metricLabel": "Colab",
+                "costPerMetric": round(total_cost / final, 2) if final else 0,
+            }
+        )
+        turnover_rows.append(
+            {
+                "month": month_labels[month - 1],
+                "admissions": admissions,
+                "terminations": terminations,
+                "employees": final,
+                "turnover": turnover_value,
+                "average": sum(turnover_values) / len(turnover_values),
+                "meta": 0,
+            }
+        )
+        absenteeism_rows.append(
+            {
+                "month": month_labels[month - 1],
+                "planned": round(scheduled, 2),
+                "unproductive": round(non_productive, 2),
+                "absenteeism": absenteeism_value,
+                "average": sum(absenteeism_values) / len(absenteeism_values),
+                "meta": 0,
+            }
+        )
+
+    return {
+        "title": f"{center.code} {year}",
+        "subtitle": center.name,
+        "costRows": [{"label": label, "values": values, "total": round(sum(values), 2)} for label, values in costs.items()],
+        "operationalRows": [{"label": label, "values": values, "total": round(sum(values), 2)} for label, values in operational.items()],
+        "financeRows": finance_rows,
+        "turnoverRows": turnover_rows,
+        "absenteeismRows": absenteeism_rows,
+        "financeMetricLabel": "Colab",
+        "financeMetricUnit": "colaboradores",
+        "turnoverMeta": 0,
+        "absenteeismMeta": 0,
+        "costMeta": 0,
     }
 
 
