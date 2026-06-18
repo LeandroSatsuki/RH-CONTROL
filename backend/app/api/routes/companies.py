@@ -6,6 +6,7 @@ from app.api.dependencies import AdminUser, CurrentUser, DbSession
 from app.models.company import Company
 from app.models.system_setting import SystemSetting
 from app.schemas.catalog import CompanyCreate, CompanyRead
+from app.api.routes.demo import DEFAULT_JOB_TITLES, DEFAULT_PAYROLL_RATES
 
 router = APIRouter()
 
@@ -32,6 +33,8 @@ def create_company(payload: CompanyCreate, db: DbSession, _: AdminUser) -> Compa
                 include_saturdays=False,
                 include_sundays=False,
                 default_daily_hours=8.8,
+                payroll_rates=DEFAULT_PAYROLL_RATES,
+                job_titles=DEFAULT_JOB_TITLES,
             )
         )
         db.commit()

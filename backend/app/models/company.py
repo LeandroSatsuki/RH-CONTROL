@@ -23,3 +23,5 @@ class Company(Base):
     employment_types = relationship("EmploymentType", back_populates="company", cascade="all, delete-orphan")
     employees = relationship("Employee", back_populates="company", cascade="all, delete-orphan")
     employments = relationship("Employment", back_populates="company", cascade="all, delete-orphan")
+    benefit_definitions = relationship("BenefitDefinition", back_populates="company", cascade="all, delete-orphan")
+    benefit_distributions = relationship("BenefitDistribution", back_populates="company", cascade="all, delete-orphan")

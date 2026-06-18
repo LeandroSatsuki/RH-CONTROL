@@ -5,6 +5,7 @@ from app.api.routes import (
     backups,
     companies,
     dashboard,
+    demo,
     employees,
     employment_types,
     result_centers,
@@ -17,6 +18,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["Autenticação"])
 api_router.include_router(companies.router, prefix="/companies", tags=["Empresas"])
 api_router.include_router(setup.router, prefix="/setup", tags=["Configuração inicial"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
+api_router.include_router(demo.router, prefix="/demo", tags=["Módulos oficiais"])
 api_router.include_router(result_centers.router, prefix="/result-centers", tags=["Centros de Resultado"])
 api_router.include_router(employment_types.router, prefix="/employment-types", tags=["Modalidades"])
 api_router.include_router(employees.router, prefix="/employees", tags=["Colaboradores"])

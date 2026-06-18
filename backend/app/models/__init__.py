@@ -1,3 +1,4 @@
+from app.models.benefit import BenefitDefinition, BenefitDistribution
 from app.models.company import Company
 from app.models.employment import Employee, Employment, SalaryHistory
 from app.models.employment_type import EmploymentType
@@ -9,6 +10,8 @@ __all__ = [
     "Employee",
     "Employment",
     "EmploymentType",
+    "BenefitDefinition",
+    "BenefitDistribution",
     "Company",
     "ResultCenter",
     "SalaryHistory",
