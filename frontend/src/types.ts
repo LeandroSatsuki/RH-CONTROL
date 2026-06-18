@@ -50,10 +50,12 @@ export interface Employment {
   supervisor_name: string;
   street: string;
   address_number: string;
+  address_complement: string;
   neighborhood: string;
   city: string;
   state: string;
   cep: string;
+  bank_code: string;
   bank_name: string;
   bank_agency: string;
   bank_account: string;

@@ -147,7 +147,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
       }
       return true;
     });
-    return refined.length ? refined : benefitMatchesOnly;
+    return refined;
   }, [activeBenefit, employees, effectiveFilter]);
 
   const selectedEmployeeRows = selectedIds
@@ -378,7 +378,10 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
       setSuccess("Distribuição confirmada e integrada ao custo/folha.");
       setDescription("");
       setConfirmOpen(false);
+      setAppliedFilter(null);
       setSelectedIds([]);
+      setSelectedOverrides({});
+      setAddPanelOpen(false);
       setLastExportBatch({
         benefitName: activeBenefit.name,
         competency: appliedFilter.competency,
@@ -497,7 +500,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
 
             <div className="summary-grid benefits-summary">
               <Summary label="Valor estimado" value={money.format(previewTotal)} strong />
-              <Summary label="Modo" value={activeBenefit?.mode === "DAILY" ? `${daysWorked} dias x ${money.format(valuePerDay)}` : activeBenefit?.code === "PS" ? `${money.format(monthlyValue)} + ${dependentsCount} dependente(s)` : money.format(monthlyValue)} />
+              <Summary label="Padrão do lote" value={activeBenefit?.mode === "DAILY" ? `${daysWorked} dias x ${money.format(valuePerDay)}` : activeBenefit?.code === "PS" ? `${money.format(monthlyValue)} titular + ${dependentsCount} dependente(s)` : money.format(monthlyValue)} />
               <Summary label="Descrição" value={description || "Obrigatória na confirmação"} />
             </div>
 
@@ -509,11 +512,11 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
               </div>
             ) : (
               <div className="benefits-amounts">
-                <label>Valor mensal<input type="number" min="0" step="0.01" value={monthlyValue} onChange={event => setMonthlyValue(Number(event.target.value))} /></label>
+                <label>{activeBenefit.code === "PS" ? "Valor titular padrão" : "Valor mensal padrão"}<input type="number" min="0" step="0.01" value={monthlyValue} onChange={event => setMonthlyValue(Number(event.target.value))} /></label>
                 {activeBenefit.code === "PS" && (
                   <>
-                    <label>Dependentes<input type="number" min="0" step="1" value={dependentsCount} onChange={event => setDependentsCount(Number(event.target.value))} /></label>
-                    <label>Valor por dependente<input type="number" min="0" step="0.01" value={dependentValue} onChange={event => setDependentValue(Number(event.target.value))} /></label>
+                    <label>Dependentes padrão<input type="number" min="0" step="1" value={dependentsCount} onChange={event => setDependentsCount(Number(event.target.value))} /></label>
+                    <label>Valor padrão por dependente<input type="number" min="0" step="0.01" value={dependentValue} onChange={event => setDependentValue(Number(event.target.value))} /></label>
                   </>
                 )}
                 <button className="primary benefits-ok" type="button" onClick={applyBatchValues} disabled={loading}>OK</button>
@@ -574,7 +577,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
               <span>Colaborador</span>
               <span>CR</span>
               <span>Dias</span>
-              <span>{activeBenefit?.mode === "DAILY" ? "Valor/dia" : "Valor mensal"}</span>
+              <span>{activeBenefit?.mode === "DAILY" ? "Valor/dia" : activeBenefit?.code === "PS" ? "Titular / dep." : "Valor mensal"}</span>
               <span>Total</span>
             </div>
             <div className="selected-list">
@@ -612,6 +615,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                         value={override.monthlyValue}
                         onChange={event => updateOverride(employee.id, { monthlyValue: Number(event.target.value) })}
                         aria-label={`Valor mensal de ${employee.employee.full_name}`}
+                        title="Valor do titular"
                       />
                       {activeBenefit.code === "PS" && (
                         <>
@@ -622,6 +626,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                             value={override.dependentsCount}
                             onChange={event => updateOverride(employee.id, { dependentsCount: Number(event.target.value) })}
                             aria-label={`Dependentes de ${employee.employee.full_name}`}
+                            title="Quantidade de dependentes"
                           />
                           <input
                             type="number"
@@ -630,6 +635,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                             value={override.dependentValue}
                             onChange={event => updateOverride(employee.id, { dependentValue: Number(event.target.value) })}
                             aria-label={`Valor por dependente de ${employee.employee.full_name}`}
+                            title="Valor por dependente"
                           />
                         </>
                       )}
@@ -692,11 +698,6 @@ function benefitMatches(rawBenefit: string, benefit: DemoBenefitDefinition) {
 }
 
 function eligibleEmployeeIds(employees: DemoEmployee[], filter: BenefitFilter, benefit: DemoBenefitDefinition) {
-  const benefitOnly = employees
-    .filter(employee => employee.status === "ACTIVE")
-    .filter(employee => employee.benefits.some(raw => benefitMatches(raw, benefit)))
-    .map(employee => employee.id);
-
   const refined = employees
     .filter(employee => employee.status === "ACTIVE")
     .filter(employee => employee.benefits.some(raw => benefitMatches(raw, benefit)))
@@ -711,7 +712,7 @@ function eligibleEmployeeIds(employees: DemoEmployee[], filter: BenefitFilter, b
     })
     .map(employee => employee.id);
 
-  return refined.length ? refined : benefitOnly;
+  return refined;
 }
 
 function matchesEmployee(employee: DemoEmployee, query: string) {

@@ -20,9 +20,11 @@ interface EmployeeDraft {
   cep: string;
   street: string;
   address_number: string;
+  address_complement: string;
   neighborhood: string;
   city: string;
   state: string;
+  bank_code: string;
   bank_name: string;
   bank_agency: string;
   bank_account: string;
@@ -45,9 +47,11 @@ function createEmployeeDraft(settings: DemoSettings | null, centers: ResultCente
     cep: "",
     street: "",
     address_number: "",
+    address_complement: "",
     neighborhood: "",
     city: "",
     state: "",
+    bank_code: "",
     bank_name: "",
     bank_agency: "",
     bank_account: "",
@@ -139,6 +143,10 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
   const documentMessage = useMemo(() => validateCpfCnpj(cpfDigits, items), [cpfDigits, items]);
   const pixMessage = useMemo(() => validatePixKey(draft.pix_key_type, draft.pix_key), [draft.pix_key, draft.pix_key_type]);
   const cepMessage = cepStatus;
+  const bankNameFromCode = bankNameByCode(draft.bank_code);
+  const bankMessage = draft.bank_code && draft.bank_code.length === 3
+    ? bankNameFromCode ? `Banco identificado: ${bankNameFromCode}.` : "Código bancário não mapeado. Informe o nome manualmente."
+    : "";
   const canSubmit = Boolean(draft.full_name.trim())
     && Boolean(documentMessage === "")
     && Boolean(pixMessage === "")
@@ -216,9 +224,11 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
           cep: draft.cep.replace(/\D/g, ""),
           street: draft.street,
           address_number: draft.address_number,
+          address_complement: draft.address_complement,
           neighborhood: draft.neighborhood,
           city: draft.city,
           state: draft.state,
+          bank_code: draft.bank_code,
           bank_name: draft.bank_name,
           bank_agency: draft.bank_agency,
           bank_account: draft.bank_account,
@@ -283,7 +293,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <label>Matrícula<input value={generatedEmployeeCode} readOnly /></label>
       <label>Data de admissão<input value={draft.admission_date} onChange={event => setDraft(current => ({ ...current, admission_date: event.target.value }))} type="date" required /></label>
       <label>Centro de Resultado<select value={draft.result_center_id} onChange={event => setDraft(current => ({ ...current, result_center_id: event.target.value }))} required><option value="">Selecione</option>{centers.map(item => <option value={item.id} key={item.id}>{item.code} - {item.name}</option>)}</select></label>
-      <label>Cargo / função<select value={draft.job_title} onChange={event => setDraft(current => ({ ...current, job_title: event.target.value }))} required><option value="">Selecione</option>{jobTitleOptions.map(title => <option key={title} value={title}>{title}</option>)}</select></label>
+      <label>Cargo / função<select value={draft.job_title} onChange={event => setDraft(current => ({ ...current, job_title: event.target.value }))} required><option value="">Selecione</option>{jobTitleOptions.map(title => <option key={title} value={title}>{title}</option>)}</select><small>Cargos são cadastrados em Ajustes do sistema &gt; Cargos e funções.</small></label>
       <label>Supervisor<select value={draft.supervisor_name} onChange={event => setDraft(current => ({ ...current, supervisor_name: event.target.value }))}><option value="">Selecione</option>{supervisorOptions.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
       <label>Modalidade<select value={draft.employment_type_id} onChange={event => setDraft(current => ({ ...current, employment_type_id: event.target.value }))} required><option value="">Selecione</option>{types.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
       <label>Salário base<input value={draft.salary_base} onChange={event => setDraft(current => ({ ...current, salary_base: event.target.value }))} type="number" step="100" required /></label>
@@ -291,11 +301,17 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <label className="span-2">CEP<input value={draft.cep} onChange={event => setDraft(current => ({ ...current, cep: event.target.value.replace(/\D/g, "") }))} placeholder="00000000" maxLength={8} inputMode="numeric" required /></label>
       <label className="span-2">Rua<input value={draft.street} onChange={event => setDraft(current => ({ ...current, street: event.target.value }))} placeholder="Logradouro" readOnly={addressLocked} /></label>
       <label>Número<input value={draft.address_number} onChange={event => setDraft(current => ({ ...current, address_number: event.target.value }))} placeholder="123" /></label>
+      <label>Complemento<input value={draft.address_complement} onChange={event => setDraft(current => ({ ...current, address_complement: event.target.value }))} placeholder="Apto, sala, bloco ou referência" /></label>
       <label>Bairro<input value={draft.neighborhood} onChange={event => setDraft(current => ({ ...current, neighborhood: event.target.value }))} placeholder="Centro" readOnly={addressLocked} /></label>
       <label>Cidade<input value={draft.city} onChange={event => setDraft(current => ({ ...current, city: event.target.value }))} placeholder="São Paulo" readOnly={addressLocked} /></label>
       <label>UF<input value={draft.state} onChange={event => setDraft(current => ({ ...current, state: event.target.value.toUpperCase().slice(0, 2) }))} maxLength={2} placeholder="SP" readOnly={addressLocked} /></label>
       <h3 className="span-2 form-section-title">Dados bancários</h3>
-      <label>Banco<input value={draft.bank_name} onChange={event => setDraft(current => ({ ...current, bank_name: event.target.value }))} placeholder="Nome do banco" required /></label>
+      <label>Código do banco<input value={draft.bank_code} onChange={event => {
+        const code = event.target.value.replace(/\D/g, "").slice(0, 3);
+        const bank = bankNameByCode(code);
+        setDraft(current => ({ ...current, bank_code: code, bank_name: bank ?? (code.length === 3 ? "" : current.bank_name) }));
+      }} placeholder="001" maxLength={3} inputMode="numeric" /></label>
+      <label>Banco<input value={draft.bank_name} onChange={event => setDraft(current => ({ ...current, bank_name: event.target.value }))} placeholder="Nome do banco" readOnly={Boolean(bankNameFromCode)} required /></label>
       <label>Agência<input value={draft.bank_agency} onChange={event => setDraft(current => ({ ...current, bank_agency: event.target.value }))} placeholder="0001" required /></label>
       <label>Conta<input value={draft.bank_account} onChange={event => setDraft(current => ({ ...current, bank_account: event.target.value }))} placeholder="12345" required /></label>
       <label>Dígito da conta<input value={draft.bank_account_digit} onChange={event => setDraft(current => ({ ...current, bank_account_digit: event.target.value.replace(/\D/g, "").slice(0, 1) }))} placeholder="0" required /></label>
@@ -324,6 +340,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <div className="span-2 field-feedback-group">
         <p className={`field-feedback ${documentMessage ? "error" : "success"}`}>{documentMessage || "Documento válido."}</p>
         {cepStatus && <p className={`field-feedback ${cepStatus.startsWith("CEP não") ? "error" : "success"}`}>{cepStatus}</p>}
+        {bankMessage && <p className={`field-feedback ${bankNameFromCode ? "success" : "error"}`}>{bankMessage}</p>}
         <p className={`field-feedback ${pixMessage ? "error" : "success"}`}>{pixMessage || "Chave PIX válida."}</p>
       </div>
       <button className="primary" disabled={!canSubmit}>Cadastrar colaborador</button>
@@ -372,8 +389,8 @@ function EmployeeDrawer({ employee, token, user, onClose, onAction, onSaved }: {
       <Info label="Centro atual" value={`${employee.result_center.code} - ${employee.result_center.name}`} />
       <Info label="Modalidade" value={employee.employment_type.name} />
       <Info label="Custo estimado do mês" value={money.format(estimatedCost)} />
-      <Info label="Endereço" value={[employee.street, employee.address_number, employee.neighborhood, employee.city, employee.state].filter(Boolean).join(", ") || "-"} />
-      <Info label="Banco" value={employee.bank_name} />
+      <Info label="Endereço" value={[employee.street, employee.address_number, employee.address_complement, employee.neighborhood, employee.city, employee.state].filter(Boolean).join(", ") || "-"} />
+      <Info label="Banco" value={[employee.bank_code, employee.bank_name].filter(Boolean).join(" - ")} />
       <Info label="Agência / conta" value={`${employee.bank_agency} / ${employee.bank_account}-${employee.bank_account_digit}`} />
       <Info label="PIX" value={`${employee.pix_key_type}: ${employee.pix_key}`} />
       <Info label="Benefícios" value={(employee.benefits ?? []).length ? (employee.benefits ?? []).join(", ") : "Nenhum"} />
@@ -416,16 +433,73 @@ function normalizeText(value: string) {
 function validateCpfCnpj(value: string, employees: DemoEmployee[]) {
   if (!value) return "Informe um CPF ou CNPJ.";
   if (value.length !== 11 && value.length !== 14) return "CPF/CNPJ deve ter 11 ou 14 dígitos.";
+  if (!isValidCpfCnpj(value)) return value.length === 11 ? "CPF inválido." : "CNPJ inválido.";
   const duplicate = employees.find(item => item.employee.cpf.replace(/\D/g, "") === value);
   if (duplicate) return `Documento já cadastrado para ${duplicate.employee.full_name}.`;
   return "";
 }
 
+function isValidCpfCnpj(value: string) {
+  if (value.length === 11) return isValidCpf(value);
+  if (value.length === 14) return isValidCnpj(value);
+  return false;
+}
+
+function isValidCpf(value: string) {
+  if (/^(\d)\1+$/.test(value)) return false;
+  const calc = (length: number) => {
+    const sum = value.slice(0, length).split("").reduce((acc, digit, index) => acc + Number(digit) * (length + 1 - index), 0);
+    const rest = (sum * 10) % 11;
+    return rest === 10 ? 0 : rest;
+  };
+  return calc(9) === Number(value[9]) && calc(10) === Number(value[10]);
+}
+
+function isValidCnpj(value: string) {
+  if (/^(\d)\1+$/.test(value)) return false;
+  const calc = (length: 12 | 13) => {
+    const weights = length === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const sum = value.slice(0, length).split("").reduce((acc, digit, index) => acc + Number(digit) * weights[index], 0);
+    const rest = sum % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+  return calc(12) === Number(value[12]) && calc(13) === Number(value[13]);
+}
+
+function bankNameByCode(code: string) {
+  const banks: Record<string, string> = {
+    "001": "Banco do Brasil S.A.",
+    "033": "Banco Santander (Brasil) S.A.",
+    "077": "Banco Inter S.A.",
+    "104": "Caixa Econômica Federal",
+    "208": "Banco BTG Pactual S.A.",
+    "212": "Banco Original S.A.",
+    "237": "Banco Bradesco S.A.",
+    "260": "Nu Pagamentos S.A.",
+    "290": "PagSeguro Internet Instituição de Pagamento S.A.",
+    "318": "Banco BMG S.A.",
+    "323": "Mercado Pago Instituição de Pagamento Ltda.",
+    "336": "Banco C6 S.A.",
+    "341": "Itaú Unibanco S.A.",
+    "380": "PicPay Serviços S.A.",
+    "422": "Banco Safra S.A.",
+    "623": "Banco Pan S.A.",
+    "756": "Banco Cooperativo Sicoob S.A."
+  };
+  return banks[code];
+}
+
 function validatePixKey(type: string, value: string) {
   if (!type) return "Selecione o tipo de PIX.";
   if (!value) return "Informe a chave PIX.";
-  if (type === "CPF") return value.replace(/\D/g, "").length === 11 ? "" : "PIX CPF deve ter 11 dígitos.";
-  if (type === "CNPJ") return value.replace(/\D/g, "").length === 14 ? "" : "PIX CNPJ deve ter 14 dígitos.";
+  if (type === "CPF") {
+    const digits = value.replace(/\D/g, "");
+    return digits.length === 11 && isValidCpf(digits) ? "" : "PIX CPF inválido.";
+  }
+  if (type === "CNPJ") {
+    const digits = value.replace(/\D/g, "");
+    return digits.length === 14 && isValidCnpj(digits) ? "" : "PIX CNPJ inválido.";
+  }
   if (type === "EMAIL") return /.+@.+\..+/.test(value) ? "" : "PIX e-mail precisa conter @.";
   if (type === "PHONE") return value.replace(/\D/g, "").length >= 10 ? "" : "PIX telefone precisa ter DDD.";
   return value.trim().length ? "" : "Informe a chave aleatória.";

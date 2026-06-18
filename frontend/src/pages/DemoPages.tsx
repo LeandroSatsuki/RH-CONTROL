@@ -1427,7 +1427,7 @@ function formatReportCell(value: unknown, display?: ReportColumn["display"]) {
   return String(value ?? "-");
 }
 
-type SystemSection = "general" | "users" | "centers" | "types" | "backup" | "import";
+type SystemSection = "general" | "jobs" | "users" | "centers" | "types" | "backup" | "import";
 
 export function SettingsPage({ token, user }: { token: string; user: User }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
@@ -1499,6 +1499,17 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
       fb.fail(err instanceof Error ? err.message : "Erro ao cadastrar usuário");
     }
   }
+  async function saveJobTitles() {
+    if (restricted(user, fb.fail)) return;
+    try {
+      const updated = await api<DemoSettings>("/demo/settings", { method: "POST", body: JSON.stringify({ job_titles: jobTitles }) }, token);
+      setSettings(updated);
+      setJobTitles(updated.job_titles?.length ? updated.job_titles : jobTitles);
+      fb.notify("Cargos e funções salvos com sucesso.");
+    } catch (err) {
+      fb.fail(err instanceof Error ? err.message : "Erro ao salvar cargos e funções");
+    }
+  }
   async function toggleUserActive(item: DemoAppUser) {
     if (restricted(user, fb.fail)) return;
     try {
@@ -1537,6 +1548,7 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
   return <PageShell title="Ajustes do sistema" subtitle={`Área administrativa da empresa ${selectedCompany.name}. Cadastros, backup e importação ficam reunidos aqui.`} error={fb.error} success={fb.success}>
     <div className="segment-tabs">
       <button className={section === "general" ? "active" : ""} onClick={() => setSection("general")}>Geral</button>
+      <button className={section === "jobs" ? "active" : ""} onClick={() => setSection("jobs")}>Cargos e funções</button>
       <button className={section === "users" ? "active" : ""} onClick={() => setSection("users")}>Usuários</button>
       <button className={section === "centers" ? "active" : ""} onClick={() => setSection("centers")}>Centros de Resultado</button>
       <button className={section === "types" ? "active" : ""} onClick={() => setSection("types")}>Modalidades</button>
@@ -1547,18 +1559,31 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
       <SectionCard title="Empresa"><label>Nome<input name="company_name" defaultValue={settings?.company_name ?? selectedCompany.name} disabled={user.role !== "ADMIN"} /></label><InfoLine label="CNPJ" value={settings?.cnpj ?? "-"} /><InfoLine label="Mês inicial" value={settings?.initial_month ?? "-"} /><div className="logo-upload"><label>Logo da empresa<input type="file" accept="image/*" onChange={handleLogoUpload} disabled={user.role !== "ADMIN"} /></label>{companyLogo ? <img className="company-logo-preview" src={companyLogo} alt={`Logo de ${settings?.company_name ?? selectedCompany.name}`} /> : <div className="company-logo-placeholder">Nenhum logo enviado</div>}</div></SectionCard>
       <SectionCard title="Jornada"><label>Jornada padrão<input name="default_daily_hours" type="number" step="0.1" defaultValue={settings?.default_daily_hours ?? 8.8} disabled={user.role !== "ADMIN"} /></label><InfoLine label="Considerar sábado" value={settings?.include_saturdays ? "Sim" : "Não"} /><InfoLine label="Feriados" value={settings?.holidays.join(", ") ?? ""} /></SectionCard>
       <SectionCard title="Encargos">{settings?.charges.map(item => <InfoLine key={item.name} label={item.name} value={`${item.rate}%`} />)}</SectionCard>
-      <SectionCard title="Cargos e funções">
+      <SectionCard title="Usuários e permissões"><InfoLine label="Administrador" value="Controle total" /><InfoLine label="Consultor" value="Consulta e exportação" /></SectionCard>
+      {user.role === "ADMIN" && <button className="primary">Salvar configurações</button>}
+    </form>}
+    {section === "jobs" && <section className="panel report-saved-panel">
+      <div className="report-saved-head">
+        <div>
+          <span className="eyebrow">Cadastro operacional</span>
+          <h2>Cargos e funções</h2>
+          <p>Os cargos cadastrados aqui aparecem na lista suspensa do cadastro de colaboradores.</p>
+        </div>
+        <span className="report-saved-count">{jobTitles.length} cargo(s)</span>
+      </div>
+      <ErrorMessage message={fb.error} />
+      <SuccessMessage message={fb.success} />
+      <div className="panel">
         <div className="inline-form">
-          <input value={jobTitleDraft} onChange={event => setJobTitleDraft(event.target.value)} placeholder="Novo cargo" disabled={user.role !== "ADMIN"} />
+          <input value={jobTitleDraft} onChange={event => setJobTitleDraft(event.target.value)} placeholder="Novo cargo ou função" disabled={user.role !== "ADMIN"} />
           <button className="secondary" type="button" onClick={addJobTitle} disabled={user.role !== "ADMIN"}>Adicionar</button>
+          {user.role === "ADMIN" && <button className="primary" type="button" onClick={() => void saveJobTitles()}>Salvar cargos</button>}
         </div>
         <div className="chip-list">
           {jobTitles.map(title => <button key={title} type="button" className="chip-button" onClick={() => removeJobTitle(title)} disabled={user.role !== "ADMIN"}>{title} ×</button>)}
         </div>
-      </SectionCard>
-      <SectionCard title="Usuários e permissões"><InfoLine label="Administrador" value="Controle total" /><InfoLine label="Consultor" value="Consulta e exportação" /></SectionCard>
-      {user.role === "ADMIN" && <button className="primary">Salvar configurações</button>}
-    </form>}
+      </div>
+    </section>}
     {section === "users" && <section className="panel report-saved-panel">
       <div className="report-saved-head">
         <div>
