@@ -282,7 +282,6 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
 }
 
 export function CostDistributionPage({ token, user }: { token: string; user: User }) {
-  if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [competency, setCompetency] = useState("2026-06");
   const [center, setCenter] = useState("");
@@ -300,7 +299,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     fb.setError("");
     try {
       const response = await api<PayrollRow[]>(`/demo/payroll?competency=${competency}`, {}, token);
-      setRows(response.map(row => recalculatePayrollRow(row, payrollRates)));
+      setRows(IS_DEMO_MODE ? response.map(row => recalculatePayrollRow(row, payrollRates)) : response);
     } catch (err) {
       fb.fail(err instanceof Error ? err.message : "Erro ao carregar custo/folha");
     } finally {
@@ -1430,7 +1429,6 @@ function formatReportCell(value: unknown, display?: ReportColumn["display"]) {
 type SystemSection = "general" | "jobs" | "users" | "centers" | "types" | "backup" | "import";
 
 export function SettingsPage({ token, user }: { token: string; user: User }) {
-  if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [settings, setSettings] = useState<DemoSettings | null>(null);
   const [companyLogo, setCompanyLogo] = useState("");

@@ -26,6 +26,30 @@ def is_valid_cpf(value: str) -> bool:
     return True
 
 
+def is_valid_cnpj(value: str) -> bool:
+    cnpj = normalize_cpf(value)
+    if len(cnpj) != 14 or cnpj == cnpj[0] * 14:
+        return False
+    for size, weights in (
+        (12, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]),
+        (13, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]),
+    ):
+        total = sum(int(cnpj[index]) * weights[index] for index in range(size))
+        digit = 0 if total % 11 < 2 else 11 - total % 11
+        if digit != int(cnpj[size]):
+            return False
+    return True
+
+
+def is_valid_cpf_cnpj(value: str) -> bool:
+    normalized = normalize_cpf(value)
+    if len(normalized) == 11:
+        return is_valid_cpf(normalized)
+    if len(normalized) == 14:
+        return is_valid_cnpj(normalized)
+    return False
+
+
 class EmployeeCreate(BaseModel):
     company_id: int = 1
     cpf: str
@@ -42,11 +66,14 @@ class EmployeeCreate(BaseModel):
     salary_base: Decimal = Field(gt=0)
     notes: str = ""
     supervisor_name: str = ""
+    cep: str = ""
     street: str = ""
     address_number: str = ""
+    address_complement: str = ""
     neighborhood: str = ""
     city: str = ""
     state: str = ""
+    bank_code: str = ""
     bank_name: str = Field(min_length=2, max_length=120)
     bank_agency: str = Field(min_length=2, max_length=20)
     bank_account: str = Field(min_length=2, max_length=30)
@@ -59,8 +86,8 @@ class EmployeeCreate(BaseModel):
     @classmethod
     def validate_cpf(cls, value: str) -> str:
         normalized = normalize_cpf(value)
-        if not is_valid_cpf(normalized):
-            raise ValueError("CPF inválido")
+        if not is_valid_cpf_cnpj(normalized):
+            raise ValueError("CPF/CNPJ inválido")
         return normalized
 
     @field_validator("employee_code")
@@ -110,11 +137,14 @@ class EmploymentRead(BaseModel):
     salary_base: Decimal
     notes: str
     supervisor_name: str
+    cep: str
     street: str
     address_number: str
+    address_complement: str
     neighborhood: str
     city: str
     state: str
+    bank_code: str
     bank_name: str
     bank_agency: str
     bank_account: str

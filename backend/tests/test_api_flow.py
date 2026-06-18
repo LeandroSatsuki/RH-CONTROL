@@ -91,6 +91,7 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         "bank_account_digit": "0",
         "pix_key_type": "CPF",
         "pix_key": "52998224725",
+        "benefits": ["Vale transporte"],
     }
     created = client.post("/api/employees", headers=admin, json=employee)
     assert created.status_code == 201
@@ -136,6 +137,29 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         },
     )
     assert duplicate_adjustment.status_code == 409
+
+    benefits = client.get("/api/demo/benefits/catalog", headers=admin)
+    assert benefits.status_code == 200
+    assert {item["code"] for item in benefits.json()} >= {"VT", "AL", "PS", "SV"}
+    distribution = client.post(
+        "/api/demo/benefit-distributions",
+        headers=admin,
+        json={
+            "competency": "2026-06",
+            "benefit_code": "VT",
+            "employee_ids": [created_employee["id"]],
+            "description": "Vale transporte teste",
+            "source": "Lote",
+            "days_worked": 22,
+            "value_per_day": 10,
+        },
+    )
+    assert distribution.status_code == 201
+    payroll = client.get("/api/demo/payroll?competency=2026-06", headers=admin)
+    assert payroll.status_code == 200
+    row = payroll.json()[0]
+    assert Decimal(str(row["transport"])) == Decimal("220.0")
+    assert Decimal(str(row["subtotal_earnings"])) == Decimal("5020.0")
 
     for code, name, color in [
         ("IND", "Industrial", "#F59E0B"),

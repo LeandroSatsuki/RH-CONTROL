@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
-import { api, IS_DEMO_MODE } from "../api";
+import { api } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { demoBenefitDefinitions, demoCompetencies } from "../mocks/demoData";
@@ -68,7 +68,6 @@ function defaultFilter(): BenefitFilter {
 }
 
 export function BenefitsPage({ token, user }: { token: string; user: User }) {
-  if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [benefits, setBenefits] = useState<DemoBenefitDefinition[]>([]);
   const [employees, setEmployees] = useState<DemoEmployee[]>([]);
@@ -869,10 +868,6 @@ function truncatePdfText(value: string, maxWidth: number, doc: jsPDF) {
     current = current.slice(0, -1);
   }
   return `${current}${ellipsis}`;
-}
-
-function DemoOnly() {
-  return <div className="panel"><span className="eyebrow">Módulo demo</span><h2>Disponível na versão de apresentação</h2><p>Este módulo usa dados fictícios locais quando `VITE_DEMO_MODE=true`.</p></div>;
 }
 
 function Summary({ label, value, strong }: { label: string; value: string | number; strong?: boolean }) {

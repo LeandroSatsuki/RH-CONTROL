@@ -16,12 +16,34 @@ Primeiro marco funcional para substituir a planilha-base atual de custos e pesso
 - Login com JWT, senha com hash Argon2 e perfis Administrador/Consultor.
 - Seed idempotente do administrador, modalidades e Centros de Resultado iniciais.
 - Cadastro e consulta de Centros de Resultado, modalidades e colaboradores.
-- Validação de CPF e bloqueio de CPF/matrícula duplicados.
+- Validação de CPF/CNPJ e bloqueio de documento/matrícula duplicados.
 - Dashboard mensal por Centro de Resultado, com admissões, desligamentos, efetivo e turnover.
+- Configurações por empresa com logo, cargos/funções e percentuais de cálculo.
+- Lançamento oficial de benefícios com distribuição por colaborador.
+- Custo/Folha oficial calculando subtotal, encargos e provisões com benefícios integrados.
 - Estrutura isolada para indicadores, tratamento de erros Excel e divisão por zero.
 - Backup manual inicial com `pg_dump` e retenção de 90 dias.
 - Tema claro/escuro.
 - Migration Alembic inicial.
+
+## Virada do Demo para MVP Oficial
+
+O modo demo continua disponível para apresentação, mas os módulos abaixo já possuem base oficial no PostgreSQL:
+
+- Cadastro de colaboradores com CPF/CNPJ, CEP, complemento, banco, PIX e benefícios.
+- Ajustes do sistema com cargos/funções e percentuais por empresa.
+- Catálogo de benefícios.
+- Lançamento de benefícios.
+- Custo/Folha com cálculo usando lançamentos reais de benefícios.
+
+Depois de atualizar o projeto, aplique a migration:
+
+```powershell
+Set-Location backend
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+Em seguida, rode o backend e o frontend sem `VITE_DEMO_MODE=true` para testar o fluxo oficial com API e banco reais.
 
 ## Pré-requisitos
 
