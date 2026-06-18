@@ -21,7 +21,8 @@ export function DashboardPage({ token }: { token: string }) {
       setLoading(true);
       setError("");
       try {
-        const response = await api<DashboardResponseDemo>(`/dashboard?competency=${competency}`, {}, token);
+        const [year, month] = competency.split("-");
+        const response = await api<DashboardResponseDemo>(`/dashboard?month=${Number(month)}&year=${Number(year)}`, {}, token);
         if (active) setData(response);
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : "Erro ao carregar dashboard");

@@ -10,7 +10,7 @@ from app.models.company import Company
 from app.models.employment import Employment
 from app.models.enums import EmploymentStatus
 from app.models.result_center import ResultCenter
-from app.schemas.dashboard import DashboardCard, DashboardCompany, DashboardResponse
+from app.schemas.dashboard import DashboardCard, DashboardCompany, DashboardConsolidated, DashboardResponse
 from app.services.indicators import turnover
 
 router = APIRouter()
@@ -30,12 +30,23 @@ def active_in_period(item: Employment, start: date, end: date) -> bool:
 def get_dashboard(
     db: DbSession,
     _: CurrentUser,
-    month: int = Query(ge=1, le=12),
-    year: int = Query(ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    competency: str | None = None,
     company_id: int = 1,
     result_center_id: int | None = None,
     employment_type_id: int | None = None,
 ) -> DashboardResponse:
+    if competency and (month is None or year is None):
+        try:
+            parsed_year, parsed_month = competency.split("-")
+            year = int(parsed_year)
+            month = int(parsed_month)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="Competência deve estar no formato AAAA-MM") from None
+    today = date.today()
+    month = month or today.month
+    year = year or today.year
     start, end = month_bounds(year, month)
     previous_end = start.fromordinal(start.toordinal() - 1)
     previous_start = previous_end.replace(day=1)
@@ -91,9 +102,24 @@ def get_dashboard(
                 previous_active_employees=len(previous_active),
             )
         )
+    consolidated = DashboardConsolidated(
+        active_employees=sum(card.active_employees for card in cards),
+        admissions=sum(card.admissions for card in cards),
+        terminations=sum(card.terminations for card in cards),
+        gross_payroll=sum(card.gross_payroll for card in cards),
+        net_payroll=sum(card.net_payroll for card in cards),
+        total_cost=sum(card.total_cost for card in cards),
+        absenteeism=0,
+        turnover=turnover(
+            sum(card.admissions for card in cards),
+            sum(card.terminations for card in cards),
+            sum(card.active_employees for card in cards),
+        ),
+    )
     return DashboardResponse(
         company=None if company_id == 0 else DashboardCompany(id=company.id, code=company.code, name=company.name, kind=company.kind, group_name=company.group_name),
         month=month,
         year=year,
         cards=cards,
+        consolidated=consolidated,
     )
