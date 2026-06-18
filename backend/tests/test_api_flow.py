@@ -138,6 +138,47 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     )
     assert duplicate_adjustment.status_code == 409
 
+    movement = client.post(
+        "/api/demo/movements",
+        headers=admin,
+        json={
+            "competency": "2026-06",
+            "employee_id": created_employee["id"],
+            "type": "falta",
+            "start_date": "2026-06-12",
+            "days": 1,
+            "hour_impact": 8.8,
+            "observation": "Falta homologada",
+        },
+    )
+    assert movement.status_code == 201
+    movement_id = movement.json()["id"]
+    listed_movements = client.get("/api/demo/movements?competency=2026-06", headers=admin)
+    assert listed_movements.status_code == 200
+    assert listed_movements.json()[0]["observation"] == "Falta homologada"
+    forbidden_movement_update = client.patch(
+        f"/api/demo/movements/{movement_id}",
+        headers=admin,
+        json={"password": "senha-errada", "status": "Conferida"},
+    )
+    assert forbidden_movement_update.status_code == 403
+    updated_movement = client.patch(
+        f"/api/demo/movements/{movement_id}",
+        headers=admin,
+        json={
+            "password": "SenhaForte123",
+            "competency": "2026-06",
+            "type": "falta",
+            "start_date": "2026-06-12",
+            "days": 1,
+            "hour_impact": 8.8,
+            "observation": "Falta conferida",
+            "status": "Conferida",
+        },
+    )
+    assert updated_movement.status_code == 200
+    assert updated_movement.json()["status"] == "Conferida"
+
     benefits = client.get("/api/demo/benefits/catalog", headers=admin)
     assert benefits.status_code == 200
     assert {item["code"] for item in benefits.json()} >= {"VT", "AL", "PS", "SV"}
