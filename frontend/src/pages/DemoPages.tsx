@@ -1817,8 +1817,8 @@ export function BackupPage({ token, user, embedded = false }: { token: string; u
 }
 
 export function ClosingPage({ token, user }: { token: string; user: User }) {
-  if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
+  const [competency, setCompetency] = useState("2026-06");
   const [closing, setClosing] = useState<DemoClosing | null>(null);
   const [justification, setJustification] = useState("");
   const fb = useFeedback();
@@ -1827,19 +1827,19 @@ export function ClosingPage({ token, user }: { token: string; user: User }) {
   const load = async () => {
     setLoading(true);
     try {
-      setClosing(await api<DemoClosing>("/demo/closing", {}, token));
+      setClosing(await api<DemoClosing>(`/demo/closing?competency=${competency}`, {}, token));
     } catch (err) {
       fb.fail(err instanceof Error ? err.message : "Erro ao carregar fechamento");
     } finally {
       setLoading(false);
     }
   };
-  useEffect(() => { if (!lockedCompany) void load(); }, [token, selectedCompany.id]);
+  useEffect(() => { if (!lockedCompany) void load(); }, [competency, token, selectedCompany.id]);
   async function change(status: "OPEN" | "CLOSED", includeJustification = false) {
     if (restricted(user, fb.fail)) return;
     try {
-      setClosing(await api<DemoClosing>("/demo/closing", { method: "POST", body: JSON.stringify({ status, justification: includeJustification ? justification : "" }) }, token));
-      fb.notify(status === "CLOSED" ? "Competência fechada em modo demonstração." : "Competência reaberta em modo demonstração.");
+      setClosing(await api<DemoClosing>("/demo/closing", { method: "POST", body: JSON.stringify({ competency, status, justification: includeJustification ? justification : "" }) }, token));
+      fb.notify(status === "CLOSED" ? "Competência fechada com sucesso." : "Competência reaberta com sucesso.");
     } catch (err) {
       fb.fail(err instanceof Error ? err.message : "Erro ao atualizar fechamento");
     }
@@ -1851,7 +1851,12 @@ export function ClosingPage({ token, user }: { token: string; user: User }) {
   }
   if (loading && !closing) return <div className="inline-loading">Carregando fechamento...</div>;
   return <PageShell title="Fechamento mensal" subtitle={`Checklist de conferência antes do encerramento da competência na empresa ${selectedCompany.name}.`} error={fb.error} success={fb.success}
-    actions={<><button className="primary" onClick={() => change("CLOSED")}>Fechar competência</button><button className="secondary" onClick={() => change("CLOSED", true)}>Fechar com justificativa</button><button className="secondary" onClick={() => change("OPEN")}>Reabrir competência</button><button className="secondary" onClick={() => fb.notify("Relatório de fechamento gerado em modo demonstração.")}>Gerar relatório</button></>}>
+    actions={<><button className="primary" onClick={() => change("CLOSED")}>Fechar competência</button><button className="secondary" onClick={() => change("CLOSED", true)}>Fechar com justificativa</button><button className="secondary" onClick={() => change("OPEN")}>Reabrir competência</button><button className="secondary" onClick={() => fb.notify("Relatório de fechamento preparado.")}>Gerar relatório</button></>}>
+    <div className="panel filters-panel">
+      <select value={competency} onChange={event => setCompetency(event.target.value)}>
+        {demoCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+      </select>
+    </div>
     <div className="summary-grid"><Summary label="Competência" value={closing?.competency ?? "-"} /><Summary label="Status" value={closing?.status === "OPEN" ? "Aberta" : "Fechada"} strong /></div>
     {closing?.warnings?.length ? <div className="panel"><strong>Benefícios pendentes</strong><ul className="validation-list">{closing.warnings.map(item => <li key={item}>{item}</li>)}</ul><label>Justificativa para liberar o fechamento<textarea rows={3} value={justification} onChange={event => setJustification(event.target.value)} placeholder="Explique por que o lançamento ficará pendente para registro na movimentação" /></label></div> : null}
     <div className="panel checklist">{Object.entries(closing?.checklist ?? {}).map(([label, done]) => <label key={label} className="check"><input type="checkbox" checked={done} readOnly /> {label}</label>)}</div>

@@ -254,6 +254,16 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert Decimal(str(row["subtotal_earnings"])) == Decimal("5020.0")
     indicators = client.get("/api/demo/indicators?competency=2026-06", headers=admin)
     assert indicators.status_code == 200
+    assert indicators.json()["final_headcount"] == 0
+    closing = client.post(
+        "/api/demo/closing",
+        headers=admin,
+        json={"competency": "2026-06", "status": "CLOSED"},
+    )
+    assert closing.status_code == 200
+    assert closing.json()["status"] == "CLOSED"
+    indicators = client.get("/api/demo/indicators?competency=2026-06", headers=admin)
+    assert indicators.status_code == 200
     assert indicators.json()["final_headcount"] >= 1
     assert Decimal(str(indicators.json()["total_cost"])) >= Decimal("0")
     indicator_sheets = client.get("/api/demo/indicators/sheets?competency=2026-06", headers=admin)

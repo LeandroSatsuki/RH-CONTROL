@@ -18,6 +18,7 @@ from app.models.employment import Employment
 from app.models.enums import EmploymentStatus
 from app.models.mei_contract import MeiContract
 from app.models.movement import Movement
+from app.models.monthly_closing import MonthlyClosing
 from app.models.result_center import ResultCenter
 from app.models.system_setting import SystemSetting
 
@@ -251,6 +252,60 @@ def employment_active_in_period(employment: Employment, start: date, end: date) 
     return employment.admission_date <= end and (
         employment.termination_date is None or employment.termination_date >= start
     )
+
+
+def get_or_create_closing(db: DbSession, company_id: int, competency: str) -> MonthlyClosing:
+    closing = db.scalar(
+        select(MonthlyClosing).where(
+            MonthlyClosing.company_id == company_id,
+            MonthlyClosing.competency == competency,
+        )
+    )
+    if closing:
+        return closing
+    closing = MonthlyClosing(
+        company_id=company_id,
+        competency=competency,
+        status="OPEN",
+        justification="",
+        closed_by="",
+        closed_at=None,
+    )
+    db.add(closing)
+    db.commit()
+    db.refresh(closing)
+    return closing
+
+
+def is_competency_closed(db: DbSession, company_id: int, competency: str) -> bool:
+    if company_id == 0:
+        return False
+    closing = db.scalar(
+        select(MonthlyClosing.status).where(
+            MonthlyClosing.company_id == company_id,
+            MonthlyClosing.competency == competency,
+        )
+    )
+    return closing == "CLOSED"
+
+
+def closing_to_dict(closing: MonthlyClosing) -> dict[str, Any]:
+    return {
+        "id": closing.id,
+        "company_id": closing.company_id,
+        "competency": closing.competency,
+        "status": closing.status,
+        "justification": closing.justification,
+        "closed_by": closing.closed_by,
+        "closed_at": closing.closed_at.isoformat() if closing.closed_at else None,
+        "warnings": [],
+        "checklist": {
+            "Colaboradores revisados": True,
+            "Benefícios conferidos": True,
+            "Custo/Folha conferido": True,
+            "Movimentações registradas": True,
+        },
+    }
 
 
 def benefit_matches(employment: Employment, benefit: BenefitDefinition) -> bool:
@@ -637,11 +692,57 @@ def payroll(db: DbSession, _: CurrentUser, competency: str = "2026-06", company_
     return [payroll_row(employment, benefit_totals[employment.id], rates) for employment in employments]
 
 
+@router.get("/closing")
+def get_closing(db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> dict[str, Any]:
+    company = ensure_company(db, company_id)
+    parse_competency(competency)
+    closing = get_or_create_closing(db, company.id, competency)
+    return closing_to_dict(closing)
+
+
+@router.post("/closing")
+def update_closing(payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1) -> dict[str, Any]:
+    company = ensure_company(db, company_id)
+    competency = str(payload.get("competency") or "2026-06")
+    parse_competency(competency)
+    status = str(payload.get("status") or "OPEN").upper()
+    if status not in {"OPEN", "CLOSED"}:
+        raise HTTPException(status_code=422, detail="Status de fechamento inválido")
+    closing = get_or_create_closing(db, company.id, competency)
+    closing.status = status
+    closing.justification = str(payload.get("justification") or "").strip()
+    if status == "CLOSED":
+        closing.closed_by = user.full_name
+        closing.closed_at = datetime.now()
+    else:
+        closing.closed_by = ""
+        closing.closed_at = None
+    db.commit()
+    db.refresh(closing)
+    return closing_to_dict(closing)
+
+
 @router.get("/indicators")
 def indicators(db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> dict[str, Any]:
     _, _, start, end = parse_competency(competency)
     if company_id != 0:
         ensure_company(db, company_id)
+    if not is_competency_closed(db, company_id, competency):
+        return {
+            "initial_headcount": 0,
+            "admissions": 0,
+            "terminations": 0,
+            "final_headcount": 0,
+            "average_headcount": 0,
+            "absenteeism": 0,
+            "turnover": 0,
+            "gross_payroll": 0,
+            "net_payroll": 0,
+            "salary_per_capita": 0,
+            "total_cost": 0,
+            "productive_days": 0,
+            "non_productive_hours": 0,
+        }
     employment_query = (
         select(Employment)
         .options(joinedload(Employment.employee), joinedload(Employment.result_center), joinedload(Employment.employment_type))
@@ -756,6 +857,45 @@ def build_indicator_sheet(db: DbSession, user: CurrentUser, year: int, center: A
 
     for month in range(1, 13):
         month_competency = f"{year}-{month:02d}"
+        if not is_competency_closed(db, company_id, month_competency):
+            for values in costs.values():
+                values.append(0)
+            for values in operational.values():
+                values.append(0)
+            finance_rows.append(
+                {
+                    "month": month_labels[month - 1],
+                    "faturamento": 0,
+                    "custo": 0,
+                    "percent": 0,
+                    "meta": 0,
+                    "metric": 0,
+                    "metricLabel": "Colab",
+                    "costPerMetric": 0,
+                }
+            )
+            turnover_rows.append(
+                {
+                    "month": month_labels[month - 1],
+                    "admissions": 0,
+                    "terminations": 0,
+                    "employees": 0,
+                    "turnover": 0,
+                    "average": 0,
+                    "meta": 0,
+                }
+            )
+            absenteeism_rows.append(
+                {
+                    "month": month_labels[month - 1],
+                    "planned": 0,
+                    "unproductive": 0,
+                    "absenteeism": 0,
+                    "average": 0,
+                    "meta": 0,
+                }
+            )
+            continue
         _, _, start, end = parse_competency(month_competency)
         month_payroll_rows = [
             row
