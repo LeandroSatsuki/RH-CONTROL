@@ -1,7 +1,7 @@
 """Official benefits, payroll support fields and settings
 
-Revision ID: 20260618_0007_official_benefits_payroll
-Revises: 20260611_0006_company_logo_setting
+Revision ID: 20260618_0007
+Revises: 20260611_0006
 Create Date: 2026-06-18 00:00:00.000000
 """
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260618_0007_official_benefits_payroll"
-down_revision: str | None = "20260611_0006_company_logo_setting"
+revision: str = "20260618_0007"
+down_revision: str | None = "20260611_0006"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 
