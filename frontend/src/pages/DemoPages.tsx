@@ -7,7 +7,7 @@ import { demoBenefitDefinitions, demoCompetencies, demoResultCenters, demoSettin
 import { DemoAlert, DemoAppUser, DemoAuditEntry, DemoBackup, DemoBenefitDistribution, DemoClosing, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
 import { recalculatePayrollRow } from "../mocks/demoCalculations";
 import { CentersPage, TypesPage } from "./CatalogPages";
-import { User } from "../types";
+import { EmploymentType, ResultCenter, User } from "../types";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
@@ -39,13 +39,28 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
   const [type, setType] = useState("");
   const [center, setCenter] = useState("");
   const [items, setItems] = useState<DemoMovement[]>([]);
+  const [employees, setEmployees] = useState<DemoEmployee[]>([]);
+  const [centers, setCenters] = useState<ResultCenter[]>([]);
+  const [types, setTypes] = useState<EmploymentType[]>([]);
   const [selected, setSelected] = useState<DemoMovement | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const fb = useFeedback();
 
   async function load() {
     setLoading(true);
-    try { setItems(await api<DemoMovement[]>(`/demo/movements?competency=${competency}`, {}, token)); }
+    try {
+      const [movementList, employeeList, resultCenters, employmentTypes] = await Promise.all([
+        api<DemoMovement[]>(`/demo/movements?competency=${competency}`, {}, token),
+        api<DemoEmployee[]>("/employees", {}, token),
+        api<ResultCenter[]>("/result-centers", {}, token),
+        api<EmploymentType[]>("/employment-types", {}, token)
+      ]);
+      setItems(movementList);
+      setEmployees(employeeList);
+      setCenters(resultCenters);
+      setTypes(employmentTypes);
+    }
     catch (err) { fb.fail(err instanceof Error ? err.message : "Erro ao carregar movimentações"); }
     finally { setLoading(false); }
   }
@@ -54,16 +69,10 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
   const filtered = items.filter(item => (!type || item.type === type) && (!center || item.result_center.code === center));
   const absences = filtered.filter(item => ["falta", "atestado", "afastamento"].includes(item.type)).reduce((acc, item) => acc + item.days, 0);
 
-  async function createMovement() {
+  function createMovement() {
     if (selectedCompany.id === 0) return fb.fail("Selecione uma empresa específica para lançar movimentações.");
     if (restricted(user, fb.fail)) return;
-    try {
-      await api("/demo/movements", { method: "POST", body: JSON.stringify({ competency, type: "falta", days: 1, observation: "Movimentação criada pela apresentação." }) }, token);
-      fb.notify("Movimentação criada com sucesso.");
-      void load();
-    } catch (err) {
-      fb.fail(err instanceof Error ? err.message : "Erro ao criar movimentação");
-    }
+    setCreateOpen(true);
   }
 
   return <PageShell title="Movimentações" subtitle="Eventos mensais que impactam pessoas, custos e histórico." error={fb.error} success={fb.success}
@@ -89,6 +98,21 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
       setSelected(updated);
       void load();
     }} />}
+    {createOpen && (
+      <MovementCreateModal
+        token={token}
+        competency={competency}
+        employees={employees}
+        centers={centers}
+        types={types}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => {
+          setCreateOpen(false);
+          fb.notify("Movimentação criada com sucesso.");
+          void load();
+        }}
+      />
+    )}
   </PageShell>;
 }
 
@@ -743,6 +767,130 @@ function MovementDrawer({ item, token, user, onClose, onSaved }: { item: DemoMov
       {success && <p className="success-line span-2">{success}</p>}
     </form> : <p className="note">Seu perfil possui acesso somente para consulta.</p>}
   </aside></div>;
+}
+
+function MovementCreateModal({
+  token,
+  competency,
+  employees,
+  centers,
+  types,
+  onClose,
+  onCreated
+}: {
+  token: string;
+  competency: string;
+  employees: DemoEmployee[];
+  centers: ResultCenter[];
+  types: EmploymentType[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [employmentType, setEmploymentType] = useState("");
+  const [center, setCenter] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
+  const [movementType, setMovementType] = useState("falta");
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState("");
+  const [days, setDays] = useState(1);
+  const [hours, setHours] = useState(8.8);
+  const [observation, setObservation] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const basicsSelected = Boolean(employmentType && center);
+  const eligibleEmployees = useMemo(() => {
+    if (!basicsSelected) return [];
+    return employees
+      .filter(employee => employee.status === "ACTIVE")
+      .filter(employee => employee.employment_type.name === employmentType)
+      .filter(employee => employee.result_center.code === center)
+      .sort((a, b) => a.employee.full_name.localeCompare(b.employee.full_name, "pt-BR"));
+  }, [basicsSelected, center, employees, employmentType]);
+
+  useEffect(() => {
+    setEmployeeId("");
+  }, [employmentType, center]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!basicsSelected) {
+      setError("Selecione modalidade e Centro de Resultado para liberar a ficha.");
+      return;
+    }
+    if (!employeeId) {
+      setError("Selecione um colaborador.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await api("/demo/movements", {
+        method: "POST",
+        body: JSON.stringify({
+          competency,
+          employee_id: Number(employeeId),
+          type: movementType,
+          start_date: startDate,
+          end_date: endDate || null,
+          days,
+          hour_impact: hours,
+          observation: observation.trim() || "Movimentação lançada manualmente."
+        })
+      }, token);
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao criar movimentação");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="presentation-modal movement-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <form className="presentation-modal-panel movement-modal" onClick={event => event.stopPropagation()} onSubmit={submit}>
+        <div className="presentation-modal-header movement-modal-header">
+          <div>
+            <span className="eyebrow">Nova movimentação</span>
+            <h2>Ficha de lançamento</h2>
+            <p>Selecione modalidade e Centro de Resultado para carregar somente os colaboradores elegíveis.</p>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Fechar">×</button>
+        </div>
+        <div className="presentation-modal-body movement-modal-body">
+          <div className="movement-form-grid">
+            <label>Modalidade<select value={employmentType} onChange={event => setEmploymentType(event.target.value)} required autoFocus>
+              <option value="">Selecione</option>
+              {types.filter(item => item.active).map(item => <option key={item.id} value={item.name}>{item.name}</option>)}
+            </select></label>
+            <label>Centro de Resultado<select value={center} onChange={event => setCenter(event.target.value)} required>
+              <option value="">Selecione</option>
+              {centers.filter(item => item.active).map(item => <option key={item.id} value={item.code}>{item.code} - {item.name}</option>)}
+            </select></label>
+            <label className="span-2">Colaborador<select value={employeeId} onChange={event => setEmployeeId(event.target.value)} disabled={!basicsSelected} required>
+              <option value="">{basicsSelected ? "Selecione o colaborador" : "Selecione modalidade e CR primeiro"}</option>
+              {eligibleEmployees.map(employee => <option key={employee.id} value={employee.id}>{employee.employee.full_name} • {employee.employee_code}</option>)}
+            </select></label>
+            {basicsSelected && !eligibleEmployees.length && <p className="note span-2">Nenhum colaborador ativo encontrado para esta modalidade e Centro de Resultado.</p>}
+            <label>Tipo<select value={movementType} onChange={event => setMovementType(event.target.value)} disabled={!basicsSelected} required>
+              {movementTypes.map(option => <option key={option} value={option}>{option}</option>)}
+            </select></label>
+            <label>Competência<input value={competency} readOnly disabled={!basicsSelected} /></label>
+            <label>Início<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} disabled={!basicsSelected} required /></label>
+            <label>Fim<input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} disabled={!basicsSelected} /></label>
+            <label>Dias<input type="number" min="1" step="1" value={days} onChange={event => setDays(Number(event.target.value || 1))} disabled={!basicsSelected} required /></label>
+            <label>Horas<input type="number" min="0" step="0.1" value={hours} onChange={event => setHours(Number(event.target.value || 0))} disabled={!basicsSelected} required /></label>
+            <label className="span-2">Observação<input value={observation} onChange={event => setObservation(event.target.value)} disabled={!basicsSelected} placeholder="Descreva o motivo ou contexto da movimentação" /></label>
+          </div>
+          {error && <p className="error-line">{error}</p>}
+          <div className="actions movement-modal-actions">
+            <button type="button" className="secondary" onClick={onClose}>Cancelar</button>
+            <button className="primary" disabled={saving || !basicsSelected || !employeeId}>{saving ? "Salvando..." : "Salvar movimentação"}</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 export function IndicatorsPage({ token }: { token: string }) {

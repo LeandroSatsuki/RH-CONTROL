@@ -232,6 +232,16 @@ tr.clickable:hover { background: var(--surface-2); }
 .report-template-modal-body { display: grid; gap: 14px; overflow: auto; }
 .modal-toolbar { margin-bottom: 0; }
 .report-template-modal-actions { justify-content: flex-end; }
+.movement-modal-backdrop { display: grid; place-items: center; }
+.movement-modal { width: min(760px, 100%); height: auto; max-height: min(88vh, 760px); }
+.movement-modal-header { padding-bottom: 0; }
+.movement-modal-header h2 { margin: 4px 0 6px; }
+.movement-modal-header p { margin: 0; color: var(--muted); font-size: 13px; }
+.movement-modal-body { display: grid; gap: 14px; }
+.movement-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.movement-form-grid .span-2 { grid-column: span 2; }
+.movement-form-grid input:disabled, .movement-form-grid select:disabled { background: var(--surface-2); color: var(--muted); cursor: not-allowed; }
+.movement-modal-actions { justify-content: flex-end; margin-top: 0; }
 .chart-grid-line { stroke: #d7dfe8; stroke-width: 1; }
 .chart-axis-text { fill: var(--muted); font-size: 10px; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 10px 14px; padding-left: 4px; font-size: 11px; color: var(--muted); }
