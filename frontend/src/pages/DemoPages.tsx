@@ -117,7 +117,6 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
 }
 
 export function MeiContractsPage({ token, user }: { token: string; user: User }) {
-  if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [employees, setEmployees] = useState<DemoEmployee[]>([]);
   const [contracts, setContracts] = useState<DemoMeiContract[]>([]);

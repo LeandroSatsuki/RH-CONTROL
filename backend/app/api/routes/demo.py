@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -15,6 +15,7 @@ from app.models.benefit import BenefitDefinition, BenefitDistribution
 from app.models.company import Company
 from app.models.employment import Employment
 from app.models.enums import EmploymentStatus
+from app.models.mei_contract import MeiContract
 from app.models.movement import Movement
 from app.models.system_setting import SystemSetting
 
@@ -192,6 +193,32 @@ def movement_to_dict(item: Movement) -> dict[str, Any]:
         "result_center": result_center_to_dict(employment),
         "observation": item.observation,
         "status": item.status,
+    }
+
+
+def mei_contract_to_dict(item: MeiContract) -> dict[str, Any]:
+    employment = item.employment
+    return {
+        "id": item.id,
+        "company_id": item.company_id,
+        "employee_id": item.employee_id,
+        "employee_name": employment.employee.full_name,
+        "employee_code": employment.employee_code,
+        "result_center": result_center_to_dict(employment),
+        "employment_type": employment.employment_type.name,
+        "status": item.status,
+        "start_date": item.start_date.isoformat(),
+        "end_date": item.end_date.isoformat(),
+        "attachment_name": item.attachment_name,
+        "attachment_data_url": item.attachment_data_url,
+        "created_at": item.created_at.isoformat() if item.created_at else "",
+        "signed_at": item.signed_at.isoformat() if item.signed_at else None,
+        "signed_by": item.signed_by,
+        "notified_not_signed": item.notified_not_signed,
+        "notified_15": item.notified_15,
+        "notified_10": item.notified_10,
+        "notified_5": item.notified_5,
+        "movement_created_5": item.movement_created_5,
     }
 
 
@@ -386,6 +413,110 @@ def update_movement(movement_id: int, payload: dict[str, Any], db: DbSession, us
     db.commit()
     db.refresh(movement)
     return movement_to_dict(movement)
+
+
+@router.get("/mei-contracts")
+def list_mei_contracts(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict[str, Any]]:
+    query = (
+        select(MeiContract)
+        .options(
+            joinedload(MeiContract.employment).joinedload(Employment.employee),
+            joinedload(MeiContract.employment).joinedload(Employment.result_center),
+            joinedload(MeiContract.employment).joinedload(Employment.employment_type),
+        )
+        .order_by(MeiContract.id.desc())
+    )
+    if company_id != 0:
+        query = query.where(MeiContract.company_id == company_id)
+    return [mei_contract_to_dict(item) for item in db.scalars(query)]
+
+
+@router.post("/mei-contracts", status_code=201)
+def create_mei_contract(payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1) -> dict[str, Any]:
+    ensure_company(db, company_id)
+    employment = db.scalar(
+        select(Employment)
+        .options(
+            joinedload(Employment.employee),
+            joinedload(Employment.result_center),
+            joinedload(Employment.employment_type),
+        )
+        .where(
+            Employment.company_id == company_id,
+            Employment.id == int(payload.get("employee_id") or 0),
+            Employment.status == EmploymentStatus.ACTIVE,
+        )
+    )
+    if not employment:
+        raise HTTPException(status_code=422, detail="Selecione um MEI cadastrado.")
+    if employment.employment_type.name.upper() != "MEI":
+        raise HTTPException(status_code=422, detail="Selecione apenas colaboradores da modalidade MEI.")
+    start_date = parse_date(payload.get("start_date"))
+    end_date = parse_date(payload.get("end_date"))
+    contract = MeiContract(
+        company_id=company_id,
+        employee_id=employment.id,
+        status="Pendente de assinatura",
+        start_date=start_date,
+        end_date=end_date,
+        attachment_name=None,
+        attachment_data_url=None,
+        signed_at=None,
+        signed_by=None,
+        notified_not_signed=True,
+        notified_15=False,
+        notified_10=False,
+        notified_5=False,
+        movement_created_5=False,
+    )
+    db.add(contract)
+    db.flush()
+    db.add(
+        Movement(
+            company_id=company_id,
+            competency=start_date.strftime("%Y-%m"),
+            employee_id=employment.id,
+            type="contrato não assinado",
+            start_date=start_date,
+            end_date=None,
+            days=0,
+            hour_impact=Decimal("0.00"),
+            observation=f"MEI#{contract.id} - contrato pendente de assinatura",
+            status="Pendente",
+        )
+    )
+    db.commit()
+    db.refresh(contract)
+    return mei_contract_to_dict(contract)
+
+
+@router.patch("/mei-contracts/{contract_id}/sign")
+def sign_mei_contract(contract_id: int, payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1) -> dict[str, Any]:
+    attachment_name = str(payload.get("attachment_name") or "").strip()
+    if not attachment_name:
+        raise HTTPException(status_code=422, detail="Anexe o contrato para concluir a assinatura.")
+    query = (
+        select(MeiContract)
+        .options(
+            joinedload(MeiContract.employment).joinedload(Employment.employee),
+            joinedload(MeiContract.employment).joinedload(Employment.result_center),
+            joinedload(MeiContract.employment).joinedload(Employment.employment_type),
+        )
+        .where(MeiContract.id == contract_id)
+    )
+    if company_id != 0:
+        query = query.where(MeiContract.company_id == company_id)
+    contract = db.scalar(query)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
+    contract.status = "Ativo"
+    contract.attachment_name = attachment_name
+    contract.attachment_data_url = str(payload.get("attachment_data_url") or "") or None
+    contract.signed_at = datetime.now()
+    contract.signed_by = user.full_name
+    db.commit()
+    db.refresh(contract)
+    return mei_contract_to_dict(contract)
 
 
 @router.post("/benefit-distributions", status_code=201)
