@@ -16,6 +16,8 @@ frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
 consultas/~$*.xlsx
+# Planilhas operacionais podem conter dados pessoais e não devem ser versionadas.
+consultas/*.xlsx
 logs/
 .idea/
 .vscode/
