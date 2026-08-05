@@ -73,7 +73,6 @@ def get_dashboard(
         by_type: dict[str, int] = {}
         for item in active:
             by_type[item.employment_type.name] = by_type.get(item.employment_type.name, 0) + 1
-        average = (len(previous_active) + len(active)) / 2
         cards.append(
             DashboardCard(
                 id=center.id,
