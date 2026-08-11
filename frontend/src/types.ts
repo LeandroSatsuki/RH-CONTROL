@@ -25,6 +25,12 @@ export interface EmploymentType {
   active: boolean;
 }
 
+export interface JobTitle {
+  id: number;
+  name: string;
+  active: boolean;
+}
+
 export interface Company {
   id: number;
   code: string;

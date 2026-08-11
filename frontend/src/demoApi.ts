@@ -1,4 +1,4 @@
-import { EmploymentType, ResultCenter, User } from "./types";
+import { EmploymentType, JobTitle, ResultCenter, User } from "./types";
 import { consolidatedIndicators, dashboardCards, payrollRows } from "./mocks/demoCalculations";
 import { createDemoCostAllocations, createDemoEmployees, createDemoMovements, demoCompanies, demoCompetencies, demoEmploymentTypes, demoResultCenters } from "./mocks/demoData";
 import { DemoAlert, DemoAuditEntry, DemoBackup, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMovement, DemoSettings } from "./mocks/demoTypes";
@@ -15,6 +15,7 @@ interface DemoState {
   companies: DemoCompany[];
   resultCenters: ResultCenter[];
   employmentTypes: EmploymentType[];
+  jobTitles: JobTitle[];
   employees: DemoEmployee[];
   movements: DemoMovement[];
   allocations: DemoCostAllocation[];
@@ -27,6 +28,7 @@ function defaultState(): DemoState {
     companies: JSON.parse(JSON.stringify(demoCompanies)) as DemoCompany[],
     resultCenters: demoResultCenters,
     employmentTypes: demoEmploymentTypes,
+    jobTitles: Array.from(new Set(employees.map(employee => employee.job_title))).sort().map((name, index) => ({ id: index + 1, name, active: true })),
     employees,
     movements: createDemoMovements(employees),
     allocations: createDemoCostAllocations(),
@@ -279,6 +281,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
   if (route === "/demo/audit-logs" && method === "GET") return scopeAuditLogs(state, companyId) as T;
   if (route === "/result-centers" && method === "GET") return state.resultCenters as T;
   if (route === "/employment-types" && method === "GET") return state.employmentTypes as T;
+  if (route === "/job-titles" && method === "GET") return state.jobTitles as T;
   if (route === "/employees" && method === "GET") return scopeEmployees(state, companyId) as T;
 
   if (route === "/result-centers" && method === "POST") {
@@ -295,6 +298,17 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const payload = body<Partial<EmploymentType>>(options);
     const item = { id: nextId(state.employmentTypes), name: String(payload.name ?? "").trim(), has_charges: Boolean(payload.has_charges), active: true };
     state.employmentTypes = [...state.employmentTypes, item];
+    saveState(state);
+    return item as T;
+  }
+
+  if (route === "/job-titles" && method === "POST") {
+    assertAdmin(token);
+    const payload = body<Partial<JobTitle>>(options);
+    const name = String(payload.name ?? "").trim();
+    if (state.jobTitles.some(item => item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error("Cargo ou função já existe.");
+    const item = { id: nextId(state.jobTitles), name, active: true };
+    state.jobTitles = [...state.jobTitles, item];
     saveState(state);
     return item as T;
   }

@@ -7,6 +7,7 @@ from app.api.dependencies import AdminUser, CurrentUser, DbSession
 from app.models.company import Company
 from app.models.employment import Employee, Employment, SalaryHistory
 from app.models.employment_type import EmploymentType
+from app.models.job_title import JobTitle
 from app.models.result_center import ResultCenter
 from app.schemas.employee import EmployeeCreate, EmploymentRead, SalaryHistoryCreate
 
@@ -52,14 +53,21 @@ def create_employee(payload: EmployeeCreate, db: DbSession, _: AdminUser) -> Emp
     result_center = db.get(ResultCenter, payload.result_center_id)
     if not result_center:
         raise HTTPException(status_code=404, detail="Centro de Resultado não encontrado")
-    if employment_type.company_id != payload.company_id:
-        raise HTTPException(status_code=409, detail="Modalidade não pertence à empresa selecionada")
-    if result_center.company_id != payload.company_id:
-        raise HTTPException(status_code=409, detail="Centro de Resultado não pertence à empresa selecionada")
+    job_title = db.scalar(select(JobTitle).where(JobTitle.name == payload.job_title.strip()))
+    if not job_title:
+        # Compatibility with previous clients that still submit the title as text.
+        job_title = JobTitle(name=payload.job_title.strip())
+        db.add(job_title)
+        db.flush()
 
     data = payload.model_dump(exclude={"cpf", "full_name", "company_id"})
     person = Employee(company_id=payload.company_id, cpf=payload.cpf, full_name=payload.full_name)
-    employment = Employment(company_id=payload.company_id, employee=person, **data)
+    employment = Employment(
+        company_id=payload.company_id,
+        employee=person,
+        job_title_id=job_title.id,
+        **data,
+    )
     employment.salary_history.append(
         SalaryHistory(
             effective_date=payload.admission_date,

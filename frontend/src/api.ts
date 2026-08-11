@@ -37,6 +37,9 @@ function shouldScopePath(path: string) {
   return !path.startsWith("/auth")
     && !path.startsWith("/setup")
     && !path.startsWith("/companies")
+    && !path.startsWith("/result-centers")
+    && !path.startsWith("/employment-types")
+    && !path.startsWith("/job-titles")
     && !path.startsWith("/health");
 }
 

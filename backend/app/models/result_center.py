@@ -9,7 +9,8 @@ class ResultCenter(Base):
     __table_args__ = (UniqueConstraint("company_id", "code"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    # Kept only for compatibility with databases created before global catalogs.
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), nullable=True)
     code: Mapped[str] = mapped_column(String(20), index=True)
     name: Mapped[str] = mapped_column(String(120))
     color: Mapped[str] = mapped_column(String(7), default="#2563EB")

@@ -4,6 +4,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.security import hash_password
 from app.models.employment_type import EmploymentType
+from app.models.job_title import JobTitle
 from app.models.enums import UserRole
 from app.models.result_center import ResultCenter
 from app.models.user import User
@@ -21,6 +22,7 @@ EMPLOYMENT_TYPES = [
     ("Pró-labore", False),
     ("Outros", False),
 ]
+JOB_TITLES = ["Analista", "Assistente", "Coordenador", "Gerente", "Supervisor"]
 
 
 def seed() -> None:
@@ -31,6 +33,9 @@ def seed() -> None:
         for name, has_charges in EMPLOYMENT_TYPES:
             if not db.scalar(select(EmploymentType).where(EmploymentType.name == name)):
                 db.add(EmploymentType(name=name, has_charges=has_charges))
+        for name in JOB_TITLES:
+            if not db.scalar(select(JobTitle).where(JobTitle.name == name)):
+                db.add(JobTitle(name=name))
         if not db.scalar(select(User).where(User.username == settings.initial_admin_username)):
             db.add(
                 User(
