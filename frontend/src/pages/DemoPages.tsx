@@ -4,7 +4,7 @@ import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { demoCompetencies, demoResultCenters, demoSettings } from "../mocks/demoData";
 import { DemoAlert, DemoAuditEntry, DemoBackup, DemoClosing, DemoCostAllocation, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
-import { CentersPage, TypesPage } from "./CatalogPages";
+import { CentersPage, JobTitlesPage, TypesPage } from "./CatalogPages";
 import { User } from "../types";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -534,7 +534,7 @@ export function ReportsPage({ token }: { token: string }) {
   </PageShell>;
 }
 
-type SystemSection = "general" | "centers" | "types" | "backup" | "import";
+type SystemSection = "general" | "centers" | "types" | "job-titles" | "backup" | "import";
 
 export function SettingsPage({ token, user }: { token: string; user: User }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
@@ -587,6 +587,7 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
       <button className={section === "general" ? "active" : ""} onClick={() => setSection("general")}>Geral</button>
       <button className={section === "centers" ? "active" : ""} onClick={() => setSection("centers")}>Centros de Resultado</button>
       <button className={section === "types" ? "active" : ""} onClick={() => setSection("types")}>Modalidades</button>
+      <button className={section === "job-titles" ? "active" : ""} onClick={() => setSection("job-titles")}>Cargos e funções</button>
       <button className={section === "backup" ? "active" : ""} onClick={() => setSection("backup")}>Backup</button>
       <button className={section === "import" ? "active" : ""} onClick={() => setSection("import")}>Importação</button>
     </div>
@@ -599,6 +600,7 @@ export function SettingsPage({ token, user }: { token: string; user: User }) {
     </form>}
     {section === "centers" && <CentersPage token={token} user={user} embedded />}
     {section === "types" && <TypesPage token={token} user={user} embedded />}
+    {section === "job-titles" && <JobTitlesPage token={token} user={user} embedded />}
     {section === "backup" && <BackupPage token={token} user={user} embedded />}
     {section === "import" && <ImportPage token={token} user={user} embedded />}
   </PageShell>;

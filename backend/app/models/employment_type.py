@@ -9,7 +9,8 @@ class EmploymentType(Base):
     __table_args__ = (UniqueConstraint("company_id", "name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    # Kept only for compatibility with databases created before global catalogs.
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(80), index=True)
     has_charges: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)

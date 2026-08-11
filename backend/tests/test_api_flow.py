@@ -168,6 +168,23 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert company.status_code == 201
     company_id = company.json()["id"]
 
+    global_catalog_employee = {
+        **employee,
+        "cpf": "111.444.777-35",
+        "employee_code": "BETA-0001",
+        "company_id": company_id,
+        "employment_type_id": employment_type.json()["id"],
+        "result_center_id": center.json()["id"],
+    }
+    global_catalog_response = client.post("/api/employees", headers=admin, json=global_catalog_employee)
+    assert global_catalog_response.status_code == 201
+    assert global_catalog_response.json()["company_id"] == company_id
+    assert global_catalog_response.json()["result_center"]["id"] == center.json()["id"]
+    assert global_catalog_response.json()["employment_type"]["id"] == employment_type.json()["id"]
+    job_titles = client.get("/api/job-titles", headers=admin)
+    assert job_titles.status_code == 200
+    assert any(item["name"] == "Analista" for item in job_titles.json())
+
     scoped_center = client.post(
         "/api/result-centers",
         headers=admin,
@@ -182,7 +199,7 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert scoped_center.status_code == 201
     filtered_centers = client.get(f"/api/result-centers?company_id={company_id}", headers=admin)
     assert filtered_centers.status_code == 200
-    assert [item["code"] for item in filtered_centers.json()] == ["BETA"]
+    assert [item["code"] for item in filtered_centers.json()] == ["ADM", "BETA", "COM", "DIR", "IND"]
 
     with next(app.dependency_overrides[get_db]()) as db:
         db.add(

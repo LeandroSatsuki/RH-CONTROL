@@ -3,7 +3,7 @@ import { api } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { DemoEmployee } from "../mocks/demoTypes";
-import { Employment, EmploymentType, ResultCenter, User } from "../types";
+import { Employment, EmploymentType, JobTitle, ResultCenter, User } from "../types";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -12,6 +12,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
   const [items, setItems] = useState<DemoEmployee[]>([]);
   const [centers, setCenters] = useState<ResultCenter[]>([]);
   const [types, setTypes] = useState<EmploymentType[]>([]);
+  const [jobTitles, setJobTitles] = useState<JobTitle[]>([]);
   const [selected, setSelected] = useState<DemoEmployee | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -26,14 +27,16 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     setLoading(true);
     setError("");
     try {
-      const [employees, resultCenters, employmentTypes] = await Promise.all([
+      const [employees, resultCenters, employmentTypes, globalJobTitles] = await Promise.all([
         api<DemoEmployee[]>("/employees", {}, token),
         api<ResultCenter[]>("/result-centers", {}, token),
-        api<EmploymentType[]>("/employment-types", {}, token)
+        api<EmploymentType[]>("/employment-types", {}, token),
+        api<JobTitle[]>("/job-titles", {}, token)
       ]);
       setItems(employees);
       setCenters(resultCenters);
       setTypes(employmentTypes);
+      setJobTitles(globalJobTitles);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar colaboradores");
     } finally {
@@ -100,7 +103,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <label>Nome completo<input name="full_name" required /></label>
       <label>CPF<input name="cpf" placeholder="000.000.000-00" required /></label>
       <label>Matrícula<input name="employee_code" required /></label>
-      <label>Cargo / função<input name="job_title" required /></label>
+      <label>Cargo / função<select name="job_title" required><option value="">Selecione</option>{jobTitles.map(item => <option value={item.name} key={item.id}>{item.name}</option>)}</select></label>
       <label>Departamento<input name="department" /></label>
       <label>Data de admissão<input name="admission_date" type="date" required /></label>
       <label>Modalidade<select name="employment_type_id" required><option value="">Selecione</option>{types.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>

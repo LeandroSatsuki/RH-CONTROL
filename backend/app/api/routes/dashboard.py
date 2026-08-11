@@ -44,8 +44,6 @@ def get_dashboard(
     if company_id != 0 and not company:
         raise HTTPException(status_code=404, detail="Empresa não encontrada")
     centers_query = select(ResultCenter).where(ResultCenter.active.is_(True)).order_by(ResultCenter.code)
-    if company_id != 0:
-        centers_query = centers_query.where(ResultCenter.company_id == company_id)
     if result_center_id:
         centers_query = centers_query.where(ResultCenter.id == result_center_id)
     centers = list(db.scalars(centers_query))

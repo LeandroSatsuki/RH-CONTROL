@@ -6,7 +6,6 @@ from app.models.enums import CompanyKind
 
 
 class ResultCenterBase(BaseModel):
-    company_id: int = 1
     code: str = Field(min_length=2, max_length=20)
     name: str = Field(min_length=2, max_length=120)
     color: str = "#2563EB"
@@ -36,7 +35,6 @@ class ResultCenterRead(ResultCenterBase):
 
 
 class EmploymentTypeBase(BaseModel):
-    company_id: int = 1
     name: str = Field(min_length=2, max_length=80)
     has_charges: bool = False
     active: bool = True
@@ -47,6 +45,26 @@ class EmploymentTypeCreate(EmploymentTypeBase):
 
 
 class EmploymentTypeRead(EmploymentTypeBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+
+
+class JobTitleBase(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
+class JobTitleCreate(JobTitleBase):
+    pass
+
+
+class JobTitleRead(JobTitleBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int

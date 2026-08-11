@@ -33,6 +33,7 @@ class Employment(Base):
     employment_type_id: Mapped[int] = mapped_column(ForeignKey("employment_types.id"))
     result_center_id: Mapped[int] = mapped_column(ForeignKey("result_centers.id"))
     job_title: Mapped[str] = mapped_column(String(120))
+    job_title_id: Mapped[int | None] = mapped_column(ForeignKey("job_titles.id"), nullable=True)
     department: Mapped[str] = mapped_column(String(120), default="")
     admission_date: Mapped[date] = mapped_column(Date)
     termination_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -54,6 +55,7 @@ class Employment(Base):
     employee = relationship("Employee", back_populates="employments")
     employment_type = relationship("EmploymentType", back_populates="employments")
     result_center = relationship("ResultCenter", back_populates="employments")
+    job_title_catalog = relationship("JobTitle", back_populates="employments")
     salary_history = relationship(
         "SalaryHistory", back_populates="employment", cascade="all, delete-orphan"
     )

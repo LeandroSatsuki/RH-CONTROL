@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "20260610_0004_employee_benefits"
-down_revision: str | None = "20260609_0003_salary_history_family_allowance"
+down_revision: str | None = "20260609_0003"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 
