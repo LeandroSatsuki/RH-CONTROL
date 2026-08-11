@@ -77,6 +77,8 @@ Esse comando:
 - executa o seed inicial;
 - inicia API e frontend.
 
+Para o computador servidor em produção, não use `dev-start.ps1` nem mantenha uma janela aberta. Configure a inicialização persistente conforme `deploy/README.md`, usando `scripts/install-server-service.ps1` como Administrador.
+
 URLs locais:
 
 - Frontend: `http://127.0.0.1:5173`
