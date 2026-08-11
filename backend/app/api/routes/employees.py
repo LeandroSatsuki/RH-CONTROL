@@ -57,8 +57,13 @@ def create_employee(payload: EmployeeCreate, db: DbSession, _: AdminUser) -> Emp
     if result_center.company_id != payload.company_id:
         raise HTTPException(status_code=409, detail="Centro de Resultado não pertence à empresa selecionada")
 
-    data = payload.model_dump(exclude={"cpf", "full_name", "company_id"})
-    person = Employee(company_id=payload.company_id, cpf=payload.cpf, full_name=payload.full_name)
+    data = payload.model_dump(exclude={"cpf", "full_name", "email", "company_id"})
+    person = Employee(
+        company_id=payload.company_id,
+        cpf=payload.cpf,
+        full_name=payload.full_name,
+        email=payload.email.strip(),
+    )
     employment = Employment(company_id=payload.company_id, employee=person, **data)
     employment.salary_history.append(
         SalaryHistory(

@@ -79,6 +79,7 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     employee = {
         "cpf": "529.982.247-25",
         "full_name": "Pessoa Teste",
+        "email": "pessoa.teste@empresa.com.br",
         "employee_code": "0001",
         "company_id": 1,
         "employment_type_id": employment_type.json()["id"],
@@ -90,10 +91,10 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         "daily_hours": 8.8,
         "salary_base": 4500,
         "notes": "",
-        "bank_name": "Banco Demo",
-        "bank_agency": "0001",
-        "bank_account": "12345",
-        "bank_account_digit": "0",
+        "bank_name": "",
+        "bank_agency": "",
+        "bank_account": "",
+        "bank_account_digit": "",
         "pix_key_type": "CPF",
         "pix_key": "52998224725",
         "benefits": ["Vale transporte"],
@@ -104,6 +105,8 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert Decimal(created_employee["salary_history"][0]["amount"]) == Decimal("4500")
     assert Decimal(created_employee["salary_history"][0]["family_allowance"]) == Decimal("0")
     assert created_employee["salary_history"][0]["reason"] == "Cadastro inicial"
+    assert created_employee["employee"]["email"] == "pessoa.teste@empresa.com.br"
+    assert created_employee["bank_account"] == ""
     employee["employee_code"] = "0002"
     assert client.post("/api/employees", headers=admin, json=employee).status_code == 409
     missing_pix = {**employee, "employee_code": "0003"}
