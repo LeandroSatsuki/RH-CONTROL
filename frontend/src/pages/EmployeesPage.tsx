@@ -370,6 +370,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         <legend>Benefícios</legend>
         <label className="check"><input name="benefits" type="checkbox" value="Vale transporte" /> Vale transporte</label>
         <label className="check"><input name="benefits" type="checkbox" value="Alimentação" /> Alimentação</label>
+        <label className="check"><input name="benefits" type="checkbox" value="Cesta básica" /> Cesta básica</label>
         <label className="check"><input name="benefits" type="checkbox" value="Plano de saúde" /> Plano de saúde</label>
         <label className="check"><input name="benefits" type="checkbox" value="Seguro de vida" /> Seguro de vida</label>
       </fieldset>

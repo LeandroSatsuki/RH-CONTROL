@@ -36,7 +36,10 @@ interface ReportTemplate {
   filters: Record<string, string>;
 }
 
-const STORAGE_KEY = "indicadores-report-maker-templates-v1";
+const STORAGE_KEY = "nexo-report-maker-templates-v2";
+const LEGACY_STORAGE_KEY = "indicadores-report-maker-templates-v1";
+const sourceNames: SourceName[] = ["Colaboradores", "Movimentações", "Benefícios", "Custo / Folha", "Afastamentos"];
+const aggregators: Aggregator[] = ["none", "sum", "avg", "count", "min", "max", "multiply"];
 
 function normalizeText(value: string) {
   return value.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -196,8 +199,14 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
   }
 
   function saveTemplates(next: ReportTemplate[]) {
-    setTemplates(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setTemplates(next);
+      return true;
+    } catch {
+      setError("Não foi possível salvar o modelo neste computador. Verifique o espaço de armazenamento local.");
+      return false;
+    }
   }
 
   function saveTemplate() {
@@ -223,7 +232,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
       filters: { center: filterCenter, state: filterState, type: filterType, benefit: filterBenefit, query }
     };
     const next = [item, ...templates];
-    saveTemplates(next);
+    if (!saveTemplates(next)) return;
     setActiveTemplateId(item.id);
     setSuccess("Template salvo para uso futuro.");
     setTemplateModalOpen(false);
@@ -245,7 +254,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
   }
 
   function deleteTemplate(id: number) {
-    saveTemplates(templates.filter(item => item.id !== id));
+    if (!saveTemplates(templates.filter(item => item.id !== id))) return;
     if (activeTemplateId === id) setActiveTemplateId(null);
   }
 
@@ -452,10 +461,40 @@ function Summary({ label, value, strong }: { label: string; value: string | numb
 
 function loadTemplates(): ReportTemplate[] {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as ReportTemplate[];
+    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY) ?? "[]";
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(sanitizeTemplate).filter((item): item is ReportTemplate => item !== null);
   } catch {
     return [];
   }
+}
+
+function sanitizeTemplate(value: unknown): ReportTemplate | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.name !== "string" || !sourceNames.includes(raw.source as SourceName) || typeof raw.groupBy !== "string") return null;
+  const fields = Array.isArray(raw.fields)
+    ? raw.fields.flatMap(field => {
+      if (!field || typeof field !== "object") return [];
+      const candidate = field as Record<string, unknown>;
+      if (typeof candidate.id !== "string" || !fieldLibrary.some(meta => meta.id === candidate.id)) return [];
+      return [{ id: candidate.id, aggregator: aggregators.includes(candidate.aggregator as Aggregator) ? candidate.aggregator as Aggregator : "none" }];
+    })
+    : [];
+  if (!fields.length) return null;
+  const filters = raw.filters && typeof raw.filters === "object"
+    ? Object.fromEntries(Object.entries(raw.filters as Record<string, unknown>).map(([key, item]) => [key, typeof item === "string" ? item : ""]))
+    : {};
+  return {
+    id: Number.isFinite(Number(raw.id)) ? Number(raw.id) : Date.now(),
+    name: raw.name.trim() || "Relatório customizado",
+    competency: typeof raw.competency === "string" ? raw.competency : undefined,
+    source: raw.source as SourceName,
+    groupBy: raw.groupBy,
+    fields,
+    filters
+  };
 }
 
 function defaultGroupField(source: SourceName) {

@@ -237,6 +237,7 @@ function benefitLabelFor(code: string) {
   return {
     VT: "Vale transporte",
     AL: "Alimentação",
+    CB: "Cesta básica",
     PS: "Plano de saúde",
     SV: "Seguro de vida"
   }[normalizeBenefitCode(code)] ?? code;
@@ -327,7 +328,7 @@ function missingBenefitDistributions(state: DemoState, companyId: number, compet
   return activeEmployees.flatMap(employee => {
     return (employee.benefits ?? []).flatMap(rawBenefit => {
       const label = normalizeText(String(rawBenefit));
-      const requiredCodes = label === "vale transporte" || label === "transporte" ? ["VT"] : label === "alimentação" ? ["AL"] : label === "plano de saúde" || label === "plano de saude" ? ["PS"] : label === "seguro de vida" || label === "seguro" ? ["SV"] : [];
+      const requiredCodes = label === "vale transporte" || label === "transporte" ? ["VT"] : label === "alimentação" ? ["AL"] : label === "cesta básica" || label === "cesta basica" ? ["CB"] : label === "plano de saúde" || label === "plano de saude" ? ["PS"] : label === "seguro de vida" || label === "seguro" ? ["SV"] : [];
       return requiredCodes.flatMap(code => {
         if (monthlyDistributions.some(item => item.employee_id === employee.id && normalizeBenefitCode(item.benefit_code) === code)) return [];
         return [{ employee_name: employee.employee.full_name, benefit: benefitLabelFor(code) }];
