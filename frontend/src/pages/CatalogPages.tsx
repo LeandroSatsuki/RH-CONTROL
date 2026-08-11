@@ -33,7 +33,12 @@ export function CentersPage({ token, user, embedded = false }: { token: string; 
   }
 
   return <Catalog embedded={embedded} title="Centros de Resultado" subtitle="Áreas usadas para segmentar pessoas e custos." error={error} form={user.role === "ADMIN" &&
-    <form className="inline-form" onSubmit={submit}><input name="code" placeholder="Código" required /><input name="name" placeholder="Nome" required /><input name="color" type="color" defaultValue="#2563eb" /><button className="primary">Adicionar</button></form>}>
+    <form className="catalog-toolbar centers-toolbar" onSubmit={submit}>
+      <label className="catalog-code">Código<input name="code" placeholder="Ex.: ADM" required /></label>
+      <label className="catalog-name">Nome do centro<input name="name" placeholder="Ex.: Administrativo" required /></label>
+      <label className="catalog-color">Cor<input name="color" type="color" defaultValue="#2563eb" aria-label="Cor do centro" /></label>
+      <button className="primary compact-button">+ Adicionar</button>
+    </form>}>
     {loading && <div className="inline-loading">Carregando...</div>}
     <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>.</p>
     {items.map(item => <div className="list-row" key={item.id}><span className="color-dot" style={{ background: item.color }} /><strong>{item.code}</strong><span>{item.name}</span><span className="status-pill status-active">Ativo</span></div>)}
@@ -70,7 +75,11 @@ export function TypesPage({ token, user, embedded = false }: { token: string; us
   }
 
   return <Catalog embedded={embedded} title="Modalidades de contratação" subtitle="Defina quais vínculos possuem encargos." error={error} form={user.role === "ADMIN" &&
-    <form className="inline-form" onSubmit={submit}><input name="name" placeholder="Nome da modalidade" required /><label className="check"><input name="has_charges" type="checkbox" /> Possui encargos</label><button className="primary">Adicionar</button></form>}>
+    <form className="catalog-toolbar types-toolbar" onSubmit={submit}>
+      <label className="catalog-name">Nome da modalidade<input name="name" placeholder="Ex.: CLT" required /></label>
+      <label className="check catalog-check"><input name="has_charges" type="checkbox" /> Possui encargos</label>
+      <button className="primary compact-button">+ Adicionar</button>
+    </form>}>
     {loading && <div className="inline-loading">Carregando...</div>}
     <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>.</p>
     {items.map(item => <div className="list-row" key={item.id}><strong>{item.name}</strong><span>{item.has_charges ? "Com encargos" : "Sem encargos"}</span><span className="status-pill status-active">Ativa</span></div>)}
@@ -78,5 +87,5 @@ export function TypesPage({ token, user, embedded = false }: { token: string; us
 }
 
 function Catalog({ title, subtitle, error, form, children, embedded = false }: { title: string; subtitle: string; error: string; form: React.ReactNode; children: React.ReactNode; embedded?: boolean }) {
-  return <>{!embedded && <div className="page-title"><div><span className="eyebrow">Cadastros</span><h1>{title}</h1><p>{subtitle}</p></div></div>}<ErrorMessage message={error} />{form && <div className="panel">{form}</div>}<div className="panel list">{children}</div></>;
+  return <>{!embedded && <div className="page-title compact-title"><div><span className="eyebrow">Cadastros</span><h1>{title}</h1><p>{subtitle}</p></div></div>}<ErrorMessage message={error} />{form && <div className="panel catalog-form-panel">{form}</div>}<div className="panel list catalog-list">{children}</div></>;
 }

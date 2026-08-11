@@ -19,7 +19,7 @@ export function payrollRows(employees: DemoEmployee[], competency = "2026-06", b
     const profitDistribution = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
     const costAid = employee.employment_type.name === "CLT" ? 320 : Math.round(employee.salary_base * 0.08);
     const transport = sumBenefit(benefitMap["vale transporte"] ?? []);
-    const meal = sumBenefit(benefitMap["alimentacao"] ?? []);
+    const meal = sumBenefit([...(benefitMap["alimentacao"] ?? []), ...(benefitMap["cesta basica"] ?? [])]);
     const lodging = employee.benefits.some(item => normalizeLabel(item) === "hospedagem") ? (employee.result_center.code === "DIR" ? 900 : 550) : 0;
     const insurance = sumBenefit(benefitMap["seguro de vida"] ?? []);
     const healthPlan = sumBenefit(benefitMap["plano de saude"] ?? []);

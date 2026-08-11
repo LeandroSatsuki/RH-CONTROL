@@ -183,6 +183,40 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     )
     assert updated_movement.status_code == 200
     assert updated_movement.json()["status"] == "Conferida"
+    forbidden_movement_delete = client.request(
+        "DELETE",
+        f"/api/demo/movements/{movement_id}",
+        headers=admin,
+        json={"password": "senha-errada"},
+    )
+    assert forbidden_movement_delete.status_code == 403
+    deleted_movement = client.request(
+        "DELETE",
+        f"/api/demo/movements/{movement_id}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert deleted_movement.status_code == 200
+    assert deleted_movement.json() == {"deleted": True}
+    assert client.get("/api/demo/movements?competency=2026-06", headers=admin).json() == []
+
+    vacation = client.post(
+        "/api/demo/movements",
+        headers=admin,
+        json={
+            "competency": "2026-06",
+            "employee_id": created_employee["id"],
+            "type": "férias",
+            "start_date": "2026-06-10",
+            "end_date": "2026-06-30",
+            "days": 3,
+            "hour_impact": 1,
+            "observation": "Férias com cálculo automático",
+        },
+    )
+    assert vacation.status_code == 201
+    assert vacation.json()["end_date"] == "2026-06-12"
+    assert Decimal(str(vacation.json()["hour_impact"])) == Decimal("26.4")
 
     mei_employee_payload = {
         "cpf": "111.444.777-35",
@@ -232,7 +266,7 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
 
     benefits = client.get("/api/demo/benefits/catalog", headers=admin)
     assert benefits.status_code == 200
-    assert {item["code"] for item in benefits.json()} >= {"VT", "AL", "PS", "SV"}
+    assert {item["code"] for item in benefits.json()} >= {"VT", "AL", "CB", "PS", "SV"}
     distribution = client.post(
         "/api/demo/benefit-distributions",
         headers=admin,

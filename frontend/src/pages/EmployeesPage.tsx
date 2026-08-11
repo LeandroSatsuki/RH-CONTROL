@@ -80,6 +80,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
   const [draft, setDraft] = useState<EmployeeDraft>(() => createEmployeeDraft(selectedCompany.settings ?? demoSettings, [], []));
   const [addressLocked, setAddressLocked] = useState(false);
   const [cepStatus, setCepStatus] = useState("");
+  const [cnpjStatus, setCnpjStatus] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -108,6 +109,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     setDraft(createEmployeeDraft(settings ?? selectedCompany.settings ?? demoSettings, centers, types));
     setAddressLocked(false);
     setCepStatus("");
+    setCnpjStatus("");
   }, [open, centers, types, settings, selectedCompany.settings]);
 
   const filtered = useMemo(() => {
@@ -200,6 +202,34 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     };
   }, [draft.cep, open]);
 
+  async function lookupCnpj() {
+    if (cpfDigits.length !== 14 || !isValidCnpj(cpfDigits)) return;
+    setCnpjStatus("Consultando CNPJ...");
+    try {
+      const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cpfDigits}`);
+      if (!response.ok) throw new Error("CNPJ não encontrado");
+      const data = await response.json() as {
+        razao_social?: string; cep?: string; logradouro?: string; numero?: string;
+        complemento?: string; bairro?: string; municipio?: string; uf?: string;
+      };
+      setDraft(current => ({
+        ...current,
+        full_name: data.razao_social || current.full_name,
+        cep: (data.cep || current.cep).replace(/\D/g, ""),
+        street: data.logradouro || current.street,
+        address_number: data.numero || current.address_number,
+        address_complement: data.complemento || current.address_complement,
+        neighborhood: data.bairro || current.neighborhood,
+        city: data.municipio || current.city,
+        state: (data.uf || current.state).toUpperCase().slice(0, 2)
+      }));
+      setAddressLocked(Boolean(data.logradouro || data.municipio));
+      setCnpjStatus("Dados do CNPJ carregados. Revise os campos antes de concluir.");
+    } catch {
+      setCnpjStatus("Não foi possível consultar este CNPJ agora. Preencha os dados manualmente.");
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) {
@@ -244,6 +274,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       setDraft(createEmployeeDraft(settings ?? selectedCompany.settings ?? demoSettings, centers, types));
       setAddressLocked(false);
       setCepStatus("");
+      setCnpjStatus("");
       void load();
     } catch (err) { setError(err instanceof Error ? err.message : "Erro ao cadastrar"); }
   }
@@ -284,6 +315,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         className={documentMessage ? "input-invalid" : ""}
         value={draft.cpf_cnpj}
         onChange={event => setDraft(current => ({ ...current, cpf_cnpj: event.target.value.replace(/\D/g, "") }))}
+        onBlur={() => { void lookupCnpj(); }}
         placeholder="00000000000 ou 00000000000000"
         maxLength={14}
         inputMode="numeric"
@@ -311,10 +343,10 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         const bank = bankNameByCode(code);
         setDraft(current => ({ ...current, bank_code: code, bank_name: bank ?? (code.length === 3 ? "" : current.bank_name) }));
       }} placeholder="001" maxLength={3} inputMode="numeric" /></label>
-      <label>Banco<input value={draft.bank_name} onChange={event => setDraft(current => ({ ...current, bank_name: event.target.value }))} placeholder="Nome do banco" readOnly={Boolean(bankNameFromCode)} required /></label>
-      <label>Agência<input value={draft.bank_agency} onChange={event => setDraft(current => ({ ...current, bank_agency: event.target.value }))} placeholder="0001" required /></label>
-      <label>Conta<input value={draft.bank_account} onChange={event => setDraft(current => ({ ...current, bank_account: event.target.value }))} placeholder="12345" required /></label>
-      <label>Dígito da conta<input value={draft.bank_account_digit} onChange={event => setDraft(current => ({ ...current, bank_account_digit: event.target.value.replace(/\D/g, "").slice(0, 1) }))} placeholder="0" required /></label>
+      <label>Banco<input value={draft.bank_name} onChange={event => setDraft(current => ({ ...current, bank_name: event.target.value }))} placeholder="Nome do banco" readOnly={Boolean(bankNameFromCode)} /></label>
+      <label>Agência<input value={draft.bank_agency} onChange={event => setDraft(current => ({ ...current, bank_agency: event.target.value }))} placeholder="0001" /></label>
+      <label>Conta<input value={draft.bank_account} onChange={event => setDraft(current => ({ ...current, bank_account: event.target.value }))} placeholder="12345" /></label>
+      <label>Dígito da conta<input value={draft.bank_account_digit} onChange={event => setDraft(current => ({ ...current, bank_account_digit: event.target.value.replace(/\D/g, "").slice(0, 1) }))} placeholder="0" /></label>
       <label>Tipo PIX<select value={draft.pix_key_type} onChange={event => setDraft(current => ({ ...current, pix_key_type: event.target.value, pix_key: "" }))} required><option value="">Selecione</option><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option><option value="EMAIL">E-mail</option><option value="PHONE">Telefone</option><option value="RANDOM">Chave aleatória</option></select></label>
       <label className="span-2">Chave PIX<input
         className={pixMessage ? "input-invalid" : ""}
@@ -329,10 +361,16 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         required
         aria-invalid={Boolean(pixMessage)}
       /></label>
+      {(draft.pix_key_type === "CPF" || draft.pix_key_type === "CNPJ") && <label className="check span-2"><input
+        type="checkbox"
+        checked={draft.pix_key === cpfDigits && cpfDigits.length === (draft.pix_key_type === "CPF" ? 11 : 14)}
+        onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? cpfDigits : "" }))}
+      /> Usar meu CPF/CNPJ como chave PIX</label>}
       <fieldset className="span-2 benefits-fieldset">
         <legend>Benefícios</legend>
         <label className="check"><input name="benefits" type="checkbox" value="Vale transporte" /> Vale transporte</label>
         <label className="check"><input name="benefits" type="checkbox" value="Alimentação" /> Alimentação</label>
+        <label className="check"><input name="benefits" type="checkbox" value="Cesta básica" /> Cesta básica</label>
         <label className="check"><input name="benefits" type="checkbox" value="Plano de saúde" /> Plano de saúde</label>
         <label className="check"><input name="benefits" type="checkbox" value="Seguro de vida" /> Seguro de vida</label>
       </fieldset>
@@ -340,6 +378,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <div className="span-2 field-feedback-group">
         <p className={`field-feedback ${documentMessage ? "error" : "success"}`}>{documentMessage || "Documento válido."}</p>
         {cepStatus && <p className={`field-feedback ${cepStatus.startsWith("CEP não") ? "error" : "success"}`}>{cepStatus}</p>}
+        {cnpjStatus && <p className={`field-feedback ${cnpjStatus.startsWith("Não foi") ? "error" : "success"}`}>{cnpjStatus}</p>}
         {bankMessage && <p className={`field-feedback ${bankNameFromCode ? "success" : "error"}`}>{bankMessage}</p>}
         <p className={`field-feedback ${pixMessage ? "error" : "success"}`}>{pixMessage || "Chave PIX válida."}</p>
       </div>

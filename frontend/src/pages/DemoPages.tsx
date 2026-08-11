@@ -97,10 +97,15 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
     {selected && <MovementDrawer item={selected} token={token} user={user} onClose={() => setSelected(null)} onSaved={updated => {
       setSelected(updated);
       void load();
+    }} onDeleted={() => {
+      setSelected(null);
+      fb.notify("Movimentação excluída e registrada na auditoria.");
+      void load();
     }} />}
     {createOpen && (
       <MovementCreateModal
         token={token}
+        companyId={selectedCompany.id}
         competency={competency}
         employees={employees}
         centers={centers}
@@ -599,7 +604,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
   </PageShell>;
 }
 
-export function AlertsPage({ token }: { token: string; user: User }) {
+export function AlertsPage({ token, onPage }: { token: string; user: User; onPage: (page: "employees" | "mei-contracts") => void }) {
   if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [items, setItems] = useState<DemoAlert[]>([]);
@@ -633,7 +638,11 @@ export function AlertsPage({ token }: { token: string; user: User }) {
     return acc;
   }, {});
 
-  return <PageShell title="Alertas" subtitle="Lembretes práticos para férias, retornos e revisões pendentes." error={fb.error}>
+  function openCorrectiveAction(item: DemoAlert) {
+    onPage(item.type.includes("Contrato") ? "mei-contracts" : "employees");
+  }
+
+  return <PageShell title="Alertas" subtitle="Pendências abertas, atualizadas automaticamente após a ação corretiva." error={fb.error}>
     <div className="summary-grid">
       <Summary label="Alertas" value={String(filtered.length)} />
       <Summary label="Tipos" value={String(Object.keys(counts).length)} />
@@ -644,10 +653,10 @@ export function AlertsPage({ token }: { token: string; user: User }) {
       <select value={type} onChange={event => setType(event.target.value)}><option value="">Todos os tipos</option>{["Férias vencendo", "Retorno de afastamento", "Contrato próximo do vencimento", "Contrato não assinado", "Ajuste pendente"].map(item => <option key={item}>{item}</option>)}</select>
       <select value={severity} onChange={event => setSeverity(event.target.value)}><option value="">Todas as prioridades</option><option>Baixa</option><option>Média</option><option>Alta</option></select>
     </div>
-    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Os alertas servem para lembrar o usuário do que precisa de atenção.</p>
+    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Clique em um alerta para abrir a tela da ação corretiva; quando a pendência for resolvida, ele deixa de aparecer.</p>
     <DataTable loading={loading} empty="Nenhum alerta encontrado.">
       <table><thead><tr><th>Empresa</th><th>CR</th><th>Colaborador</th><th>Tipo</th><th>Vencimento</th><th>Prioridade</th><th>Mensagem</th></tr></thead>
-      <tbody>{filtered.map(item => <tr key={item.id}><td>{item.company_name}</td><td>{item.result_center.code}</td><td>{item.employee_name}</td><td>{item.type}</td><td>{item.due_date}</td><td><span className={severityClass(item.severity)}>{item.severity}</span></td><td>{item.message}</td></tr>)}</tbody></table>
+      <tbody>{filtered.map(item => <tr key={item.id} className="clickable" onClick={() => openCorrectiveAction(item)}><td>{item.company_name}</td><td>{item.result_center.code}</td><td>{item.employee_name}</td><td>{item.type}</td><td>{item.due_date}</td><td><span className={severityClass(item.severity)}>{item.severity}</span></td><td>{item.message}</td></tr>)}</tbody></table>
     </DataTable>
   </PageShell>;
 }
@@ -658,48 +667,54 @@ export function AuditPage({ token, user }: { token: string; user: User }) {
   const [items, setItems] = useState<DemoAuditEntry[]>([]);
   const [module, setModule] = useState("");
   const [query, setQuery] = useState("");
+  const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const fb = useFeedback();
 
-  useEffect(() => {
-    let active = true;
-    async function load() {
-      setLoading(true);
-      fb.setError("");
-      try {
-        const response = await api<DemoAuditEntry[]>("/demo/audit-logs", {}, token);
-        if (active) setItems(response);
-      } catch (err) {
-        if (active) fb.fail(err instanceof Error ? err.message : "Erro ao carregar auditoria");
-      } finally {
-        if (active) setLoading(false);
-      }
-    }
-    void load();
-    return () => { active = false; };
-  }, [token, selectedCompany.id]);
+  useEffect(() => { setItems([]); setSearched(false); }, [selectedCompany.id]);
 
-  const filtered = items.filter(item => (!module || item.module === module) && (!query || `${item.action} ${item.details} ${item.employee_name ?? ""} ${item.performed_by}`.toLowerCase().includes(query.toLowerCase())));
+  async function search(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!module && !query.trim()) {
+      fb.fail("Informe um módulo ou um termo para consultar a auditoria.");
+      return;
+    }
+    setLoading(true);
+    fb.setError("");
+    try {
+      const params = new URLSearchParams({ limit: "100" });
+      if (module) params.set("module", module);
+      if (query.trim()) params.set("query", query.trim());
+      const response = await api<DemoAuditEntry[]>(`/demo/audit-logs?${params.toString()}`, {}, token);
+      setItems(response);
+      setSearched(true);
+    } catch (err) {
+      fb.fail(err instanceof Error ? err.message : "Erro ao consultar auditoria");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return <PageShell title="Auditoria" subtitle="Registro do que foi alterado e por quem, para rastrear histórico e decisões." error={fb.error}>
     <div className="summary-grid">
-      <Summary label="Registros" value={String(filtered.length)} />
-      <Summary label="Módulos" value={String(new Set(filtered.map(item => item.module)).size)} />
-      <Summary label="Usuários" value={String(new Set(filtered.map(item => item.performed_by)).size)} strong />
+      <Summary label="Registros" value={searched ? String(items.length) : "-"} />
+      <Summary label="Módulos" value={searched ? String(new Set(items.map(item => item.module)).size) : "-"} />
+      <Summary label="Usuários" value={searched ? String(new Set(items.map(item => item.performed_by)).size) : "-"} strong />
     </div>
-    <div className="panel filters-panel">
+    <form className="panel filters-panel" onSubmit={search}>
       <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por ação, detalhe ou usuário" />
       <select value={module} onChange={event => setModule(event.target.value)}><option value="">Todos os módulos</option>{["Colaboradores", "Movimentações", "Contratos MEI", "Custos", "Configurações", "Backup", "Fechamento"].map(item => <option key={item}>{item}</option>)}</select>
-    </div>
-    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Usuário logado: <strong>{user.full_name}</strong>.</p>
-    <DataTable loading={loading} empty="Nenhum registro de auditoria encontrado.">
+      <button className="primary" type="submit" disabled={loading}>Consultar</button>
+    </form>
+    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Usuário logado: <strong>{user.full_name}</strong>. Para manter a auditoria leve, nenhum histórico é carregado antes da consulta e o retorno é limitado a 100 registros.</p>
+    {searched && <DataTable loading={loading} empty="Nenhum registro encontrado para os filtros informados.">
       <table><thead><tr><th>Data</th><th>Módulo</th><th>Ação</th><th>Empresa</th><th>Colaborador</th><th>Usuário</th><th>Detalhes</th></tr></thead>
-      <tbody>{filtered.map(item => <tr key={item.id}><td>{item.created_at}</td><td>{item.module}</td><td>{item.action}</td><td>{item.company_name}</td><td>{item.employee_name ?? "-"}</td><td>{item.performed_by}</td><td>{item.details}</td></tr>)}</tbody></table>
-    </DataTable>
+      <tbody>{items.map(item => <tr key={item.id}><td>{item.created_at}</td><td>{item.module}</td><td>{item.action}</td><td>{item.company_name}</td><td>{item.employee_name ?? "-"}</td><td>{item.performed_by}</td><td>{item.details}</td></tr>)}</tbody></table>
+    </DataTable>}
   </PageShell>;
 }
 
-function MovementDrawer({ item, token, user, onClose, onSaved }: { item: DemoMovement; token: string; user: User; onClose: () => void; onSaved: (movement: DemoMovement) => void }) {
+function MovementDrawer({ item, token, user, onClose, onSaved, onDeleted }: { item: DemoMovement; token: string; user: User; onClose: () => void; onSaved: (movement: DemoMovement) => void; onDeleted: () => void }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -739,6 +754,23 @@ function MovementDrawer({ item, token, user, onClose, onSaved }: { item: DemoMov
     }
   }
 
+  async function remove() {
+    if (user.role !== "ADMIN") return;
+    const password = window.prompt("Informe sua senha para confirmar a exclusão desta movimentação.");
+    if (!password) return;
+    if (!window.confirm("Excluir esta movimentação? Esta ação não pode ser desfeita.")) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api(`/demo/movements/${item.id}`, { method: "DELETE", body: JSON.stringify({ password }) }, token);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir movimentação");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer wide" onClick={event => event.stopPropagation()}>
     <button className="ghost right" onClick={onClose}>Fechar</button>
     <span className="eyebrow">{item.competency}</span>
@@ -761,7 +793,7 @@ function MovementDrawer({ item, token, user, onClose, onSaved }: { item: DemoMov
       <label>Status<select name="status" defaultValue={item.status} required><option value="Pendente">Pendente</option><option value="Conferida">Conferida</option><option value="Aplicada">Aplicada</option></select></label>
       <label className="span-2">Observação<input name="observation" defaultValue={item.observation} required /></label>
       <label className="span-2">Senha de confirmação<input name="password" type="password" required /></label>
-      <button className="primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button>
+      <div className="actions"><button className="primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button><button className="danger" type="button" onClick={() => void remove()} disabled={saving}>Excluir movimentação</button></div>
       {error && <p className="error-line span-2">{error}</p>}
       {success && <p className="success-line span-2">{success}</p>}
     </form> : <p className="note">Seu perfil possui acesso somente para consulta.</p>}
@@ -770,6 +802,7 @@ function MovementDrawer({ item, token, user, onClose, onSaved }: { item: DemoMov
 
 function MovementCreateModal({
   token,
+  companyId,
   competency,
   employees,
   centers,
@@ -778,6 +811,7 @@ function MovementCreateModal({
   onCreated
 }: {
   token: string;
+  companyId: number;
   competency: string;
   employees: DemoEmployee[];
   centers: ResultCenter[];
@@ -796,6 +830,7 @@ function MovementCreateModal({
   const [observation, setObservation] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [draftLoaded, setDraftLoaded] = useState(false);
 
   const basicsSelected = Boolean(employmentType && center);
   const eligibleEmployees = useMemo(() => {
@@ -808,8 +843,37 @@ function MovementCreateModal({
   }, [basicsSelected, center, employees, employmentType]);
 
   useEffect(() => {
-    setEmployeeId("");
-  }, [employmentType, center]);
+    const key = movementDraftKey(companyId, competency);
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(key) ?? "null") as Partial<MovementDraft> | null;
+      if (saved) {
+        setEmploymentType(saved.employmentType ?? "");
+        setCenter(saved.center ?? "");
+        setEmployeeId(saved.employeeId ?? "");
+        setMovementType(saved.movementType ?? "falta");
+        setStartDate(saved.startDate ?? new Date().toISOString().slice(0, 10));
+        setEndDate(saved.endDate ?? "");
+        setDays(Math.max(Number(saved.days) || 1, 1));
+        setHours(Number(saved.hours) || 0);
+        setObservation(saved.observation ?? "");
+      }
+    } catch {
+      window.localStorage.removeItem(key);
+    } finally {
+      setDraftLoaded(true);
+    }
+  }, [companyId, competency]);
+
+  useEffect(() => {
+    if (!draftLoaded) return;
+    const draft: MovementDraft = { employmentType, center, employeeId, movementType, startDate, endDate, days, hours, observation };
+    window.localStorage.setItem(movementDraftKey(companyId, competency), JSON.stringify(draft));
+  }, [center, companyId, competency, days, draftLoaded, employeeId, employmentType, endDate, hours, movementType, observation, startDate]);
+
+  const selectedEmployee = eligibleEmployees.find(employee => employee.id === Number(employeeId));
+  const periodMovement = isPeriodMovement(movementType);
+  const calculatedEndDate = periodMovement ? addCalendarDays(startDate, days - 1) : endDate;
+  const calculatedHours = periodMovement ? Number((Number(selectedEmployee?.daily_hours ?? 0) * days).toFixed(2)) : hours;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -831,12 +895,13 @@ function MovementCreateModal({
           employee_id: Number(employeeId),
           type: movementType,
           start_date: startDate,
-          end_date: endDate || null,
+          end_date: calculatedEndDate || null,
           days,
-          hour_impact: hours,
+          hour_impact: calculatedHours,
           observation: observation.trim() || "Movimentação lançada manualmente."
         })
       }, token);
+      window.localStorage.removeItem(movementDraftKey(companyId, competency));
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar movimentação");
@@ -858,11 +923,11 @@ function MovementCreateModal({
         </div>
         <div className="presentation-modal-body movement-modal-body">
           <div className="movement-form-grid">
-            <label>Modalidade<select value={employmentType} onChange={event => setEmploymentType(event.target.value)} required autoFocus>
+            <label>Modalidade<select value={employmentType} onChange={event => { setEmploymentType(event.target.value); setEmployeeId(""); }} required autoFocus>
               <option value="">Selecione</option>
               {types.filter(item => item.active).map(item => <option key={item.id} value={item.name}>{item.name}</option>)}
             </select></label>
-            <label>Centro de Resultado<select value={center} onChange={event => setCenter(event.target.value)} required>
+            <label>Centro de Resultado<select value={center} onChange={event => { setCenter(event.target.value); setEmployeeId(""); }} required>
               <option value="">Selecione</option>
               {centers.filter(item => item.active).map(item => <option key={item.id} value={item.code}>{item.code} - {item.name}</option>)}
             </select></label>
@@ -876,9 +941,9 @@ function MovementCreateModal({
             </select></label>
             <label>Competência<input value={competency} readOnly disabled={!basicsSelected} /></label>
             <label>Início<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} disabled={!basicsSelected} required /></label>
-            <label>Fim<input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} disabled={!basicsSelected} /></label>
+            <label>Fim<input type="date" value={calculatedEndDate} onChange={event => setEndDate(event.target.value)} disabled={!basicsSelected} readOnly={periodMovement} /><small>{periodMovement ? "Calculado incluindo a data de inÃ­cio." : ""}</small></label>
             <label>Dias<input type="number" min="1" step="1" value={days} onChange={event => setDays(Number(event.target.value || 1))} disabled={!basicsSelected} required /></label>
-            <label>Horas<input type="number" min="0" step="0.1" value={hours} onChange={event => setHours(Number(event.target.value || 0))} disabled={!basicsSelected} required /></label>
+            <label>Horas<input type="number" min="0" step="0.1" value={calculatedHours} onChange={event => setHours(Number(event.target.value || 0))} disabled={!basicsSelected} readOnly={periodMovement} required /><small>{periodMovement ? "Calculadas conforme a jornada diÃ¡ria do colaborador." : ""}</small></label>
             <label className="span-2">Observação<input value={observation} onChange={event => setObservation(event.target.value)} disabled={!basicsSelected} placeholder="Descreva o motivo ou contexto da movimentação" /></label>
           </div>
           {error && <p className="error-line">{error}</p>}
@@ -1879,6 +1944,34 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
 }
 
 const movementTypes = ["admissão", "desligamento", "falta", "atestado", "afastamento", "férias", "transferência de Centro de Resultado", "alteração salarial", "contrato não assinado", "contrato MEI a vencer"];
+const periodMovementTypes = new Set(["atestado", "afastamento", "férias"]);
+
+interface MovementDraft {
+  employmentType: string;
+  center: string;
+  employeeId: string;
+  movementType: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+  hours: number;
+  observation: string;
+}
+
+function movementDraftKey(companyId: number, competency: string) {
+  return `nexo:movement-draft:${companyId}:${competency}`;
+}
+
+function isPeriodMovement(movementType: string) {
+  return periodMovementTypes.has(movementType.toLowerCase());
+}
+
+function addCalendarDays(value: string, days: number) {
+  if (!value) return "";
+  const result = new Date(`${value}T12:00:00`);
+  result.setDate(result.getDate() + days);
+  return result.toISOString().slice(0, 10);
+}
 
 function meiDaysLeft(endDate: string) {
   const target = new Date(`${endDate}T00:00:00`);

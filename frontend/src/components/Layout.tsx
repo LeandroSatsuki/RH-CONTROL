@@ -1,7 +1,8 @@
 import { ReactNode, useEffect, useState } from "react";
-import { IS_DEMO_MODE } from "../api";
+import { api, IS_DEMO_MODE } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { User } from "../types";
+import { DemoAlert } from "../mocks/demoTypes";
 import nexoLogoMark from "../assets/nexo-logo-mark.png";
 
 export type Page =
@@ -25,8 +26,10 @@ export type Page =
 
 interface Props {
   user: User;
+  token: string;
   page: Page;
   onPage: (page: Page) => void;
+  onRefresh: () => void;
   onLogout: () => void;
   children: ReactNode;
 }
@@ -47,14 +50,37 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "settings", label: "Ajustes do sistema", icon: "⚙", adminOnly: true }
 ];
 
-export function Layout({ user, page, onPage, onLogout, children }: Props) {
+export function Layout({ user, token, page, onPage, onRefresh, onLogout, children }: Props) {
   const [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
+  const [alerts, setAlerts] = useState<DemoAlert[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const { companies, selectedCompany, selectedCompanyId, setSelectedCompanyId } = useDemoScope();
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
+
+  useEffect(() => {
+    if (!IS_DEMO_MODE) return;
+    let active = true;
+    const loadAlerts = async () => {
+      try {
+        const response = await api<DemoAlert[]>("/demo/alerts", {}, token);
+        if (active) setAlerts(response);
+      } catch {
+        if (active) setAlerts([]);
+      }
+    };
+    void loadAlerts();
+    const timer = window.setInterval(() => { void loadAlerts(); }, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [selectedCompany.id, token]);
+
+  function openAlert(alert: DemoAlert) {
+    setNotificationsOpen(false);
+    onPage(alert.type.includes("Contrato") ? "mei-contracts" : "employees");
+  }
 
   return (
     <div className="app-shell">
@@ -95,6 +121,21 @@ export function Layout({ user, page, onPage, onLogout, children }: Props) {
             ))}
           </select>
           <span className="competency-pill">Competência atual: Jun/2026</span>
+          <div className="notification-menu">
+            <button type="button" className="notification-button" onClick={() => setNotificationsOpen(value => !value)} aria-label="Abrir notificações" aria-expanded={notificationsOpen}>
+              <span aria-hidden="true">🔔</span>{alerts.length > 0 && <b>{Math.min(alerts.length, 99)}</b>}
+            </button>
+            {notificationsOpen && <div className="notification-popover">
+              <strong>Alertas em aberto</strong>
+              {!alerts.length && <p>Nenhum alerta pendente.</p>}
+              {alerts.slice(0, 5).map(alert => <button key={alert.id} type="button" onClick={() => openAlert(alert)}>
+                <span className={alert.severity === "Alta" ? "severity-pill severity-high" : alert.severity === "Média" ? "severity-pill severity-medium" : "severity-pill severity-low"}>{alert.severity}</span>
+                <span>{alert.message}</span>
+              </button>)}
+              {alerts.length > 5 && <button className="notification-more" type="button" onClick={() => { setNotificationsOpen(false); onPage("alerts"); }}>Ver mais alertas</button>}
+            </div>}
+          </div>
+          <button type="button" className="refresh-button" onClick={onRefresh} aria-label="Atualizar dados desta tela" title="Atualizar dados desta tela">↻</button>
           <div>
             <span className="eyebrow">{IS_DEMO_MODE ? "Versão de apresentação" : "Sistema local"}</span>
             <strong>{user.full_name}</strong>
