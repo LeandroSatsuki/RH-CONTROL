@@ -7,9 +7,11 @@ import { demoSettings } from "../mocks/demoData";
 import { Employment, EmploymentType, ResultCenter, User } from "../types";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const DRAFT_STORAGE_KEY = "nexo-employee-draft-v1";
 
 interface EmployeeDraft {
   full_name: string;
+  email: string;
   cpf_cnpj: string;
   admission_date: string;
   supervisor_name: string;
@@ -31,12 +33,14 @@ interface EmployeeDraft {
   bank_account_digit: string;
   pix_key_type: string;
   pix_key: string;
+  use_email_as_pix: boolean;
   notes: string;
 }
 
 function createEmployeeDraft(settings: DemoSettings | null, centers: ResultCenter[], types: EmploymentType[]): EmployeeDraft {
   return {
     full_name: "",
+    email: "",
     cpf_cnpj: "",
     admission_date: new Date().toISOString().slice(0, 10),
     supervisor_name: "",
@@ -58,8 +62,37 @@ function createEmployeeDraft(settings: DemoSettings | null, centers: ResultCente
     bank_account_digit: "",
     pix_key_type: "",
     pix_key: "",
+    use_email_as_pix: false,
     notes: ""
   };
+}
+
+function loadDraft(companyId: number, fallback: EmployeeDraft): EmployeeDraft {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY) ?? "{}") as Record<string, Partial<EmployeeDraft>>;
+    return { ...fallback, ...(stored[String(companyId)] ?? {}) };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveDraft(companyId: number, draft: EmployeeDraft) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY) ?? "{}") as Record<string, EmployeeDraft>;
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ ...stored, [String(companyId)]: draft }));
+  } catch {
+    // Draft persistence must never interrupt the registration flow.
+  }
+}
+
+function clearDraft(companyId: number) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY) ?? "{}") as Record<string, EmployeeDraft>;
+    delete stored[String(companyId)];
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(stored));
+  } catch {
+    // Nothing to clear when browser storage is unavailable.
+  }
 }
 
 export function EmployeesPage({ token, user }: { token: string; user: User }) {
@@ -104,11 +137,8 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
 
   useEffect(() => { void load(); }, [token, selectedCompany.id]);
   useEffect(() => {
-    if (!open || !centers.length || !types.length) return;
-    setDraft(createEmployeeDraft(settings ?? selectedCompany.settings ?? demoSettings, centers, types));
-    setAddressLocked(false);
-    setCepStatus("");
-  }, [open, centers, types, settings, selectedCompany.settings]);
+    if (open) saveDraft(selectedCompany.id, draft);
+  }, [draft, open, selectedCompany.id]);
 
   const filtered = useMemo(() => {
     const normalized = query.toLowerCase().replace(/\D/g, "");
@@ -213,6 +243,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         method: "POST",
         body: JSON.stringify({
           full_name: draft.full_name,
+          email: draft.email,
           cpf: cpfDigits,
           employee_code: generatedEmployeeCode,
           admission_date: draft.admission_date,
@@ -240,6 +271,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         })
       }, token);
       setOpen(false);
+      clearDraft(selectedCompany.id);
       setSuccess("Colaborador cadastrado com sucesso.");
       setDraft(createEmployeeDraft(settings ?? selectedCompany.settings ?? demoSettings, centers, types));
       setAddressLocked(false);
@@ -252,6 +284,18 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     setError("Seu perfil possui acesso somente para consulta.");
   }
 
+  function toggleRegistration() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const fallback = createEmployeeDraft(settings ?? selectedCompany.settings ?? demoSettings, centers, types);
+    setDraft(loadDraft(selectedCompany.id, fallback));
+    setAddressLocked(false);
+    setCepStatus("");
+    setOpen(true);
+  }
+
   function simulate(message: string, adminOnly = false) {
     if (adminOnly && user.role !== "ADMIN") return restricted();
     setSuccess(message);
@@ -261,7 +305,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     <div className="page-title">
       <div><span className="eyebrow">Pessoas</span><h1>Colaboradores</h1><p>Base completa de pessoas, vínculos e custos estimados.</p></div>
       <div className="actions">
-        {user.role === "ADMIN" && <button className="primary" onClick={() => selectedCompany.id === 0 ? setError("Selecione uma empresa específica para cadastrar.") : setOpen(!open)}>{open ? "Cancelar" : "Novo colaborador"}</button>}
+        {user.role === "ADMIN" && <button className="primary" onClick={() => selectedCompany.id === 0 ? setError("Selecione uma empresa específica para cadastrar.") : toggleRegistration()}>{open ? "Cancelar" : "Novo colaborador"}</button>}
         {user.role === "ADMIN" && <button className="secondary" onClick={() => simulate("Importação simulada. Prévia disponível no módulo Importação.", true)}>Importar Excel</button>}
         <button className="secondary" onClick={() => simulate("Exportação gerada em modo demonstração.")}>Exportar</button>
       </div>
@@ -280,6 +324,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     {open && <form className="panel form-grid" onSubmit={submit}>
       <h3 className="span-2 form-section-title">Identificação</h3>
       <label>Nome completo<input value={draft.full_name} onChange={event => setDraft(current => ({ ...current, full_name: event.target.value }))} required /></label>
+      <label>E-mail<input value={draft.email} onChange={event => setDraft(current => ({ ...current, email: event.target.value, pix_key: current.use_email_as_pix ? event.target.value : current.pix_key }))} type="email" placeholder="nome@empresa.com" /></label>
       <label>CPF/CNPJ<input
         className={documentMessage ? "input-invalid" : ""}
         value={draft.cpf_cnpj}
@@ -311,11 +356,12 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         const bank = bankNameByCode(code);
         setDraft(current => ({ ...current, bank_code: code, bank_name: bank ?? (code.length === 3 ? "" : current.bank_name) }));
       }} placeholder="001" maxLength={3} inputMode="numeric" /></label>
-      <label>Banco<input value={draft.bank_name} onChange={event => setDraft(current => ({ ...current, bank_name: event.target.value }))} placeholder="Nome do banco" readOnly={Boolean(bankNameFromCode)} required /></label>
-      <label>Agência<input value={draft.bank_agency} onChange={event => setDraft(current => ({ ...current, bank_agency: event.target.value }))} placeholder="0001" required /></label>
-      <label>Conta<input value={draft.bank_account} onChange={event => setDraft(current => ({ ...current, bank_account: event.target.value }))} placeholder="12345" required /></label>
-      <label>Dígito da conta<input value={draft.bank_account_digit} onChange={event => setDraft(current => ({ ...current, bank_account_digit: event.target.value.replace(/\D/g, "").slice(0, 1) }))} placeholder="0" required /></label>
-      <label>Tipo PIX<select value={draft.pix_key_type} onChange={event => setDraft(current => ({ ...current, pix_key_type: event.target.value, pix_key: "" }))} required><option value="">Selecione</option><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option><option value="EMAIL">E-mail</option><option value="PHONE">Telefone</option><option value="RANDOM">Chave aleatória</option></select></label>
+      <label>Banco<input value={draft.bank_name} onChange={event => setDraft(current => ({ ...current, bank_name: event.target.value }))} placeholder="Nome do banco" readOnly={Boolean(bankNameFromCode)} /></label>
+      <label>Agência<input value={draft.bank_agency} onChange={event => setDraft(current => ({ ...current, bank_agency: event.target.value }))} placeholder="0001" /></label>
+      <label>Conta<input value={draft.bank_account} onChange={event => setDraft(current => ({ ...current, bank_account: event.target.value }))} placeholder="12345" /></label>
+      <label>Dígito da conta<input value={draft.bank_account_digit} onChange={event => setDraft(current => ({ ...current, bank_account_digit: event.target.value.replace(/\D/g, "").slice(0, 1) }))} placeholder="0" /></label>
+      <label>Tipo PIX<select value={draft.pix_key_type} onChange={event => setDraft(current => ({ ...current, pix_key_type: event.target.value, use_email_as_pix: false, pix_key: "" }))} required><option value="">Selecione</option><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option><option value="EMAIL">E-mail</option><option value="PHONE">Telefone</option><option value="RANDOM">Chave aleatória</option></select></label>
+      {draft.pix_key_type === "EMAIL" && <label className="check span-2"><input type="checkbox" checked={draft.use_email_as_pix} onChange={event => setDraft(current => ({ ...current, use_email_as_pix: event.target.checked, pix_key: event.target.checked ? current.email : current.pix_key }))} /> Usar o e-mail informado no cadastro como chave PIX</label>}
       <label className="span-2">Chave PIX<input
         className={pixMessage ? "input-invalid" : ""}
         value={draft.pix_key}
@@ -368,7 +414,14 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
 }
 
 function EmployeeDrawer({ employee, token, user, onClose, onAction, onSaved }: { employee: DemoEmployee; token: string; user: User; onClose: () => void; onAction: (message: string, adminOnly?: boolean) => void; onSaved: (employee: DemoEmployee) => void }) {
-  const history = [...employee.salary_history].sort((a, b) => b.date.localeCompare(a.date));
+  const history = (employee.salary_history ?? []).map(item => ({
+    date: item.date ?? (item as unknown as { effective_date?: string }).effective_date ?? "",
+    amount: item.amount,
+    reason: item.reason
+  })).sort((a, b) => b.date.localeCompare(a.date));
+  const vacations = employee.vacations ?? [];
+  const leaves = employee.leaves ?? [];
+  const movements = employee.movement_history ?? [];
   const estimatedCost = employee.salary_base * (employee.employment_type.has_charges ? 1.72 : 1.18);
   return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer wide" onClick={event => event.stopPropagation()}>
     <button className="ghost right" onClick={onClose}>Fechar</button>
@@ -383,22 +436,22 @@ function EmployeeDrawer({ employee, token, user, onClose, onAction, onSaved }: {
     </div>
     <div className="detail-grid">
       <Info label="CPF/CNPJ" value={formatDocument(employee.employee.cpf)} />
-      <Info label="E-mail" value={employee.email} />
-      <Info label="Telefone" value={employee.phone} />
+      <Info label="E-mail" value={employee.email || "-"} />
+      <Info label="Telefone" value={employee.phone || "-"} />
       <Info label="Supervisor" value={employee.supervisor_name || "-"} />
       <Info label="Centro atual" value={`${employee.result_center.code} - ${employee.result_center.name}`} />
       <Info label="Modalidade" value={employee.employment_type.name} />
       <Info label="Custo estimado do mês" value={money.format(estimatedCost)} />
       <Info label="Endereço" value={[employee.street, employee.address_number, employee.address_complement, employee.neighborhood, employee.city, employee.state].filter(Boolean).join(", ") || "-"} />
       <Info label="Banco" value={[employee.bank_code, employee.bank_name].filter(Boolean).join(" - ")} />
-      <Info label="Agência / conta" value={`${employee.bank_agency} / ${employee.bank_account}-${employee.bank_account_digit}`} />
-      <Info label="PIX" value={`${employee.pix_key_type}: ${employee.pix_key}`} />
+      <Info label="Agência / conta" value={[employee.bank_agency, employee.bank_account && `${employee.bank_account}-${employee.bank_account_digit}`].filter(Boolean).join(" / ") || "-"} />
+      <Info label="PIX" value={employee.pix_key ? `${employee.pix_key_type}: ${employee.pix_key}` : "-"} />
       <Info label="Benefícios" value={(employee.benefits ?? []).length ? (employee.benefits ?? []).join(", ") : "Nenhum"} />
     </div>
-    <Section title="Férias" items={employee.vacations.map(item => `${item.period} - ${item.status}`)} />
-    <Section title="Afastamentos" items={employee.leaves.length ? employee.leaves.map(item => `${item.period} - ${item.reason} (${item.days} dias)`) : ["Nenhum afastamento ativo"]} />
+    <Section title="Férias" items={vacations.length ? vacations.map(item => `${item.period} - ${item.status}`) : ["Nenhuma informação registrada"]} />
+    <Section title="Afastamentos" items={leaves.length ? leaves.map(item => `${item.period} - ${item.reason} (${item.days} dias)`) : ["Nenhum afastamento ativo"]} />
     <Section title="Históricos Salariais" items={history.map(item => `${date(item.date)} - ${money.format(item.amount)} (${item.reason})`)} />
-    <Section title="Histórico de Movimentos" items={employee.movement_history.map(item => `${date(item.date)} - ${item.description}`)} />
+    <Section title="Histórico de Movimentos" items={movements.length ? movements.map(item => `${date(item.date)} - ${item.description}`) : ["Nenhum movimento registrado"]} />
   </aside></div>;
 }
 

@@ -17,6 +17,7 @@ class Employee(Base):
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
     cpf: Mapped[str] = mapped_column(String(14), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(180), index=True)
+    email: Mapped[str] = mapped_column(String(254), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     company = relationship("Company", back_populates="employees")

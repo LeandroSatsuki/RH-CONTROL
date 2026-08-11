@@ -54,6 +54,7 @@ class EmployeeCreate(BaseModel):
     company_id: int = 1
     cpf: str
     full_name: str = Field(min_length=3, max_length=180)
+    email: str = Field(default="", max_length=254)
     employee_code: str = Field(min_length=1, max_length=40)
     employment_type_id: int
     result_center_id: int
@@ -74,10 +75,10 @@ class EmployeeCreate(BaseModel):
     city: str = ""
     state: str = ""
     bank_code: str = ""
-    bank_name: str = Field(min_length=2, max_length=120)
-    bank_agency: str = Field(min_length=2, max_length=20)
-    bank_account: str = Field(min_length=2, max_length=30)
-    bank_account_digit: str = Field(min_length=1, max_length=5)
+    bank_name: str = Field(default="", max_length=120)
+    bank_agency: str = Field(default="", max_length=20)
+    bank_account: str = Field(default="", max_length=30)
+    bank_account_digit: str = Field(default="", max_length=5)
     pix_key_type: PixKeyType
     pix_key: str = Field(min_length=3, max_length=120)
     benefits: list[str] = Field(default_factory=list)
@@ -102,6 +103,7 @@ class EmployeePersonRead(BaseModel):
     id: int
     cpf: str
     full_name: str
+    email: str
 
 
 class SalaryHistoryRead(BaseModel):
