@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import calendar
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -49,6 +49,7 @@ DEFAULT_BENEFITS = [
     ("PS", "Plano de saúde", "MONTHLY", "Valor mensal por titular e dependentes."),
     ("SV", "Seguro de vida", "MONTHLY", "Valor mensal recorrente por colaborador."),
 ]
+PERIOD_MOVEMENT_TYPES = {"atestado", "afastamento", "férias"}
 
 
 def money(value: Decimal | float | int) -> Decimal:
@@ -57,6 +58,20 @@ def money(value: Decimal | float | int) -> Decimal:
 
 def as_float(value: Decimal | float | int) -> float:
     return float(money(value))
+
+
+def movement_period_values(
+    movement_type: str,
+    start_date: date,
+    days: int,
+    daily_hours: Decimal | float | int,
+    end_date: date | None,
+    hour_impact: Decimal | float | int,
+) -> tuple[date | None, Decimal]:
+    """Keep period movements consistent regardless of the client that saved them."""
+    if movement_type.strip().lower() in PERIOD_MOVEMENT_TYPES:
+        return start_date + timedelta(days=days - 1), money(Decimal(str(daily_hours)) * days)
+    return end_date, Decimal(str(hour_impact))
 
 
 def ensure_company(db: DbSession, company_id: int) -> Company:
@@ -440,15 +455,25 @@ def create_movement(payload: dict[str, Any], db: DbSession, _: AdminUser, compan
     if not employment:
         raise HTTPException(status_code=422, detail="Cadastre ao menos um colaborador ativo antes de lançar movimentações.")
     start_date = parse_date(payload.get("start_date"), date.today())
+    movement_type = str(payload.get("type") or "falta")
+    days = max(int(payload.get("days") or 1), 1)
+    end_date, hour_impact = movement_period_values(
+        movement_type,
+        start_date,
+        days,
+        employment.daily_hours or 0,
+        parse_date(payload.get("end_date")) if payload.get("end_date") else None,
+        payload.get("hour_impact") or employment.daily_hours or 0,
+    )
     movement = Movement(
         company_id=company_id,
         competency=str(payload.get("competency") or start_date.strftime("%Y-%m")),
         employee_id=employment.id,
-        type=str(payload.get("type") or "falta"),
+        type=movement_type,
         start_date=start_date,
-        end_date=parse_date(payload.get("end_date")) if payload.get("end_date") else None,
-        days=max(int(payload.get("days") or 1), 1),
-        hour_impact=Decimal(str(payload.get("hour_impact") or employment.daily_hours or 0)),
+        end_date=end_date,
+        days=days,
+        hour_impact=hour_impact,
         observation=str(payload.get("observation") or "Movimentação criada no modo oficial."),
         status="Pendente",
     )
@@ -478,9 +503,15 @@ def update_movement(movement_id: int, payload: dict[str, Any], db: DbSession, us
     movement.competency = str(payload.get("competency") or movement.competency)
     movement.type = str(payload.get("type") or movement.type)
     movement.start_date = parse_date(payload.get("start_date"), movement.start_date)
-    movement.end_date = parse_date(payload.get("end_date")) if payload.get("end_date") else None
     movement.days = max(int(payload.get("days") or movement.days), 1)
-    movement.hour_impact = Decimal(str(payload.get("hour_impact") or movement.hour_impact))
+    movement.end_date, movement.hour_impact = movement_period_values(
+        movement.type,
+        movement.start_date,
+        movement.days,
+        movement.employment.daily_hours or 0,
+        parse_date(payload.get("end_date")) if payload.get("end_date") else None,
+        payload.get("hour_impact") or movement.hour_impact,
+    )
     movement.observation = str(payload.get("observation") or movement.observation)
     movement.status = str(payload.get("status") or movement.status)
     db.commit()

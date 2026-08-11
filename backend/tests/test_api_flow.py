@@ -184,6 +184,24 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert updated_movement.status_code == 200
     assert updated_movement.json()["status"] == "Conferida"
 
+    vacation = client.post(
+        "/api/demo/movements",
+        headers=admin,
+        json={
+            "competency": "2026-06",
+            "employee_id": created_employee["id"],
+            "type": "férias",
+            "start_date": "2026-06-10",
+            "end_date": "2026-06-30",
+            "days": 3,
+            "hour_impact": 1,
+            "observation": "Férias com cálculo automático",
+        },
+    )
+    assert vacation.status_code == 201
+    assert vacation.json()["end_date"] == "2026-06-12"
+    assert Decimal(str(vacation.json()["hour_impact"])) == Decimal("26.4")
+
     mei_employee_payload = {
         "cpf": "111.444.777-35",
         "full_name": "Pessoa MEI",
