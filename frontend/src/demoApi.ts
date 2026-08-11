@@ -526,7 +526,15 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
   }
 
   if (route === "/demo/alerts" && method === "GET") return buildAlerts(state, companyId) as T;
-  if (route === "/demo/audit-logs" && method === "GET") return scopeAuditLogs(state, companyId) as T;
+  if (route === "/demo/audit-logs" && method === "GET") {
+    const module = params.get("module")?.trim().toLowerCase() ?? "";
+    const query = params.get("query")?.trim().toLowerCase() ?? "";
+    const limit = Math.min(Math.max(Number(params.get("limit") ?? 100), 1), 200);
+    return scopeAuditLogs(state, companyId)
+      .filter(item => !module || item.module.toLowerCase() === module)
+      .filter(item => !query || `${item.action} ${item.details} ${item.employee_name ?? ""} ${item.performed_by}`.toLowerCase().includes(query))
+      .slice(0, limit) as T;
+  }
   if (route === "/result-centers" && method === "GET") return state.resultCenters as T;
   if (route === "/employment-types" && method === "GET") return state.employmentTypes as T;
   if (route === "/employees" && method === "GET") return scopeEmployees(state, companyId) as T;
@@ -935,6 +943,33 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     });
     saveState(state);
     return updated as T;
+  }
+
+  if (route.startsWith("/demo/movements/") && method === "DELETE") {
+    assertAdmin(token);
+    const movementId = Number(route.split("/")[3]);
+    const payload = body<{ password?: string }>(options);
+    const currentPassword = state.users.find(item => item.username === currentUser.username)?.password;
+    if (!payload.password || payload.password !== currentPassword) {
+      throw new Error("Senha de confirmação inválida.");
+    }
+    const index = companyId === ALL_COMPANIES_ID
+      ? state.movements.findIndex(item => item.id === movementId)
+      : state.movements.findIndex(item => item.id === movementId && item.company_id === companyId);
+    if (index < 0) throw new Error("Movimentação não encontrada");
+    const [removed] = state.movements.splice(index, 1);
+    appendAudit(state, {
+      company_id: removed.company_id,
+      module: "Movimentações",
+      action: "Movimentação excluída",
+      employee_name: removed.employee_name,
+      result_center: removed.result_center,
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${removed.type} em ${removed.competency} excluída com confirmação por senha`
+    });
+    saveState(state);
+    return undefined as T;
   }
 
   if (route === "/demo/cost-allocations" && method === "GET") {
