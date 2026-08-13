@@ -103,6 +103,7 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
     {createOpen && (
       <MovementCreateModal
         token={token}
+        companyId={selectedCompany.id}
         competency={competency}
         employees={employees}
         centers={centers}
@@ -827,6 +828,7 @@ function MovementDrawer({ item, token, user, onClose, onSaved }: { item: DemoMov
 
 function MovementCreateModal({
   token,
+  companyId,
   competency,
   employees,
   centers,
@@ -835,6 +837,7 @@ function MovementCreateModal({
   onCreated
 }: {
   token: string;
+  companyId: number;
   competency: string;
   employees: DemoEmployee[];
   centers: ResultCenter[];
@@ -853,6 +856,7 @@ function MovementCreateModal({
   const [observation, setObservation] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [draftLoaded, setDraftLoaded] = useState(false);
 
   const basicsSelected = Boolean(employmentType && center);
   const eligibleEmployees = useMemo(() => {
@@ -865,8 +869,37 @@ function MovementCreateModal({
   }, [basicsSelected, center, employees, employmentType]);
 
   useEffect(() => {
-    setEmployeeId("");
-  }, [employmentType, center]);
+    const key = movementDraftKey(companyId, competency);
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(key) ?? "null") as Partial<MovementDraft> | null;
+      if (saved) {
+        setEmploymentType(saved.employmentType ?? "");
+        setCenter(saved.center ?? "");
+        setEmployeeId(saved.employeeId ?? "");
+        setMovementType(saved.movementType ?? "falta");
+        setStartDate(saved.startDate ?? new Date().toISOString().slice(0, 10));
+        setEndDate(saved.endDate ?? "");
+        setDays(Math.max(Number(saved.days) || 1, 1));
+        setHours(Number(saved.hours) || 0);
+        setObservation(saved.observation ?? "");
+      }
+    } catch {
+      window.localStorage.removeItem(key);
+    } finally {
+      setDraftLoaded(true);
+    }
+  }, [companyId, competency]);
+
+  useEffect(() => {
+    if (!draftLoaded) return;
+    const draft: MovementDraft = { employmentType, center, employeeId, movementType, startDate, endDate, days, hours, observation };
+    window.localStorage.setItem(movementDraftKey(companyId, competency), JSON.stringify(draft));
+  }, [center, companyId, competency, days, draftLoaded, employeeId, employmentType, endDate, hours, movementType, observation, startDate]);
+
+  const selectedEmployee = eligibleEmployees.find(employee => employee.id === Number(employeeId));
+  const periodMovement = isPeriodMovement(movementType);
+  const calculatedEndDate = periodMovement ? addCalendarDays(startDate, days - 1) : endDate;
+  const calculatedHours = periodMovement ? Number((Number(selectedEmployee?.daily_hours ?? 0) * days).toFixed(2)) : hours;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -888,12 +921,13 @@ function MovementCreateModal({
           employee_id: Number(employeeId),
           type: movementType,
           start_date: startDate,
-          end_date: endDate || null,
+          end_date: calculatedEndDate || null,
           days,
-          hour_impact: hours,
+          hour_impact: calculatedHours,
           observation: observation.trim() || "Movimentação lançada manualmente."
         })
       }, token);
+      window.localStorage.removeItem(movementDraftKey(companyId, competency));
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar movimentação");
@@ -915,11 +949,11 @@ function MovementCreateModal({
         </div>
         <div className="presentation-modal-body movement-modal-body">
           <div className="movement-form-grid">
-            <label>Modalidade<select value={employmentType} onChange={event => setEmploymentType(event.target.value)} required autoFocus>
+            <label>Modalidade<select value={employmentType} onChange={event => { setEmploymentType(event.target.value); setEmployeeId(""); }} required autoFocus>
               <option value="">Selecione</option>
               {types.filter(item => item.active).map(item => <option key={item.id} value={item.name}>{item.name}</option>)}
             </select></label>
-            <label>Centro de Resultado<select value={center} onChange={event => setCenter(event.target.value)} required>
+            <label>Centro de Resultado<select value={center} onChange={event => { setCenter(event.target.value); setEmployeeId(""); }} required>
               <option value="">Selecione</option>
               {centers.filter(item => item.active).map(item => <option key={item.id} value={item.code}>{item.code} - {item.name}</option>)}
             </select></label>
@@ -933,9 +967,9 @@ function MovementCreateModal({
             </select></label>
             <label>Competência<input value={competency} readOnly disabled={!basicsSelected} /></label>
             <label>Início<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} disabled={!basicsSelected} required /></label>
-            <label>Fim<input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} disabled={!basicsSelected} /></label>
+            <label>Fim<input type="date" value={calculatedEndDate} onChange={event => setEndDate(event.target.value)} disabled={!basicsSelected} readOnly={periodMovement} /><small>{periodMovement ? "Calculado incluindo a data de inÃ­cio." : ""}</small></label>
             <label>Dias<input type="number" min="1" step="1" value={days} onChange={event => setDays(Number(event.target.value || 1))} disabled={!basicsSelected} required /></label>
-            <label>Horas<input type="number" min="0" step="0.1" value={hours} onChange={event => setHours(Number(event.target.value || 0))} disabled={!basicsSelected} required /></label>
+            <label>Horas<input type="number" min="0" step="0.1" value={calculatedHours} onChange={event => setHours(Number(event.target.value || 0))} disabled={!basicsSelected} readOnly={periodMovement} required /><small>{periodMovement ? "Calculadas conforme a jornada diÃ¡ria do colaborador." : ""}</small></label>
             <label className="span-2">Observação<input value={observation} onChange={event => setObservation(event.target.value)} disabled={!basicsSelected} placeholder="Descreva o motivo ou contexto da movimentação" /></label>
           </div>
           {error && <p className="error-line">{error}</p>}
@@ -2613,6 +2647,34 @@ function isValidCpfCnpjImport(value: string) {
 }
 
 const movementTypes = ["admissão", "desligamento", "falta", "atestado", "afastamento", "férias", "transferência de Centro de Resultado", "alteração salarial", "contrato não assinado", "contrato MEI a vencer"];
+const periodMovementTypes = new Set(["atestado", "afastamento", "férias"]);
+
+interface MovementDraft {
+  employmentType: string;
+  center: string;
+  employeeId: string;
+  movementType: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+  hours: number;
+  observation: string;
+}
+
+function movementDraftKey(companyId: number, competency: string) {
+  return `nexo:movement-draft:${companyId}:${competency}`;
+}
+
+function isPeriodMovement(movementType: string) {
+  return periodMovementTypes.has(movementType.toLowerCase());
+}
+
+function addCalendarDays(value: string, days: number) {
+  if (!value) return "";
+  const result = new Date(`${value}T12:00:00`);
+  result.setDate(result.getDate() + days);
+  return result.toISOString().slice(0, 10);
+}
 
 function buildYearCompetencies(year: number) {
   const labels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
