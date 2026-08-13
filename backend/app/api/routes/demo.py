@@ -47,6 +47,7 @@ DEFAULT_JOB_TITLES = [
 DEFAULT_BENEFITS = [
     ("VT", "Vale transporte", "DAILY", "Pode ser distribuído em lote ou individualmente no mês."),
     ("AL", "Alimentação", "DAILY", "Pode ser distribuído em lote ou individualmente no mês."),
+    ("CB", "Cesta básica", "MONTHLY", "Benefício mensal de cesta básica por colaborador."),
     ("PS", "Plano de saúde", "MONTHLY", "Valor mensal por titular e dependentes."),
     ("SV", "Seguro de vida", "MONTHLY", "Valor mensal recorrente por colaborador."),
 ]
@@ -126,9 +127,10 @@ def settings_for_scope(db: DbSession, company_id: int) -> SystemSetting:
 
 def ensure_benefits(db: DbSession, company_id: int) -> list[BenefitDefinition]:
     existing = list(db.scalars(select(BenefitDefinition).where(BenefitDefinition.company_id == company_id)))
-    if existing:
-        return sorted(existing, key=lambda item: item.code)
+    existing_codes = {item.code for item in existing}
     for code, name, mode, notes in DEFAULT_BENEFITS:
+        if code in existing_codes:
+            continue
         db.add(
             BenefitDefinition(
                 company_id=company_id,

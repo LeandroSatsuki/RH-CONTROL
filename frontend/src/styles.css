@@ -61,6 +61,8 @@ header small { color: var(--muted); font-size: 11px; font-weight: 600; }
 .company-switch { width: min(100%, 290px); }
 .notification-menu { position: relative; display: block; }
 .notification-button { position: relative; display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); font-size: 17px; }
+.refresh-button { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--text); font-size: 23px; line-height: 1; }
+.refresh-button:hover { border-color: #5792cc; color: var(--primary); }
 .notification-button b { position: absolute; top: -5px; right: -6px; min-width: 18px; border-radius: 99px; background: #c83b3b; color: #fff; padding: 2px 5px; font-size: 10px; line-height: 1.1; }
 .notification-popover { position: absolute; z-index: 20; top: calc(100% + 9px); right: 0; width: min(390px, calc(100vw - 36px)); display: grid; gap: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 16px 34px rgba(15, 23, 42, .2); text-align: left; }
 .notification-popover > strong { padding: 2px 4px 6px; font-size: 13px; }

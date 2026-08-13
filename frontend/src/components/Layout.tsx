@@ -30,6 +30,7 @@ interface Props {
   token: string;
   page: Page;
   onPage: (page: Page) => void;
+  onRefresh: () => void;
   onLogout: () => void;
   children: ReactNode;
   localMode?: boolean;
@@ -52,7 +53,7 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "settings", label: "Ajustes do sistema", icon: "⚙", adminOnly: true }
 ];
 
-export function Layout({ user, token, page, onPage, onLogout, children, localMode = IS_DEMO_MODE }: Props) {
+export function Layout({ user, token, page, onPage, onRefresh, onLogout, children, localMode = IS_DEMO_MODE }: Props) {
   const [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
   const [alerts, setAlerts] = useState<DemoAlert[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -136,6 +137,7 @@ export function Layout({ user, token, page, onPage, onLogout, children, localMod
               {alerts.length > 5 && <button className="notification-more" type="button" onClick={() => { setNotificationsOpen(false); onPage("alerts"); }}>Ver mais alertas</button>}
             </div>}
           </div>
+          <button type="button" className="refresh-button" onClick={onRefresh} aria-label="Atualizar dados desta tela" title="Atualizar dados desta tela">↻</button>
           <div>
             <span className="eyebrow">{localMode ? "Operação local" : "Sistema conectado"}</span>
             <strong>{user.full_name}</strong>

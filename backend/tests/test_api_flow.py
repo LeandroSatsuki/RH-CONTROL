@@ -314,7 +314,7 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
 
     benefits = client.get("/api/demo/benefits/catalog", headers=admin)
     assert benefits.status_code == 200
-    assert {item["code"] for item in benefits.json()} >= {"VT", "AL", "PS", "SV"}
+    assert {item["code"] for item in benefits.json()} >= {"VT", "AL", "CB", "PS", "SV"}
     distribution = client.post(
         "/api/demo/benefit-distributions",
         headers=admin,
