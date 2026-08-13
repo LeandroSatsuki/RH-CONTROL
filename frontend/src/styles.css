@@ -128,8 +128,8 @@ label.check input { width: 15px; min-height: 15px; height: 15px; padding: 0; }
 .catalog-check { min-height: 36px; padding: 0 6px; white-space: nowrap; }
 .catalog-list .note { margin: 8px 4px 3px; }
 .catalog-global-note { border-bottom: 1px solid var(--line); padding: 5px 4px 10px; }
-.catalog-center-row { grid-template-columns: 18px 90px minmax(180px, 1fr) 80px auto; gap: 10px; }
-.catalog-type-row { grid-template-columns: minmax(180px, 1fr) minmax(130px, .7fr) 80px auto; gap: 10px; }
+.catalog-center-row { grid-template-columns: 18px 90px minmax(180px, 1fr) auto 80px; gap: 10px; }
+.catalog-type-row { grid-template-columns: minmax(180px, 1fr) minmax(130px, .7fr) auto 80px; gap: 10px; }
 .catalog-center-row > strong:first-of-type, .catalog-type-row > strong:first-child { grid-column: auto; }
 .catalog-row-actions { flex-wrap: nowrap; gap: 6px; }
 .input-invalid { border-color: #d33b3b; box-shadow: 0 0 0 3px rgba(211, 59, 59, .10); }
@@ -171,6 +171,7 @@ label.check input { width: 15px; min-height: 15px; height: 15px; padding: 0; }
 .list-row:last-child { border-bottom: 0; }
 .list-row > .color-dot { margin: 0; }
 .list-row > strong:first-child { grid-column: span 2; }
+.catalog-center-row > strong:first-of-type, .catalog-type-row > strong:first-child { grid-column: auto; }
 .company-list-row { grid-template-columns: 90px 140px minmax(180px, 1fr) 80px minmax(140px, 1fr) 86px auto auto; gap: 10px; }
 .company-list-row > strong:first-child { grid-column: auto; }
 .compact-button { min-height: 34px; padding: 8px 12px; }
@@ -372,10 +373,14 @@ tr.clickable:hover { background: var(--surface-2); }
 .selected-panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .selected-monthly-stack { display: grid; gap: 8px; }
 .report-template-toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-.mei-summary { grid-template-columns: repeat(5, minmax(150px, 1fr)); }
+.mei-summary { grid-template-columns: repeat(4, minmax(150px, 1fr)); }
 .mei-contract-filters { grid-template-columns: 1.2fr 1fr 1fr auto; gap: 10px; align-items: end; }
 .mei-contract-form h2 { margin-bottom: 14px; }
 .mei-contract-drawer { margin-top: 12px; }
+.mei-contract-workflow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.mei-action-panel { margin: 0; display: grid; gap: 12px; align-content: start; box-shadow: none; }
+.mei-action-panel h3, .mei-action-panel p { margin: 0; }
+.table-actions { justify-content: flex-start; flex-wrap: nowrap; min-width: max-content; }
 .mei-sign-panel { margin-top: 12px; padding: 14px; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-2); }
 .mei-sign-panel h3 { margin-top: 0; }
 .selected-panel-head h2 { margin: 0; font-size: 18px; }
@@ -551,6 +556,7 @@ tr.clickable:hover { background: var(--surface-2); }
   .benefits-builder, .report-maker-grid, .benefits-amounts, .benefits-entry-grid, .benefits-grid, .report-selected-list, .report-saved-picker { grid-template-columns: 1fr; }
   .benefits-filters { grid-template-columns: 1fr; }
   .benefit-review, .selected-panel-head { flex-direction: column; align-items: stretch; }
+  .mei-contract-workflow { grid-template-columns: 1fr; }
   .benefit-actionbar { justify-content: flex-start; min-width: 0; }
   .report-selected-controls { grid-template-columns: 1fr; }
   .drawer { width: 100%; }

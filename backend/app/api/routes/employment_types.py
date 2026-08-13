@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import AdminUser, CurrentUser, DbSession
 from app.models.company import Company
+from app.models.employment import Employment
 from app.models.employment_type import EmploymentType
 from app.schemas.catalog import (
     EmploymentTypeCreate,
@@ -124,3 +125,32 @@ def update_employment_type(
         ) from None
     db.refresh(item)
     return item
+
+
+@router.delete("/{item_id}", status_code=204)
+def delete_employment_type(
+    item_id: int, db: DbSession, _: AdminUser, company_id: int = 1
+) -> None:
+    item = db.get(EmploymentType, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Modalidade não encontrada")
+    catalog_company_id(db, company_id)
+    normalized_name = item.name.strip().upper()
+    related = [
+        candidate
+        for candidate in db.scalars(select(EmploymentType))
+        if candidate.name.strip().upper() == normalized_name
+    ]
+    related_ids = [candidate.id for candidate in related]
+    if db.scalar(
+        select(Employment.id)
+        .where(Employment.employment_type_id.in_(related_ids))
+        .limit(1)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Esta modalidade possui colaboradores, contratos ou movimentações vinculadas. Inative-a em vez de excluir.",
+        )
+    for candidate in related:
+        db.delete(candidate)
+    db.commit()

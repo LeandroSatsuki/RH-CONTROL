@@ -129,10 +129,15 @@ export async function api<T>(
   if (companyId !== null && !path.startsWith("/auth") && !path.startsWith("/setup") && !url.searchParams.has("company_id")) {
     url.searchParams.set("company_id", String(companyId));
   }
+  if (method.toUpperCase() === "GET") url.searchParams.set("_nexo_ts", String(Date.now()));
 
   const headers = new Headers(options.headers);
   if (scopedOptions.body) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (method.toUpperCase() === "GET") {
+    headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    headers.set("Pragma", "no-cache");
+  }
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -144,7 +149,7 @@ export async function api<T>(
   const startedAt = performance.now();
   devLog("request", { method, url: url.toString(), tokenPresent: Boolean(token), companyId });
   try {
-    const response = await fetch(url, { ...scopedOptions, headers, signal: controller.signal });
+    const response = await fetch(url, { ...scopedOptions, headers, signal: controller.signal, cache: "no-store" });
     devLog("response", {
       method,
       url: url.toString(),

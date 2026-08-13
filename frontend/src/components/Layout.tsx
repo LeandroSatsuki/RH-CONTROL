@@ -80,6 +80,7 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
 
   function openAlert(alert: DemoAlert) {
     setNotificationsOpen(false);
+    if (alert.type.includes("Contrato") && alert.target_id) localStorage.setItem("nexo:mei-contract-target-id", String(alert.target_id));
     onPage(alert.type === "Ajuste pendente" ? "movements" : alert.type.includes("Contrato") ? "mei-contracts" : "employees");
   }
 

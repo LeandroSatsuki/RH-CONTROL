@@ -265,6 +265,7 @@ export default function App() {
 
   function refreshCurrentPage() {
     localStorage.setItem(LAST_PAGE_KEY, page);
+    window.nexoUpdater?.check();
     window.location.reload();
   }
 

@@ -575,6 +575,7 @@ function buildAlerts(state: DemoState, companyId: number): DemoAlert[] {
     if (contract.status === "Pendente de assinatura") {
       alerts.push({
         id: contract.id * 100 + 1,
+        target_id: contract.id,
         company_id: contract.company_id,
         company_name: companyNameFor(state, contract.company_id),
         type: "Contrato não assinado",
@@ -588,6 +589,7 @@ function buildAlerts(state: DemoState, companyId: number): DemoAlert[] {
     if (contract.status === "Ativo" && daysLeft <= 15) {
       alerts.push({
         id: contract.id * 100 + 2,
+        target_id: contract.id,
         company_id: contract.company_id,
         company_name: companyNameFor(state, contract.company_id),
         type: "Contrato próximo do vencimento",
@@ -1152,6 +1154,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       signed_by: currentUser.full_name
     };
     state.meiContracts[index] = updated;
+    state.movements.filter(item => item.observation.includes(`MEI#${contractId} - contrato pendente`)).forEach(item => { item.status = "Aplicada"; });
     syncMeiContracts(state);
     appendAudit(state, {
       company_id: companyId,
@@ -1165,6 +1168,62 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     });
     saveState(state);
     return updated as T;
+  }
+
+  if (route.startsWith("/demo/mei-contracts/") && route.endsWith("/renew") && method === "POST") {
+    assertAdmin(token);
+    const contractId = Number(route.split("/")[3]);
+    const source = state.meiContracts.find(item => item.id === contractId && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
+    if (!source) throw new Error("Contrato MEI não encontrado");
+    if (source.status !== "Ativo") throw new Error("Somente contratos ativos podem ser renovados.");
+    if (state.meiContracts.some(item => item.company_id === source.company_id && item.employee_id === source.employee_id && item.status === "Pendente de assinatura")) throw new Error("Já existe uma renovação pendente de assinatura para este MEI.");
+    const payload = body<{ start_date?: string; end_date?: string }>(options);
+    const startDate = String(payload.start_date ?? "");
+    const endDate = String(payload.end_date ?? "");
+    if (!startDate || !endDate || endDate < startDate) throw new Error("Informe uma vigência válida.");
+    const renewed: DemoMeiContract = { ...source, id: nextId(state.meiContracts), status: "Pendente de assinatura", start_date: startDate, end_date: endDate, attachment_name: null, attachment_data_url: null, created_at: new Date().toLocaleString("pt-BR"), signed_at: null, signed_by: null, notified_not_signed: false, notified_15: false, notified_10: false, notified_5: false, movement_created_5: false };
+    state.meiContracts = [renewed, ...state.meiContracts];
+    syncMeiContracts(state);
+    appendAudit(state, { company_id: source.company_id, module: "Contratos MEI", action: "Renovação de contrato criada", employee_name: source.employee_name, result_center: source.result_center, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Contrato anterior #${source.id} | nova vigência ${startDate} a ${endDate}` });
+    saveState(state);
+    return renewed as T;
+  }
+
+  if (route.startsWith("/demo/mei-contracts/") && method === "PATCH") {
+    assertAdmin(token);
+    const contractId = Number(route.split("/")[3]);
+    const index = state.meiContracts.findIndex(item => item.id === contractId && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
+    if (index < 0) throw new Error("Contrato MEI não encontrado");
+    const current = state.meiContracts[index];
+    if (current.status !== "Pendente de assinatura") throw new Error("Contrato assinado não pode ser alterado. Use Renovar para preservar o documento original.");
+    const payload = body<{ employee_id?: number; start_date?: string; end_date?: string }>(options);
+    const employee = state.employees.find(item => item.id === Number(payload.employee_id ?? current.employee_id) && item.company_id === current.company_id && item.status === "ACTIVE" && item.employment_type.name === "MEI");
+    if (!employee) throw new Error("Selecione um colaborador MEI ativo.");
+    const startDate = String(payload.start_date ?? current.start_date);
+    const endDate = String(payload.end_date ?? current.end_date);
+    if (endDate < startDate) throw new Error("A vigência final não pode ser anterior à inicial.");
+    const updated: DemoMeiContract = { ...current, employee_id: employee.id, employee_name: employee.employee.full_name, employee_code: employee.employee_code, result_center: employee.result_center, start_date: startDate, end_date: endDate };
+    state.meiContracts[index] = updated;
+    appendAudit(state, { company_id: updated.company_id, module: "Contratos MEI", action: "Contrato pendente editado", employee_name: updated.employee_name, result_center: updated.result_center, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `${current.start_date} a ${current.end_date} → ${startDate} a ${endDate}` });
+    saveState(state);
+    return updated as T;
+  }
+
+  if (route.startsWith("/demo/mei-contracts/") && method === "DELETE") {
+    assertAdmin(token);
+    const contractId = Number(route.split("/")[3]);
+    const index = state.meiContracts.findIndex(item => item.id === contractId && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
+    if (index < 0) throw new Error("Contrato MEI não encontrado");
+    const current = state.meiContracts[index];
+    if (current.status !== "Pendente de assinatura") throw new Error("Contrato assinado não pode ser excluído; ele deve permanecer no histórico.");
+    const payload = body<{ password?: string }>(options);
+    const currentPassword = state.users.find(item => item.username === currentUser.username)?.password;
+    if (!payload.password || payload.password !== currentPassword) throw new Error("Senha de confirmação inválida.");
+    state.meiContracts.splice(index, 1);
+    state.movements = state.movements.filter(item => !item.observation.includes(`MEI#${contractId} - contrato pendente`));
+    appendAudit(state, { company_id: current.company_id, module: "Contratos MEI", action: "Contrato pendente excluído", employee_name: current.employee_name, result_center: current.result_center, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Contrato #${current.id} | ${current.start_date} a ${current.end_date}` });
+    saveState(state);
+    return { deleted: true } as T;
   }
 
   if (route === "/result-centers" && method === "POST") {
@@ -1209,6 +1268,18 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     return item as T;
   }
 
+  if (route.startsWith("/result-centers/") && method === "DELETE") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[2]);
+    const item = state.resultCenters.find(center => center.id === id);
+    if (!item) throw new Error("Centro de Resultado não encontrado.");
+    const inUse = state.employees.some(employee => employee.result_center.code === item.code) || state.movements.some(movement => movement.result_center.code === item.code);
+    if (inUse) throw new Error("Este Centro de Resultado possui colaboradores ou movimentações vinculadas. Inative-o em vez de excluir.");
+    state.resultCenters = state.resultCenters.filter(center => center.code !== item.code);
+    saveState(state);
+    return undefined as T;
+  }
+
   if (route.startsWith("/employment-types/") && method === "PATCH") {
     assertAdmin(token);
     const id = Number(route.split("/")[2]);
@@ -1222,6 +1293,17 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     state.employmentTypes.filter(type => normalizeText(type.name) === normalizeText(item.name)).forEach(type => Object.assign(type, { name: nextName, has_charges: payload.has_charges ?? item.has_charges, active: payload.active ?? item.active }));
     saveState(state);
     return item as T;
+  }
+
+  if (route.startsWith("/employment-types/") && method === "DELETE") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[2]);
+    const item = state.employmentTypes.find(type => type.id === id);
+    if (!item) throw new Error("Modalidade não encontrada.");
+    if (state.employees.some(employee => normalizeText(employee.employment_type.name) === normalizeText(item.name))) throw new Error("Esta modalidade possui colaboradores, contratos ou movimentações vinculadas. Inative-a em vez de excluir.");
+    state.employmentTypes = state.employmentTypes.filter(type => normalizeText(type.name) !== normalizeText(item.name));
+    saveState(state);
+    return undefined as T;
   }
 
   if (route === "/demo/benefits/catalog" && method === "POST") {

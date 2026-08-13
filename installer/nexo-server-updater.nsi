@@ -2,7 +2,7 @@ Unicode true
 RequestExecutionLevel admin
 
 !ifndef APP_VERSION
-  !define APP_VERSION "1.0.3"
+  !define APP_VERSION "1.0.4"
 !endif
 
 !ifndef NSIS_RESOURCES

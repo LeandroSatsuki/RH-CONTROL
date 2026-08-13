@@ -51,11 +51,19 @@ export function CentersPage({ token, user, embedded = false }: { token: string; 
     } catch (err) { setError(err instanceof Error ? err.message : "Erro ao alterar Centro de Resultado"); }
   }
 
+  async function remove(item: ResultCenter) {
+    if (!window.confirm(`Excluir o Centro de Resultado ${item.code} de todas as empresas?`)) return;
+    try {
+      await api(`/result-centers/${item.id}?company_id=${catalogCompanyId}`, { method: "DELETE" }, token);
+      await load();
+    } catch (err) { setError(err instanceof Error ? err.message : "Erro ao excluir Centro de Resultado"); }
+  }
+
   return <Catalog embedded={embedded} title="Centros de Resultado" subtitle="Catálogo global usado por todas as empresas." error={error} form={user.role === "ADMIN" &&
     <form className="catalog-toolbar centers-toolbar" onSubmit={submit}><label className="catalog-code">Código<input value={draft.code} onChange={event => setDraft(current => ({ ...current, code: event.target.value.toUpperCase() }))} placeholder="Ex.: ADM" required /></label><label className="catalog-name">Nome do centro<input value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value.toUpperCase() }))} placeholder="Ex.: Administrativo" required /></label><label className="catalog-color">Cor<input value={draft.color} onChange={event => setDraft(current => ({ ...current, color: event.target.value }))} type="color" aria-label="Cor do centro" /></label><button className="primary compact-button">{editingId ? "Salvar" : "+ Adicionar"}</button>{editingId && <button type="button" className="secondary compact-button" onClick={() => { setEditingId(null); setDraft({ code: "", name: "", color: "#2563eb" }); }}>Cancelar</button>}</form>}>
     {loading && <div className="inline-loading">Carregando...</div>}
     <p className="note catalog-global-note">Catálogo global: alterações feitas aqui serão aplicadas a todas as empresas.</p>
-    {items.map(item => <div className="list-row catalog-center-row" key={item.id}><span className="color-dot" style={{ background: item.color }} /><strong>{item.code}</strong><span>{item.name}</span><span className={item.active ? "status-pill status-active" : "status-pill status-inactive"}>{item.active ? "Ativo" : "Inativo"}</span>{user.role === "ADMIN" && <div className="actions catalog-row-actions"><button type="button" className="secondary compact-button" onClick={() => { setEditingId(item.id); setDraft({ code: item.code, name: item.name, color: item.color }); }}>Editar</button><button type="button" className="secondary compact-button" onClick={() => void toggle(item)}>{item.active ? "Inativar" : "Ativar"}</button></div>}</div>)}
+    {items.map(item => <div className="list-row catalog-center-row" key={item.id}><span className="color-dot" style={{ background: item.color }} /><strong>{item.code}</strong><span>{item.name}</span>{user.role === "ADMIN" && <div className="actions catalog-row-actions"><button type="button" className="secondary compact-button" onClick={() => { setEditingId(item.id); setDraft({ code: item.code, name: item.name, color: item.color }); }}>Editar</button><button type="button" className="secondary compact-button" onClick={() => void toggle(item)}>{item.active ? "Inativar" : "Ativar"}</button><button type="button" className="danger compact-button" onClick={() => void remove(item)}>Excluir</button></div>}<span className={item.active ? "status-pill status-active" : "status-pill status-inactive"}>{item.active ? "Ativo" : "Inativo"}</span></div>)}
     {!items.length && !loading && <Empty>Nenhum Centro de Resultado cadastrado.</Empty>}
   </Catalog>;
 }
@@ -106,11 +114,19 @@ export function TypesPage({ token, user, embedded = false }: { token: string; us
     } catch (err) { setError(err instanceof Error ? err.message : "Erro ao alterar modalidade"); }
   }
 
+  async function remove(item: EmploymentType) {
+    if (!window.confirm(`Excluir a modalidade ${item.name} de todas as empresas?`)) return;
+    try {
+      await api(`/employment-types/${item.id}?company_id=${catalogCompanyId}`, { method: "DELETE" }, token);
+      await load();
+    } catch (err) { setError(err instanceof Error ? err.message : "Erro ao excluir modalidade"); }
+  }
+
   return <Catalog embedded={embedded} title="Modalidades de contratação" subtitle="Catálogo global de vínculos e encargos." error={error} form={user.role === "ADMIN" &&
     <form className="catalog-toolbar types-toolbar" onSubmit={submit}><label className="catalog-name">Nome da modalidade<input value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value.toUpperCase() }))} placeholder="Ex.: CLT" required /></label><label className="check catalog-check"><input checked={draft.hasCharges} onChange={event => setDraft(current => ({ ...current, hasCharges: event.target.checked }))} type="checkbox" /> Possui encargos</label><button className="primary compact-button">{editingId ? "Salvar" : "+ Adicionar"}</button>{editingId && <button type="button" className="secondary compact-button" onClick={() => { setEditingId(null); setDraft({ name: "", hasCharges: false }); }}>Cancelar</button>}</form>}>
     {loading && <div className="inline-loading">Carregando...</div>}
     <p className="note catalog-global-note">Catálogo global: alterações feitas aqui serão aplicadas a todas as empresas.</p>
-    {items.map(item => <div className="list-row catalog-type-row" key={item.id}><strong>{item.name}</strong><span>{item.has_charges ? "Com encargos" : "Sem encargos"}</span><span className={item.active ? "status-pill status-active" : "status-pill status-inactive"}>{item.active ? "Ativa" : "Inativa"}</span>{user.role === "ADMIN" && <div className="actions catalog-row-actions"><button type="button" className="secondary compact-button" onClick={() => { setEditingId(item.id); setDraft({ name: item.name, hasCharges: item.has_charges }); }}>Editar</button><button type="button" className="secondary compact-button" onClick={() => void toggle(item)}>{item.active ? "Inativar" : "Ativar"}</button></div>}</div>)}
+    {items.map(item => <div className="list-row catalog-type-row" key={item.id}><strong>{item.name}</strong><span>{item.has_charges ? "Com encargos" : "Sem encargos"}</span>{user.role === "ADMIN" && <div className="actions catalog-row-actions"><button type="button" className="secondary compact-button" onClick={() => { setEditingId(item.id); setDraft({ name: item.name, hasCharges: item.has_charges }); }}>Editar</button><button type="button" className="secondary compact-button" onClick={() => void toggle(item)}>{item.active ? "Inativar" : "Ativar"}</button><button type="button" className="danger compact-button" onClick={() => void remove(item)}>Excluir</button></div>}<span className={item.active ? "status-pill status-active" : "status-pill status-inactive"}>{item.active ? "Ativa" : "Inativa"}</span></div>)}
   </Catalog>;
 }
 

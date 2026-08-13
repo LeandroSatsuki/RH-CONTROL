@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import AdminUser, CurrentUser, DbSession
 from app.models.company import Company
+from app.models.employment import Employment
 from app.models.result_center import ResultCenter
 from app.schemas.catalog import ResultCenterCreate, ResultCenterRead, ResultCenterUpdate
 
@@ -127,3 +128,27 @@ def update_result_center(
         ) from None
     db.refresh(item)
     return item
+
+
+@router.delete("/{item_id}", status_code=204)
+def delete_result_center(
+    item_id: int, db: DbSession, _: AdminUser, company_id: int = 1
+) -> None:
+    item = db.get(ResultCenter, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Centro de Resultado não encontrado")
+    catalog_company_id(db, company_id)
+    related = list(db.scalars(select(ResultCenter).where(ResultCenter.code == item.code)))
+    related_ids = [candidate.id for candidate in related]
+    if db.scalar(
+        select(Employment.id)
+        .where(Employment.result_center_id.in_(related_ids))
+        .limit(1)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Este Centro de Resultado possui colaboradores ou movimentações vinculadas. Inative-o em vez de excluir.",
+        )
+    for candidate in related:
+        db.delete(candidate)
+    db.commit()

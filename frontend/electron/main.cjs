@@ -7,6 +7,7 @@ const appName = "Nexo";
 const isDev = !app.isPackaged || Boolean(process.env.ELECTRON_START_URL);
 let updateTimer = null;
 let updateReady = false;
+let checkForUpdates = null;
 
 function credentialsPath() {
   return path.join(app.getPath("userData"), "credentials.json");
@@ -110,14 +111,20 @@ function setupAutoUpdates(win) {
     }
   });
 
-  const check = () => {
+  let lastCheckAt = 0;
+  const check = (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastCheckAt < 5 * 60 * 1000) return;
+    lastCheckAt = now;
     autoUpdater.checkForUpdates().catch(error => {
       console.error("[updater] falha ao buscar atualizacoes", error);
     });
   };
 
-  setTimeout(check, 5000);
-  updateTimer = setInterval(check, 1000 * 60 * 60 * 4);
+  checkForUpdates = () => check(true);
+  setTimeout(() => check(true), 5000);
+  win.on("focus", () => check());
+  updateTimer = setInterval(() => check(true), 1000 * 60 * 60);
 }
 
 app.setName(appName);
@@ -127,6 +134,10 @@ ipcMain.on("updater:restart", () => {
   if (updateReady) {
     autoUpdater.quitAndInstall(false, true);
   }
+});
+
+ipcMain.on("updater:check", () => {
+  if (checkForUpdates) checkForUpdates();
 });
 
 ipcMain.handle("credentials:load", () => {

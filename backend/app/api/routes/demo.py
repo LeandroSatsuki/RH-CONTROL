@@ -813,6 +813,10 @@ def create_mei_contract(
         )
     start_date = parse_date(payload.get("start_date"))
     end_date = parse_date(payload.get("end_date"))
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=422, detail="A vigência final não pode ser anterior à inicial."
+        )
     contract = MeiContract(
         company_id=company_id,
         employee_id=employment.id,
@@ -882,9 +886,237 @@ def sign_mei_contract(
     contract.attachment_data_url = str(payload.get("attachment_data_url") or "") or None
     contract.signed_at = datetime.now()
     contract.signed_by = user.full_name
+    pending_movements = db.scalars(
+        select(Movement).where(
+            Movement.company_id == contract.company_id,
+            Movement.observation.like(f"MEI#{contract.id} - contrato pendente%"),
+            Movement.status == "Pendente",
+        )
+    )
+    for movement in pending_movements:
+        movement.status = "Aplicada"
     db.commit()
     db.refresh(contract)
     return mei_contract_to_dict(contract)
+
+
+@router.patch("/mei-contracts/{contract_id}")
+def update_mei_contract(
+    contract_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, Any]:
+    query = (
+        select(MeiContract)
+        .options(
+            joinedload(MeiContract.employment).joinedload(Employment.employee),
+            joinedload(MeiContract.employment).joinedload(Employment.result_center),
+            joinedload(MeiContract.employment).joinedload(Employment.employment_type),
+        )
+        .where(MeiContract.id == contract_id)
+    )
+    if company_id != 0:
+        query = query.where(MeiContract.company_id == company_id)
+    contract = db.scalar(query)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
+    if contract.status != "Pendente de assinatura":
+        raise HTTPException(
+            status_code=409,
+            detail="Contrato assinado não pode ser alterado. Use Renovar para preservar o documento original.",
+        )
+    previous = mei_contract_to_dict(contract)
+    employment_id = int(payload.get("employee_id") or contract.employee_id)
+    employment = db.scalar(
+        select(Employment)
+        .options(
+            joinedload(Employment.employee),
+            joinedload(Employment.result_center),
+            joinedload(Employment.employment_type),
+        )
+        .where(
+            Employment.id == employment_id,
+            Employment.company_id == contract.company_id,
+            Employment.status == EmploymentStatus.ACTIVE,
+        )
+    )
+    if not employment or employment.employment_type.name.strip().upper() != "MEI":
+        raise HTTPException(status_code=422, detail="Selecione um colaborador MEI ativo.")
+    start_date = parse_date(payload.get("start_date"), contract.start_date)
+    end_date = parse_date(payload.get("end_date"), contract.end_date)
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=422, detail="A vigência final não pode ser anterior à inicial."
+        )
+    contract.employee_id = employment.id
+    contract.start_date = start_date
+    contract.end_date = end_date
+    for movement in db.scalars(
+        select(Movement).where(
+            Movement.company_id == contract.company_id,
+            Movement.observation.like(f"MEI#{contract.id} - contrato pendente%"),
+            Movement.status == "Pendente",
+        )
+    ):
+        movement.employee_id = employment.id
+        movement.competency = start_date.strftime("%Y-%m")
+        movement.start_date = start_date
+    db.add(
+        AuditEntry(
+            company_id=contract.company_id,
+            module="Contratos MEI",
+            action="Contrato pendente editado",
+            employee_name=employment.employee.full_name,
+            result_center=result_center_to_dict(employment),
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"Antes: {previous['start_date']} a {previous['end_date']} | Depois: {start_date.isoformat()} a {end_date.isoformat()}",
+        )
+    )
+    db.commit()
+    db.refresh(contract)
+    return mei_contract_to_dict(contract)
+
+
+@router.post("/mei-contracts/{contract_id}/renew", status_code=201)
+def renew_mei_contract(
+    contract_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, Any]:
+    query = (
+        select(MeiContract)
+        .options(
+            joinedload(MeiContract.employment).joinedload(Employment.employee),
+            joinedload(MeiContract.employment).joinedload(Employment.result_center),
+            joinedload(MeiContract.employment).joinedload(Employment.employment_type),
+        )
+        .where(MeiContract.id == contract_id)
+    )
+    if company_id != 0:
+        query = query.where(MeiContract.company_id == company_id)
+    source = db.scalar(query)
+    if not source:
+        raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
+    if source.status != "Ativo":
+        raise HTTPException(status_code=409, detail="Somente contratos ativos podem ser renovados.")
+    start_date = parse_date(payload.get("start_date"))
+    end_date = parse_date(payload.get("end_date"))
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=422, detail="A vigência final não pode ser anterior à inicial."
+        )
+    duplicate = db.scalar(
+        select(MeiContract.id).where(
+            MeiContract.company_id == source.company_id,
+            MeiContract.employee_id == source.employee_id,
+            MeiContract.status == "Pendente de assinatura",
+        )
+    )
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail="Já existe uma renovação pendente de assinatura para este MEI.",
+        )
+    renewed = MeiContract(
+        company_id=source.company_id,
+        employee_id=source.employee_id,
+        status="Pendente de assinatura",
+        start_date=start_date,
+        end_date=end_date,
+        notified_not_signed=True,
+        notified_15=False,
+        notified_10=False,
+        notified_5=False,
+        movement_created_5=False,
+    )
+    db.add(renewed)
+    db.flush()
+    db.add(
+        Movement(
+            company_id=source.company_id,
+            competency=start_date.strftime("%Y-%m"),
+            employee_id=source.employee_id,
+            type="contrato não assinado",
+            start_date=start_date,
+            end_date=None,
+            days=0,
+            hour_impact=Decimal("0.00"),
+            observation=f"MEI#{renewed.id} - contrato pendente de assinatura",
+            status="Pendente",
+        )
+    )
+    db.add(
+        AuditEntry(
+            company_id=source.company_id,
+            module="Contratos MEI",
+            action="Renovação de contrato criada",
+            employee_name=source.employment.employee.full_name,
+            result_center=result_center_to_dict(source.employment),
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"Contrato anterior #{source.id} | nova vigência {start_date.isoformat()} a {end_date.isoformat()}",
+        )
+    )
+    db.commit()
+    db.refresh(renewed)
+    return mei_contract_to_dict(renewed)
+
+
+@router.delete("/mei-contracts/{contract_id}")
+def delete_mei_contract(
+    contract_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, bool]:
+    if not verify_password(str(payload.get("password") or ""), user.password_hash):
+        raise HTTPException(status_code=403, detail="Senha de confirmação inválida.")
+    query = (
+        select(MeiContract)
+        .options(
+            joinedload(MeiContract.employment).joinedload(Employment.employee),
+            joinedload(MeiContract.employment).joinedload(Employment.result_center),
+        )
+        .where(MeiContract.id == contract_id)
+    )
+    if company_id != 0:
+        query = query.where(MeiContract.company_id == company_id)
+    contract = db.scalar(query)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
+    if contract.status != "Pendente de assinatura":
+        raise HTTPException(
+            status_code=409,
+            detail="Contrato assinado não pode ser excluído; ele deve permanecer no histórico.",
+        )
+    db.add(
+        AuditEntry(
+            company_id=contract.company_id,
+            module="Contratos MEI",
+            action="Contrato pendente excluído",
+            employee_name=contract.employment.employee.full_name,
+            result_center=result_center_to_dict(contract.employment),
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"Contrato #{contract.id} | vigência {contract.start_date.isoformat()} a {contract.end_date.isoformat()}",
+        )
+    )
+    for movement in db.scalars(
+        select(Movement).where(
+            Movement.company_id == contract.company_id,
+            Movement.observation.like(f"MEI#{contract.id} - contrato pendente%"),
+        )
+    ):
+        db.delete(movement)
+    db.delete(contract)
+    db.commit()
+    return {"deleted": True}
 
 
 @router.post("/benefit-distributions", status_code=201)
@@ -1343,6 +1575,7 @@ def list_alerts(
             alerts.append(
                 {
                     "id": f"mei-pending-{contract.id}",
+                    "target_id": contract.id,
                     "company_id": contract.company_id,
                     "company_name": company_name,
                     "type": "Contrato não assinado",
@@ -1367,6 +1600,7 @@ def list_alerts(
         alerts.append(
             {
                 "id": f"mei-due-{contract.id}",
+                "target_id": contract.id,
                 "company_id": contract.company_id,
                 "company_name": company_name,
                 "type": "Contrato próximo do vencimento",
@@ -1398,6 +1632,7 @@ def list_alerts(
         alerts.append(
             {
                 "id": f"movement-pending-{movement.id}",
+                "target_id": movement.id,
                 "company_id": movement.company_id,
                 "company_name": company_name,
                 "type": "Ajuste pendente",

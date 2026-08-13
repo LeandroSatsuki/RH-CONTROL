@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld("nexoUpdater", {
   },
   restart() {
     ipcRenderer.send("updater:restart");
+  },
+  check() {
+    ipcRenderer.send("updater:check");
   }
 });
 

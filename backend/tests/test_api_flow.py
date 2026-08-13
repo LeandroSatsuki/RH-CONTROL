@@ -328,6 +328,17 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     )
     assert mei_contract.status_code == 201
     assert mei_contract.json()["status"] == "Pendente de assinatura"
+    edited_mei_contract = client.patch(
+        f"/api/demo/mei-contracts/{mei_contract.json()['id']}",
+        headers=admin,
+        json={
+            "employee_id": mei_employee.json()["id"],
+            "start_date": "2026-06-02",
+            "end_date": "2026-07-02",
+        },
+    )
+    assert edited_mei_contract.status_code == 200
+    assert edited_mei_contract.json()["start_date"] == "2026-06-02"
     mei_movements = client.get("/api/demo/movements?competency=2026-06", headers=admin)
     assert any(item["type"] == "contrato não assinado" for item in mei_movements.json())
     signed_contract = client.patch(
@@ -341,6 +352,63 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert signed_contract.status_code == 200
     assert signed_contract.json()["status"] == "Ativo"
     assert signed_contract.json()["attachment_name"] == "contrato-mei.pdf"
+    movements_after_sign = client.get(
+        "/api/demo/movements?competency=2026-06", headers=admin
+    ).json()
+    assert any(
+        item["type"] == "contrato não assinado" and item["status"] == "Aplicada"
+        for item in movements_after_sign
+    )
+    protected_signed_contract = client.patch(
+        f"/api/demo/mei-contracts/{mei_contract.json()['id']}",
+        headers=admin,
+        json={"end_date": "2026-08-01"},
+    )
+    assert protected_signed_contract.status_code == 409
+    renewed_contract = client.post(
+        f"/api/demo/mei-contracts/{mei_contract.json()['id']}/renew",
+        headers=admin,
+        json={"start_date": "2026-07-03", "end_date": "2027-07-02"},
+    )
+    assert renewed_contract.status_code == 201
+    assert renewed_contract.json()["status"] == "Pendente de assinatura"
+    deleted_renewal = client.request(
+        "DELETE",
+        f"/api/demo/mei-contracts/{renewed_contract.json()['id']}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert deleted_renewal.status_code == 200
+    assert deleted_renewal.json()["deleted"] is True
+
+    unused_center = client.post(
+        "/api/result-centers",
+        headers=admin,
+        json={"code": "TMP", "name": "Temporário", "color": "#64748B", "active": True},
+    )
+    assert unused_center.status_code == 201
+    assert client.delete(
+        f"/api/result-centers/{unused_center.json()['id']}?company_id=1",
+        headers=admin,
+    ).status_code == 204
+    assert client.delete(
+        f"/api/result-centers/{center.json()['id']}?company_id=1", headers=admin
+    ).status_code == 409
+
+    unused_type = client.post(
+        "/api/employment-types",
+        headers=admin,
+        json={"name": "TEMPORÁRIO", "has_charges": False, "active": True},
+    )
+    assert unused_type.status_code == 201
+    assert client.delete(
+        f"/api/employment-types/{unused_type.json()['id']}?company_id=1",
+        headers=admin,
+    ).status_code == 204
+    assert client.delete(
+        f"/api/employment-types/{mei_type.json()['id']}?company_id=1",
+        headers=admin,
+    ).status_code == 409
 
     benefits = client.get("/api/demo/benefits/catalog", headers=admin)
     assert benefits.status_code == 200
