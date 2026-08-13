@@ -2,13 +2,15 @@ Unicode true
 RequestExecutionLevel admin
 
 !ifndef APP_VERSION
-  !define APP_VERSION "1.0.2"
+  !define APP_VERSION "1.0.3"
 !endif
 
 !define PRODUCT_NAME "Nexo Servidor"
 !define PYTHON_URL "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
 !define POSTGRES_URL "https://get.enterprisedb.com/postgresql/postgresql-16.11-1-windows-x64.exe"
-!define NSIS_RESOURCES "C:\Users\lpsan\AppData\Local\electron-builder\Cache\nsis\nsis-resources-3.4.1-nsis-resources-3.4.1\plugins\x86-unicode"
+!ifndef NSIS_RESOURCES
+  !define NSIS_RESOURCES "C:\Users\lpsan\AppData\Local\electron-builder\Cache\nsis\nsis-resources-3.4.1-nsis-resources-3.4.1\plugins\x86-unicode"
+!endif
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"

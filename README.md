@@ -4,7 +4,7 @@ Sistema de controle de custos e pessoas com operação multiempresa, histórico 
 
 ## Versão de produção
 
-A versão `1.0.0` utiliza uma arquitetura cliente-servidor:
+A versão `1.0.3` utiliza uma arquitetura cliente-servidor:
 
 - **Servidor principal:** FastAPI, PostgreSQL, migrations, backup e API compartilhada.
 - **Estações clientes:** aplicativo Windows Electron com frontend React.
@@ -36,15 +36,16 @@ O computador principal deve permanecer ligado durante o uso e ter IP fixo ou res
 
 Os artefatos finais ficam em `entregas/`:
 
-- `Nexo-Servidor-Setup-1.0.2.exe`
-- `Nexo-Cliente-Setup-1.0.2.exe`
+- `Nexo-Servidor-Setup-1.0.3.exe` para primeira instalação;
+- `Nexo-Servidor-Atualizador-1.0.3.exe` para servidor já instalado;
+- `Nexo-Cliente-Setup-1.0.3.exe` para instalação manual do cliente.
 
 ### Computador principal
 
-1. Execute `Nexo-Servidor-Setup-1.0.2.exe` como Administrador.
+1. Execute `Nexo-Servidor-Setup-1.0.3.exe` como Administrador na primeira instalação.
 2. Informe uma senha para o PostgreSQL e uma senha inicial para o usuário `admin`.
 3. Aguarde a confirmação de que banco, migrations, seed, API, firewall e backup foram configurados.
-4. Execute também `Nexo-Cliente-Setup-1.0.2.exe` para usar o Nexo no computador principal.
+4. Execute também `Nexo-Cliente-Setup-1.0.3.exe` para usar o Nexo no computador principal.
 5. Rode o diagnóstico em PowerShell aberto como Administrador:
 
 ```powershell
@@ -55,7 +56,7 @@ O resultado deve mostrar `PostgreSQL 5432: True`, `API 8000: True` e `Saude da A
 
 ### Outros computadores
 
-1. Instale somente `Nexo-Cliente-Setup-1.0.2.exe`.
+1. Instale somente `Nexo-Cliente-Setup-1.0.3.exe`.
 2. Na primeira abertura, informe o endereço privado mostrado pelo diagnóstico, por exemplo `http://192.168.0.10:8000`.
 3. Entre com o usuário criado pelo Administrador.
 
@@ -95,11 +96,13 @@ Boas práticas:
 
 ## Atualizações
 
-O cliente Electron consulta versões publicadas em GitHub Releases. A atualização do servidor é aplicada pelo instalador novo ou pelo pacote correspondente.
+O cliente Electron consulta versões publicadas em GitHub Releases, baixa a nova versão em segundo plano e oferece a reinicialização. Se o usuário escolher “Depois”, a versão baixada será aplicada quando o Nexo for fechado.
+
+Em um servidor já instalado, execute `Nexo-Servidor-Atualizador-1.0.3.exe` como Administrador. Esse entregável não faz instalação inicial: ele exige `C:\Nexo\.env`, cria e valida o backup, atualiza os arquivos, aplica migrations e só conclui depois que a API responder pela tarefa automática. Use `Nexo-Servidor-Setup-1.0.3.exe` apenas para uma máquina sem servidor ou para reparo assistido.
 
 Antes de qualquer migration, `server-update.ps1` cria e valida um backup integral. Se isso falhar, a atualização é interrompida antes de modificar o banco.
 
-Nunca desinstale PostgreSQL nem apague `C:\Nexo` para atualizar. Instale a nova versão por cima da existente.
+Nunca desinstale PostgreSQL nem apague `C:\Nexo` para atualizar.
 
 ## Diagnóstico
 
@@ -154,15 +157,16 @@ cd frontend
 npm.cmd run desktop:build
 
 cd ..
-.\scripts\build-server-package.ps1 -Version 1.0.2
-.\scripts\build-separated-installers.ps1 -Version 1.0.2
+.\scripts\build-server-package.ps1 -Version 1.0.3
+.\scripts\build-separated-installers.ps1 -Version 1.0.3
 ```
 
 Antes da entrega, valide hashes e tamanhos:
 
 ```powershell
-Get-FileHash .\entregas\Nexo-Servidor-Setup-1.0.2.exe -Algorithm SHA256
-Get-FileHash .\entregas\Nexo-Cliente-Setup-1.0.2.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Servidor-Setup-1.0.3.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Servidor-Atualizador-1.0.3.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Cliente-Setup-1.0.3.exe -Algorithm SHA256
 ```
 
 ## Estrutura

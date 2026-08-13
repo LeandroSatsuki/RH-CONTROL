@@ -48,7 +48,9 @@ function setupAutoUpdates(win) {
   }
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowDowngrade = false;
   autoUpdater.logger = console;
 
   autoUpdater.on("checking-for-update", () => {
