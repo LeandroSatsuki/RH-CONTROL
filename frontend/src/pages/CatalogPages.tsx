@@ -51,7 +51,7 @@ export function CentersPage({ token, user, embedded = false }: { token: string; 
   }
 
   return <Catalog embedded={embedded} title="Centros de Resultado" subtitle="Áreas usadas para segmentar pessoas e custos." error={error} form={user.role === "ADMIN" && selectedCompany.id !== 0 &&
-    <form className="inline-form" onSubmit={submit}><input value={draft.code} onChange={event => setDraft(current => ({ ...current, code: event.target.value.toUpperCase() }))} placeholder="Código" required /><input value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value.toUpperCase() }))} placeholder="Nome" required /><input value={draft.color} onChange={event => setDraft(current => ({ ...current, color: event.target.value }))} type="color" /><button className="primary">{editingId ? "Salvar" : "Adicionar"}</button>{editingId && <button type="button" className="secondary" onClick={() => { setEditingId(null); setDraft({ code: "", name: "", color: "#2563eb" }); }}>Cancelar</button>}</form>}>
+    <form className="catalog-toolbar centers-toolbar" onSubmit={submit}><label className="catalog-code">Código<input value={draft.code} onChange={event => setDraft(current => ({ ...current, code: event.target.value.toUpperCase() }))} placeholder="Ex.: ADM" required /></label><label className="catalog-name">Nome do centro<input value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value.toUpperCase() }))} placeholder="Ex.: Administrativo" required /></label><label className="catalog-color">Cor<input value={draft.color} onChange={event => setDraft(current => ({ ...current, color: event.target.value }))} type="color" aria-label="Cor do centro" /></label><button className="primary compact-button">{editingId ? "Salvar" : "+ Adicionar"}</button>{editingId && <button type="button" className="secondary compact-button" onClick={() => { setEditingId(null); setDraft({ code: "", name: "", color: "#2563eb" }); }}>Cancelar</button>}</form>}>
     {loading && <div className="inline-loading">Carregando...</div>}
     <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>.</p>
     {selectedCompany.id === 0 && <p className="note">Selecione uma empresa específica para cadastrar um Centro de Resultado.</p>}
@@ -106,7 +106,7 @@ export function TypesPage({ token, user, embedded = false }: { token: string; us
   }
 
   return <Catalog embedded={embedded} title="Modalidades de contratação" subtitle="Defina quais vínculos possuem encargos." error={error} form={user.role === "ADMIN" && selectedCompany.id !== 0 &&
-    <form className="inline-form" onSubmit={submit}><input value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value.toUpperCase() }))} placeholder="Nome da modalidade" required /><label className="check"><input checked={draft.hasCharges} onChange={event => setDraft(current => ({ ...current, hasCharges: event.target.checked }))} type="checkbox" /> Possui encargos</label><button className="primary">{editingId ? "Salvar" : "Adicionar"}</button>{editingId && <button type="button" className="secondary" onClick={() => { setEditingId(null); setDraft({ name: "", hasCharges: false }); }}>Cancelar</button>}</form>}>
+    <form className="catalog-toolbar types-toolbar" onSubmit={submit}><label className="catalog-name">Nome da modalidade<input value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value.toUpperCase() }))} placeholder="Ex.: CLT" required /></label><label className="check catalog-check"><input checked={draft.hasCharges} onChange={event => setDraft(current => ({ ...current, hasCharges: event.target.checked }))} type="checkbox" /> Possui encargos</label><button className="primary compact-button">{editingId ? "Salvar" : "+ Adicionar"}</button>{editingId && <button type="button" className="secondary compact-button" onClick={() => { setEditingId(null); setDraft({ name: "", hasCharges: false }); }}>Cancelar</button>}</form>}>
     {loading && <div className="inline-loading">Carregando...</div>}
     <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>.</p>
     {selectedCompany.id === 0 && <p className="note">Selecione uma empresa específica para cadastrar uma modalidade.</p>}
@@ -115,7 +115,7 @@ export function TypesPage({ token, user, embedded = false }: { token: string; us
 }
 
 function Catalog({ title, subtitle, error, form, children, embedded = false }: { title: string; subtitle: string; error: string; form: React.ReactNode; children: React.ReactNode; embedded?: boolean }) {
-  return <>{!embedded && <div className="page-title"><div><span className="eyebrow">Cadastros</span><h1>{title}</h1><p>{subtitle}</p></div></div>}<ErrorMessage message={error} />{form && <div className="panel">{form}</div>}<div className="panel list">{children}</div></>;
+  return <>{!embedded && <div className="page-title compact-title"><div><span className="eyebrow">Cadastros</span><h1>{title}</h1><p>{subtitle}</p></div></div>}<ErrorMessage message={error} />{form && <div className="panel catalog-form-panel">{form}</div>}<div className="panel list catalog-list">{children}</div></>;
 }
 
 function isAllowedCatalogText(value: string) {
