@@ -4,7 +4,7 @@ Este pacote deve ser instalado em apenas um computador Windows da empresa. Esse 
 
 ## Instalacao recomendada
 
-Use `Nexo-Servidor-Setup-1.0.1.exe` como Administrador. O instalador baixa e configura automaticamente Python e PostgreSQL quando estiverem ausentes.
+Use `Nexo-Servidor-Setup-1.0.2.exe` como Administrador. O instalador baixa e configura automaticamente Python e PostgreSQL quando estiverem ausentes.
 
 As instrucoes manuais abaixo sao mantidas como alternativa tecnica.
 

@@ -36,15 +36,15 @@ O computador principal deve permanecer ligado durante o uso e ter IP fixo ou res
 
 Os artefatos finais ficam em `entregas/`:
 
-- `Nexo-Servidor-Setup-1.0.1.exe`
-- `Nexo-Cliente-Setup-1.0.0.exe`
+- `Nexo-Servidor-Setup-1.0.2.exe`
+- `Nexo-Cliente-Setup-1.0.2.exe`
 
 ### Computador principal
 
-1. Execute `Nexo-Servidor-Setup-1.0.1.exe` como Administrador.
+1. Execute `Nexo-Servidor-Setup-1.0.2.exe` como Administrador.
 2. Informe uma senha para o PostgreSQL e uma senha inicial para o usuário `admin`.
 3. Aguarde a confirmação de que banco, migrations, seed, API, firewall e backup foram configurados.
-4. Execute também `Nexo-Cliente-Setup-1.0.0.exe` para usar o Nexo no computador principal.
+4. Execute também `Nexo-Cliente-Setup-1.0.2.exe` para usar o Nexo no computador principal.
 5. Rode o diagnóstico em PowerShell aberto como Administrador:
 
 ```powershell
@@ -55,7 +55,7 @@ O resultado deve mostrar `PostgreSQL 5432: True`, `API 8000: True` e `Saude da A
 
 ### Outros computadores
 
-1. Instale somente `Nexo-Cliente-Setup-1.0.0.exe`.
+1. Instale somente `Nexo-Cliente-Setup-1.0.2.exe`.
 2. Na primeira abertura, informe o endereço privado mostrado pelo diagnóstico, por exemplo `http://192.168.0.10:8000`.
 3. Entre com o usuário criado pelo Administrador.
 
@@ -154,15 +154,15 @@ cd frontend
 npm.cmd run desktop:build
 
 cd ..
-.\scripts\build-server-package.ps1 -Version 1.0.0
-.\scripts\build-separated-installers.ps1 -Version 1.0.0
+.\scripts\build-server-package.ps1 -Version 1.0.2
+.\scripts\build-separated-installers.ps1 -Version 1.0.2
 ```
 
 Antes da entrega, valide hashes e tamanhos:
 
 ```powershell
-Get-FileHash .\entregas\Nexo-Servidor-Setup-1.0.0.exe -Algorithm SHA256
-Get-FileHash .\entregas\Nexo-Cliente-Setup-1.0.0.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Servidor-Setup-1.0.2.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Cliente-Setup-1.0.2.exe -Algorithm SHA256
 ```
 
 ## Estrutura

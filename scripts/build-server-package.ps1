@@ -1,4 +1,4 @@
-param([string]$Version = "1.0.1")
+param([string]$Version = "1.0.2")
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -17,6 +17,15 @@ foreach ($name in "server-install.ps1", "server-api.ps1", "server-status.ps1", "
     Copy-Item (Join-Path $PSScriptRoot $name) (Join-Path $Stage "scripts") -Force
 }
 Copy-Item (Join-Path $Root "deploy\SERVIDOR.md") (Join-Path $Stage "LEIA-ME.md") -Force
+
+$Commit = (& git -C $Root rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $Commit) { throw "Nao foi possivel identificar o commit da versao." }
+@"
+Nexo Servidor
+Versao: $Version
+Commit: $Commit
+Gerado em: $([DateTime]::Now.ToString("yyyy-MM-dd HH:mm:ss zzz"))
+"@ | Set-Content -LiteralPath (Join-Path $Stage "RELEASE-METADATA.txt") -Encoding UTF8
 
 if (Test-Path $Output) { Remove-Item -LiteralPath $Output -Force }
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Output -CompressionLevel Optimal
