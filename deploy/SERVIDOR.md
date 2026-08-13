@@ -41,6 +41,16 @@ Quando o instalador detectar uma instalação anterior em `C:\Nexo`, ele aplica 
 
 ## Diagnostico
 
+Para verificar o servidor sem digitar comandos, clique duas vezes em:
+
+```text
+C:\Nexo\scripts\server-status.bat
+```
+
+O Windows solicitará permissão de Administrador e manterá o resultado aberto na tela. Essa verificação é necessária somente antes/depois de uma atualização ou quando algum cliente não conseguir conectar.
+
+Alternativa técnica pelo PowerShell:
+
 ```powershell
 C:\Nexo\scripts\server-status.ps1
 ```

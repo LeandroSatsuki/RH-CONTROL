@@ -46,10 +46,10 @@ Os artefatos finais ficam em `entregas/`:
 2. Informe uma senha para o PostgreSQL e uma senha inicial para o usuário `admin`.
 3. Aguarde a confirmação de que banco, migrations, seed, API, firewall e backup foram configurados.
 4. Execute também `Nexo-Cliente-Setup-1.0.3.exe` para usar o Nexo no computador principal.
-5. Rode o diagnóstico em PowerShell aberto como Administrador:
+5. Clique duas vezes no atalho de diagnóstico; ele solicitará permissão de Administrador:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File C:\Nexo\scripts\server-status.ps1
+```text
+C:\Nexo\scripts\server-status.bat
 ```
 
 O resultado deve mostrar `PostgreSQL 5432: True`, `API 8000: True` e `Saude da API: ok`.
@@ -106,9 +106,11 @@ Nunca desinstale PostgreSQL nem apague `C:\Nexo` para atualizar.
 
 ## Diagnóstico
 
-```powershell
-powershell -ExecutionPolicy Bypass -File C:\Nexo\scripts\server-status.ps1
+```text
+C:\Nexo\scripts\server-status.bat
 ```
+
+O atalho mantém a janela aberta para leitura. Use-o antes/depois de atualizar ou quando algum cliente não conseguir conectar; não é necessário executá-lo diariamente.
 
 O diagnóstico informa:
 

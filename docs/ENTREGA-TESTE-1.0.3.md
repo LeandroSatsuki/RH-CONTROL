@@ -7,14 +7,15 @@ Build produzido a partir do commit `a8a9e26d4347b6d9c8cfa54e93cbf5fa9294475e`.
 - `Nexo-Servidor-Atualizador-1.0.3.exe`: usar como Administrador no computador que já possui o servidor em `C:\Nexo`.
 - `Nexo-Cliente-Setup-1.0.3.exe`: instalar nos computadores que executam o aplicativo cliente.
 - `Nexo-Servidor-Setup-1.0.3.exe`: reservar para uma primeira instalação ou reparo assistido. Não usar no teste normal de atualização.
+- `VERIFICAR-SERVIDOR.bat`: atalho de duplo clique para verificar o servidor antes e depois da atualização.
 
 ## Ordem segura no cliente
 
-1. No servidor, abra PowerShell como Administrador e execute `C:\Nexo\scripts\server-status.ps1`.
+1. No servidor, clique duas vezes em `VERIFICAR-SERVIDOR.bat` e aceite a solicitação de Administrador.
 2. Confirme `PostgreSQL 5432: True`, `API 8000: True` e `Saude da API: ok`.
 3. Execute `Nexo-Servidor-Atualizador-1.0.3.exe` como Administrador.
 4. Aguarde a mensagem de conclusão. O atualizador faz e valida um backup antes de alterar arquivos ou migrations.
-5. Execute novamente `server-status.ps1` e confirme a saúde da API.
+5. Execute novamente `VERIFICAR-SERVIDOR.bat` e confirme a saúde da API.
 6. Abra o cliente que já estava instalado e confirme que ele continua acessando a base existente.
 7. Instale `Nexo-Cliente-Setup-1.0.3.exe` por cima do cliente atual e abra o Nexo.
 8. Realize o checklist funcional abaixo.
@@ -34,7 +35,7 @@ Build produzido a partir do commit `a8a9e26d4347b6d9c8cfa54e93cbf5fa9294475e`.
 
 ## Em caso de falha
 
-Não desinstale PostgreSQL, não apague `C:\Nexo` e não execute restauração por conta própria. Preserve `C:\Nexo\logs\install.log`, `api.log` e `api-error.log`, anote a mensagem exibida e mantenha o backup criado pelo atualizador.
+Não desinstale PostgreSQL, não apague `C:\Nexo` e não execute restauração por conta própria. Preserve `C:\Nexo\logs\install.log`, `api.log` e `api-error.log`, anote a mensagem exibida e mantenha o backup criado pelo atualizador. O diagnóstico não precisa ser executado diariamente: use antes/depois de atualizações ou quando houver falha de conexão.
 
 ## Auto-update do cliente
 

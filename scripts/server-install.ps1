@@ -255,6 +255,7 @@ Stop-NexoApiProcess
 if ($LASTEXITCODE -gt 7) { throw "Falha ao copiar o backend para $TargetBackend" }
 Copy-Item (Join-Path $PSScriptRoot "server-api.ps1") $TargetScripts -Force
 Copy-Item (Join-Path $PSScriptRoot "server-status.ps1") $TargetScripts -Force
+Copy-Item (Join-Path $PSScriptRoot "server-status.bat") $TargetScripts -Force
 Copy-Item (Join-Path $PSScriptRoot "server-update.ps1") $TargetScripts -Force
 Copy-Item (Join-Path $PSScriptRoot "repair-server-api.ps1") $TargetScripts -Force
 Copy-Item (Join-Path $PSScriptRoot "reset-admin-password.ps1") $TargetScripts -Force

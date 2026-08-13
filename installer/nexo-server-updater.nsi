@@ -30,7 +30,7 @@ Icon "..\frontend\build\icon.ico"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TITLE "Servidor Nexo atualizado"
-!define MUI_FINISHPAGE_TEXT "A atualização foi concluída e a API respondeu pela tarefa automática.$\r$\n$\r$\nPara conferir, execute C:\Nexo\scripts\server-status.ps1 como Administrador."
+!define MUI_FINISHPAGE_TEXT "A atualização foi concluída e a API respondeu pela tarefa automática.$\r$\n$\r$\nPara conferir, clique duas vezes em C:\Nexo\scripts\server-status.bat."
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_LANGUAGE "PortugueseBR"
 

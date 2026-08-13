@@ -43,7 +43,7 @@ Var IsUpgrade
 Page custom ServerPageCreate ServerPageLeave
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TITLE "Nexo Servidor pronto"
-!define MUI_FINISHPAGE_TEXT "A instalação do servidor foi concluída. Rode C:\Nexo\scripts\server-status.ps1 como Administrador para ver os endereços que os clientes devem usar."
+!define MUI_FINISHPAGE_TEXT "A instalação do servidor foi concluída. Clique duas vezes em C:\Nexo\scripts\server-status.bat para ver os endereços que os clientes devem usar."
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_LANGUAGE "PortugueseBR"
