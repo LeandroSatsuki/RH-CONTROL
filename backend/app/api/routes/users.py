@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.dependencies import AdminUser, DbSession
 from app.core.security import hash_password
 from app.models.user import User
-from app.schemas.auth import UserCreate, UserRead
+from app.schemas.auth import UserCreate, UserRead, UserUpdate
 
 router = APIRouter()
 
@@ -32,3 +32,20 @@ def create_user(payload: UserCreate, db: DbSession, _: AdminUser) -> User:
     db.refresh(user)
     return user
 
+
+@router.patch("/{user_id}", response_model=UserRead)
+def update_user(user_id: int, payload: UserUpdate, db: DbSession, current_user: AdminUser) -> User:
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    data = payload.model_dump(exclude_unset=True)
+    password = data.pop("password", None)
+    if user.id == current_user.id and data.get("active") is False:
+        raise HTTPException(status_code=409, detail="Você não pode inativar o próprio usuário")
+    for field, value in data.items():
+        setattr(user, field, value)
+    if password:
+        user.password_hash = hash_password(password)
+    db.commit()
+    db.refresh(user)
+    return user

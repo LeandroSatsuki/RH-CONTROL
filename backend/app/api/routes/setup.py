@@ -10,6 +10,7 @@ from app.models.enums import CompanyKind, UserRole
 from app.models.system_setting import SystemSetting
 from app.models.user import User
 from app.schemas.setup import InitialSetup, SetupStatus
+from app.api.routes.demo import DEFAULT_JOB_TITLES, DEFAULT_PAYROLL_RATES
 
 router = APIRouter()
 
@@ -40,6 +41,7 @@ def initial_setup(payload: InitialSetup, db: DbSession) -> dict[str, str]:
         group_name=payload.company_name.strip(),
         kind=CompanyKind.MATRIZ,
         active=True,
+        is_primary=True,
     )
     db.add(company)
     db.flush()
@@ -47,11 +49,14 @@ def initial_setup(payload: InitialSetup, db: DbSession) -> dict[str, str]:
         id=1,
         company_id=company.id,
         company_name=payload.company_name,
+        company_logo=payload.company_logo,
         backup_directory=payload.backup_directory,
         auto_backup_on_start=payload.auto_backup_on_start,
         include_saturdays=payload.include_saturdays,
         include_sundays=payload.include_sundays,
         default_daily_hours=payload.default_daily_hours,
+        payroll_rates=DEFAULT_PAYROLL_RATES,
+        job_titles=DEFAULT_JOB_TITLES,
     )
     db.add(settings)
     admin = db.scalar(select(User).where(User.username == payload.admin_username.strip()))

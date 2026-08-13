@@ -26,6 +26,30 @@ def is_valid_cpf(value: str) -> bool:
     return True
 
 
+def is_valid_cnpj(value: str) -> bool:
+    cnpj = normalize_cpf(value)
+    if len(cnpj) != 14 or cnpj == cnpj[0] * 14:
+        return False
+    for size, weights in (
+        (12, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]),
+        (13, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]),
+    ):
+        total = sum(int(cnpj[index]) * weights[index] for index in range(size))
+        digit = 0 if total % 11 < 2 else 11 - total % 11
+        if digit != int(cnpj[size]):
+            return False
+    return True
+
+
+def is_valid_cpf_cnpj(value: str) -> bool:
+    normalized = normalize_cpf(value)
+    if len(normalized) == 11:
+        return is_valid_cpf(normalized)
+    if len(normalized) == 14:
+        return is_valid_cnpj(normalized)
+    return False
+
+
 class EmployeeCreate(BaseModel):
     company_id: int = 1
     cpf: str
@@ -40,11 +64,23 @@ class EmployeeCreate(BaseModel):
     status: EmploymentStatus = EmploymentStatus.ACTIVE
     daily_hours: Decimal = Field(default=Decimal("8.80"), gt=0, le=24)
     salary_base: Decimal = Field(gt=0)
+    cost_aid: Decimal = Field(default=Decimal("0.00"), ge=0)
     notes: str = ""
-    bank_name: str = Field(min_length=2, max_length=120)
-    bank_agency: str = Field(min_length=2, max_length=20)
-    bank_account: str = Field(min_length=2, max_length=30)
-    bank_account_digit: str = Field(min_length=1, max_length=5)
+    email: str = Field(default="", max_length=180)
+    phone: str = Field(default="", max_length=20)
+    supervisor_name: str = ""
+    cep: str = ""
+    street: str = ""
+    address_number: str = ""
+    address_complement: str = ""
+    neighborhood: str = ""
+    city: str = ""
+    state: str = ""
+    bank_code: str = ""
+    bank_name: str = Field(default="", max_length=120)
+    bank_agency: str = Field(default="", max_length=20)
+    bank_account: str = Field(default="", max_length=30)
+    bank_account_digit: str = Field(default="", max_length=5)
     pix_key_type: PixKeyType
     pix_key: str = Field(min_length=3, max_length=120)
     benefits: list[str] = Field(default_factory=list)
@@ -53,8 +89,8 @@ class EmployeeCreate(BaseModel):
     @classmethod
     def validate_cpf(cls, value: str) -> str:
         normalized = normalize_cpf(value)
-        if not is_valid_cpf(normalized):
-            raise ValueError("CPF inválido")
+        if not is_valid_cpf_cnpj(normalized):
+            raise ValueError("CPF/CNPJ inválido")
         return normalized
 
     @field_validator("employee_code")
@@ -89,6 +125,40 @@ class SalaryHistoryCreate(BaseModel):
     reason: str = Field(min_length=3, max_length=180)
 
 
+class EmployeeUpdate(BaseModel):
+    company_id: int | None = None
+    full_name: str | None = Field(default=None, min_length=3, max_length=180)
+    employment_type_id: int | None = None
+    result_center_id: int | None = None
+    job_title: str | None = Field(default=None, min_length=2, max_length=120)
+    admission_date: date | None = None
+    termination_date: date | None = None
+    status: EmploymentStatus | None = None
+    daily_hours: Decimal | None = Field(default=None, gt=0, le=24)
+    salary_base: Decimal | None = Field(default=None, ge=0)
+    cost_aid: Decimal | None = Field(default=None, ge=0)
+    salary_mode: str | None = None
+    notes: str | None = None
+    email: str | None = Field(default=None, max_length=180)
+    phone: str | None = Field(default=None, max_length=20)
+    supervisor_name: str | None = None
+    cep: str | None = None
+    street: str | None = None
+    address_number: str | None = None
+    address_complement: str | None = None
+    neighborhood: str | None = None
+    city: str | None = None
+    state: str | None = None
+    bank_code: str | None = None
+    bank_name: str | None = None
+    bank_agency: str | None = None
+    bank_account: str | None = None
+    bank_account_digit: str | None = None
+    pix_key_type: PixKeyType | None = None
+    pix_key: str | None = None
+    benefits: list[str] | None = None
+
+
 class EmploymentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -102,7 +172,19 @@ class EmploymentRead(BaseModel):
     status: EmploymentStatus
     daily_hours: Decimal
     salary_base: Decimal
+    cost_aid: Decimal
     notes: str
+    email: str
+    phone: str
+    supervisor_name: str
+    cep: str
+    street: str
+    address_number: str
+    address_complement: str
+    neighborhood: str
+    city: str
+    state: str
+    bank_code: str
     bank_name: str
     bank_agency: str
     bank_account: str

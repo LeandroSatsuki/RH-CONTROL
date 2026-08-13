@@ -47,7 +47,7 @@ export function DashboardPage({ token }: { token: string }) {
         </div>
         <div className="filters">
           <select value={competency} onChange={event => setCompetency(event.target.value)}>
-            {["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"].map(item => <option key={item} value={item}>{labelCompetency(item)}</option>)}
+            {Array.from({ length: 12 }, (_, index) => `2026-${String(index + 1).padStart(2, "0")}`).map(item => <option key={item} value={item}>{labelCompetency(item)}</option>)}
           </select>
         </div>
       </div>
@@ -71,7 +71,7 @@ export function DashboardPage({ token }: { token: string }) {
         {data?.cards.map(card => <CenterCard key={card.id} card={card} />)}
       </div>
       {!data?.cards.length && !error && !loading && <Empty>Nenhum Centro de Resultado ativo.</Empty>}
-      <p className="note">{IS_DEMO_MODE ? "No modo demo, os indicadores e valores exibidos são fictícios e servem apenas para apresentação. Os lembretes ficam na aba Alertas." : "Absenteísmo e valores permanecem zerados até os módulos de movimentações e custos serem implementados."}</p>
+      <p className="note">{IS_DEMO_MODE ? "No modo demo, os indicadores e valores exibidos são fictícios e servem apenas para apresentação. Os lembretes ficam na aba Alertas." : "Os valores são consolidados a partir dos cadastros, movimentações e lançamentos da empresa selecionada."}</p>
     </>
   );
 }

@@ -15,7 +15,7 @@ class Employee(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
-    cpf: Mapped[str] = mapped_column(String(11), unique=True, index=True)
+    cpf: Mapped[str] = mapped_column(String(14), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(180), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -25,11 +25,12 @@ class Employee(Base):
 
 class Employment(Base):
     __tablename__ = "employments"
+    __table_args__ = (UniqueConstraint("company_id", "employee_code"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
     employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
-    employee_code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    employee_code: Mapped[str] = mapped_column(String(40), index=True)
     employment_type_id: Mapped[int] = mapped_column(ForeignKey("employment_types.id"))
     result_center_id: Mapped[int] = mapped_column(ForeignKey("result_centers.id"))
     job_title: Mapped[str] = mapped_column(String(120))
@@ -41,7 +42,19 @@ class Employment(Base):
     )
     daily_hours: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("8.80"), nullable=False)
     salary_base: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
+    cost_aid: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
     notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    email: Mapped[str] = mapped_column(String(180), default="", nullable=False)
+    phone: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    supervisor_name: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    cep: Mapped[str] = mapped_column(String(8), default="", nullable=False)
+    street: Mapped[str] = mapped_column(String(180), default="", nullable=False)
+    address_number: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    address_complement: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    neighborhood: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    city: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    state: Mapped[str] = mapped_column(String(2), default="", nullable=False)
+    bank_code: Mapped[str] = mapped_column(String(3), default="", nullable=False)
     bank_name: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     bank_agency: Mapped[str] = mapped_column(String(20), default="", nullable=False)
     bank_account: Mapped[str] = mapped_column(String(30), default="", nullable=False)

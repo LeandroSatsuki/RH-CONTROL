@@ -1,18 +1,29 @@
 {
-  "name": "indicadores-folha-frontend",
+  "name": "nexo-frontend",
+  "description": "Nexo - controle de custos e pessoas",
+  "author": "Leandro Mathias",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.4",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "demo": "cross-env VITE_DEMO_MODE=true vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
+    "test": "vitest run",
     "build:demo": "cross-env VITE_DEMO_MODE=true npm run build",
-    "desktop:dev": "concurrently -k \"cross-env VITE_DEMO_MODE=true vite --host 127.0.0.1 --port 5173\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_START_URL=http://127.0.0.1:5173 node electron/dev-launch.cjs\"",
-    "desktop:build": "cross-env VITE_DEMO_MODE=true npm run build && electron-builder --win portable"
+    "desktop:dev": "concurrently -k \"vite --host 127.0.0.1 --port 5173\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_START_URL=http://127.0.0.1:5173 node electron/dev-launch.cjs\"",
+    "desktop:dev:demo": "concurrently -k \"cross-env VITE_DEMO_MODE=true vite --host 127.0.0.1 --port 5173\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_START_URL=http://127.0.0.1:5173 node electron/dev-launch.cjs\"",
+    "desktop:build": "npm run build && electron-builder --win nsis",
+    "desktop:build:demo": "cross-env VITE_DEMO_MODE=true npm run build && electron-builder --win nsis",
+    "desktop:portable": "npm run build && electron-builder --win portable",
+    "desktop:portable:demo": "cross-env VITE_DEMO_MODE=true npm run build && electron-builder --win portable",
+    "desktop:publish": "npm run build && electron-builder --win nsis --publish always"
   },
   "dependencies": {
+    "electron-updater": "^6.6.2",
+    "exceljs": "^4.4.0",
+    "jspdf": "^4.2.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
@@ -20,17 +31,20 @@
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.5.1",
-    "concurrently": "^10.0.3",
+    "concurrently": "^9.2.4",
     "cross-env": "^10.1.0",
-    "electron": "^31.7.7",
+    "electron": "^42.4.1",
     "electron-builder": "^26.8.1",
+    "jsdom": "^26.1.0",
     "typescript": "~5.8.3",
     "vite": "^6.3.5",
+    "vitest": "^3.2.6",
     "wait-on": "^9.0.10"
   },
   "build": {
-    "appId": "br.com.indicadoresfolha.demo",
-    "productName": "Sistema Indicadores de Folha - Demo",
+    "appId": "br.com.nexo.nexo",
+    "productName": "Nexo",
+    "artifactName": "Nexo-${version}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -39,17 +53,29 @@
       "electron/**/*",
       "package.json"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "LeandroSatsuki",
+        "repo": "RH-CONTROL"
+      }
+    ],
     "win": {
+      "icon": "build/icon.ico",
       "signAndEditExecutable": false,
       "target": [
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "Sistema-Indicadores-de-Folha-Demo-${version}-Portable.${ext}"
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true
     }
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }
