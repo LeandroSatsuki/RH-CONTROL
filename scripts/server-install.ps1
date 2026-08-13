@@ -328,16 +328,30 @@ Start-ScheduledTask -TaskName $TaskName
 Write-Step "Aguardando API..."
 $ready = Wait-ApiReady 30
 if (-not $ready) {
-    Write-Step "Agendador nao respondeu a tempo. Iniciando API diretamente..."
+    Write-Step "Agendador nao respondeu a tempo. Validando a API diretamente antes de reparar a tarefa..."
     Stop-NexoApiProcess
     $fallbackLog = Join-Path $InstallLogs "api-fallback.log"
     $fallbackErr = Join-Path $InstallLogs "api-fallback-error.log"
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$apiScript`"" -WindowStyle Hidden -RedirectStandardOutput $fallbackLog -RedirectStandardError $fallbackErr
     $ready = Wait-ApiReady 30
+    if (-not $ready) {
+        throw "A API nao iniciou nem no modo de diagnostico. $(Get-PortDiagnostic) Verifique C:\Nexo\logs\api.log e C:\Nexo\logs\api-error.log."
+    }
+
+    Write-Step "API validada. Transferindo a execucao para a tarefa automatica..."
+    $listeners = @(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue)
+    foreach ($listener in $listeners) {
+        if ([int]$listener.OwningProcess -gt 0) {
+            Stop-Process -Id ([int]$listener.OwningProcess) -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Seconds 2
     Register-NexoApiTask $apiScript
+    Start-ScheduledTask -TaskName $TaskName
+    $ready = Wait-ApiReady 30
 }
 if (-not $ready) {
-    throw "A API nao iniciou. $(Get-PortDiagnostic) Verifique C:\Nexo\logs\api.log, C:\Nexo\logs\api-error.log e rode C:\Nexo\scripts\server-status.ps1."
+    throw "A API funciona diretamente, mas a tarefa automatica nao assumiu a execucao. $(Get-PortDiagnostic) Rode C:\Nexo\scripts\repair-server-api.ps1 como Administrador."
 }
 
 Write-Host ""

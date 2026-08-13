@@ -235,19 +235,32 @@ function loadState(): DemoState {
 }
 
 function normalizeCompanyCatalogs(state: DemoState) {
-  const sharedCenters = state.resultCenters.filter(item => !item.company_id);
-  const sharedTypes = state.employmentTypes.filter(item => !item.company_id);
+  const primaryCompanyId = state.companies.find(item => item.is_primary)?.id ?? state.companies[0]?.id ?? 1;
+  const centerTemplates = new Map<string, ResultCenter>();
+  const typeTemplates = new Map<string, EmploymentType>();
+  state.resultCenters.forEach(item => {
+    const key = item.code.trim().toUpperCase();
+    if (!centerTemplates.has(key) || item.company_id === primaryCompanyId) centerTemplates.set(key, item);
+  });
+  state.employmentTypes.forEach(item => {
+    const key = normalizeText(item.name);
+    if (!typeTemplates.has(key) || item.company_id === primaryCompanyId) typeTemplates.set(key, item);
+  });
   let centerId = Math.max(0, ...state.resultCenters.map(item => item.id));
   let typeId = Math.max(0, ...state.employmentTypes.map(item => item.id));
 
   for (const company of state.companies) {
-    for (const template of sharedCenters) {
-      if (!state.resultCenters.some(item => item.company_id === company.id && item.code === template.code)) {
+    for (const template of centerTemplates.values()) {
+      const existing = state.resultCenters.find(item => item.company_id === company.id && item.code.trim().toUpperCase() === template.code.trim().toUpperCase());
+      if (existing) Object.assign(existing, { code: template.code, name: template.name, color: template.color, active: template.active });
+      else {
         state.resultCenters.push({ ...template, id: ++centerId, company_id: company.id });
       }
     }
-    for (const template of sharedTypes) {
-      if (!state.employmentTypes.some(item => item.company_id === company.id && normalizeText(item.name) === normalizeText(template.name))) {
+    for (const template of typeTemplates.values()) {
+      const existing = state.employmentTypes.find(item => item.company_id === company.id && normalizeText(item.name) === normalizeText(template.name));
+      if (existing) Object.assign(existing, { name: template.name, has_charges: template.has_charges, active: template.active });
+      else {
         state.employmentTypes.push({ ...template, id: ++typeId, company_id: company.id });
       }
     }
@@ -265,6 +278,8 @@ function normalizeCompanyCatalogs(state: DemoState) {
   state.allocations.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
   state.meiContracts.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
   state.benefitDistributions.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
+  const globalJobTitles = [...new Set(state.companies.flatMap(item => item.settings.job_titles ?? []).map(item => item.trim().toUpperCase()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  state.companies.forEach(item => { item.settings.job_titles = globalJobTitles; });
 }
 
 function saveState(state: DemoState) {
@@ -1154,47 +1169,42 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
 
   if (route === "/result-centers" && method === "POST") {
     assertAdmin(token);
-    if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para cadastrar o Centro de Resultado.");
     const payload = body<Partial<ResultCenter>>(options);
     const code = String(payload.code ?? "").trim().toUpperCase();
     const name = String(payload.name ?? "").trim().toUpperCase();
     if (!code || !name) throw new Error("Informe código e nome do Centro de Resultado.");
-    if (scopeResultCenters(state, companyId).some(item => item.code.toUpperCase() === code)) throw new Error("Código de Centro de Resultado já cadastrado para esta empresa.");
-    const item = { id: nextId(state.resultCenters), company_id: companyId, code, name, color: payload.color ?? "#2563eb", active: true };
-    state.resultCenters = [...state.resultCenters, item];
+    if (state.resultCenters.some(item => item.code.toUpperCase() === code)) throw new Error("Código de Centro de Resultado já cadastrado no catálogo global.");
+    let id = nextId(state.resultCenters);
+    const created = state.companies.map(company => ({ id: id++, company_id: company.id, code, name, color: payload.color ?? "#2563eb", active: true }));
+    state.resultCenters = [...state.resultCenters, ...created];
     saveState(state);
-    return item as T;
+    return (created.find(item => item.company_id === companyId) ?? created[0]) as T;
   }
 
   if (route === "/employment-types" && method === "POST") {
     assertAdmin(token);
-    if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para cadastrar a modalidade.");
     const payload = body<Partial<EmploymentType>>(options);
     const name = String(payload.name ?? "").trim().toUpperCase();
     if (!name) throw new Error("Informe o nome da modalidade.");
-    if (scopeEmploymentTypes(state, companyId).some(item => normalizeText(item.name) === normalizeText(name))) throw new Error("Modalidade já cadastrada para esta empresa.");
-    const item = { id: nextId(state.employmentTypes), company_id: companyId, name, has_charges: Boolean(payload.has_charges), active: true };
-    state.employmentTypes = [...state.employmentTypes, item];
+    if (state.employmentTypes.some(item => normalizeText(item.name) === normalizeText(name))) throw new Error("Modalidade já cadastrada no catálogo global.");
+    let id = nextId(state.employmentTypes);
+    const created = state.companies.map(company => ({ id: id++, company_id: company.id, name, has_charges: Boolean(payload.has_charges), active: true }));
+    state.employmentTypes = [...state.employmentTypes, ...created];
     saveState(state);
-    return item as T;
+    return (created.find(item => item.company_id === companyId) ?? created[0]) as T;
   }
 
   if (route.startsWith("/result-centers/") && method === "PATCH") {
     assertAdmin(token);
     const id = Number(route.split("/")[2]);
-    const item = state.resultCenters.find(center => center.id === id && (companyId === ALL_COMPANIES_ID || center.company_id === companyId));
+    const item = state.resultCenters.find(center => center.id === id);
     if (!item) throw new Error("Centro de Resultado não encontrado.");
     const payload = body<Partial<ResultCenter>>(options);
     const nextCode = String(payload.code ?? item.code).trim().toUpperCase();
-    if (state.resultCenters.some(center => center.id !== id && center.company_id === item.company_id && center.code === nextCode)) {
-      throw new Error("Código de Centro de Resultado já cadastrado para esta empresa.");
+    if (state.resultCenters.some(center => center.code !== item.code && center.code === nextCode)) {
+      throw new Error("Código de Centro de Resultado já cadastrado no catálogo global.");
     }
-    Object.assign(item, {
-      code: nextCode,
-      name: String(payload.name ?? item.name).trim().toUpperCase(),
-      color: payload.color ?? item.color,
-      active: payload.active ?? item.active
-    });
+    state.resultCenters.filter(center => center.code === item.code).forEach(center => Object.assign(center, { code: nextCode, name: String(payload.name ?? item.name).trim().toUpperCase(), color: payload.color ?? item.color, active: payload.active ?? item.active }));
     saveState(state);
     return item as T;
   }
@@ -1202,18 +1212,14 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
   if (route.startsWith("/employment-types/") && method === "PATCH") {
     assertAdmin(token);
     const id = Number(route.split("/")[2]);
-    const item = state.employmentTypes.find(type => type.id === id && (companyId === ALL_COMPANIES_ID || type.company_id === companyId));
+    const item = state.employmentTypes.find(type => type.id === id);
     if (!item) throw new Error("Modalidade não encontrada.");
     const payload = body<Partial<EmploymentType>>(options);
     const nextName = String(payload.name ?? item.name).trim().toUpperCase();
-    if (state.employmentTypes.some(type => type.id !== id && type.company_id === item.company_id && normalizeText(type.name) === normalizeText(nextName))) {
-      throw new Error("Modalidade já cadastrada para esta empresa.");
+    if (state.employmentTypes.some(type => normalizeText(type.name) !== normalizeText(item.name) && normalizeText(type.name) === normalizeText(nextName))) {
+      throw new Error("Modalidade já cadastrada no catálogo global.");
     }
-    Object.assign(item, {
-      name: nextName,
-      has_charges: payload.has_charges ?? item.has_charges,
-      active: payload.active ?? item.active
-    });
+    state.employmentTypes.filter(type => normalizeText(type.name) === normalizeText(item.name)).forEach(type => Object.assign(type, { name: nextName, has_charges: payload.has_charges ?? item.has_charges, active: payload.active ?? item.active }));
     saveState(state);
     return item as T;
   }
@@ -1798,6 +1804,10 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const normalizedPayload: Partial<DemoSettings> = { ...payload };
     if (Array.isArray(payload.job_titles)) {
       normalizedPayload.job_titles = [...new Set(payload.job_titles.map(item => String(item).trim().toUpperCase()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    }
+    if (Array.isArray(normalizedPayload.job_titles)) {
+      state.companies = state.companies.map(current => ({ ...current, settings: { ...current.settings, job_titles: normalizedPayload.job_titles! } }));
+      delete normalizedPayload.job_titles;
     }
     if (companyId === ALL_COMPANIES_ID) {
       state.companies = state.companies.map(current => ({ ...current, settings: { ...current.settings, ...normalizedPayload } }));

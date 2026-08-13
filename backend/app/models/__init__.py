@@ -11,6 +11,7 @@ from app.models.system_setting import SystemSetting
 from app.models.user import User
 
 __all__ = [
+    "AuditEntry",
     "Employee",
     "Employment",
     "EmploymentType",
@@ -26,3 +27,4 @@ __all__ = [
     "SystemSetting",
     "User",
 ]
+from app.models.audit_entry import AuditEntry

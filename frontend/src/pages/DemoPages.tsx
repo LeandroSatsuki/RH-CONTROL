@@ -662,7 +662,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
   </PageShell>;
 }
 
-export function AlertsPage({ token, onPage }: { token: string; user: User; onPage: (page: "employees" | "mei-contracts") => void }) {
+export function AlertsPage({ token, onPage }: { token: string; user: User; onPage: (page: "employees" | "mei-contracts" | "movements") => void }) {
   const { selectedCompany } = useDemoScope();
   const [items, setItems] = useState<DemoAlert[]>([]);
   const [type, setType] = useState("");
@@ -696,7 +696,7 @@ export function AlertsPage({ token, onPage }: { token: string; user: User; onPag
   }, {});
 
   function openCorrectiveAction(item: DemoAlert) {
-    onPage(item.type.includes("Contrato") ? "mei-contracts" : "employees");
+    onPage(item.type === "Ajuste pendente" ? "movements" : item.type.includes("Contrato") ? "mei-contracts" : "employees");
   }
 
   return <PageShell title="Alertas" subtitle="Pendências abertas, atualizadas automaticamente após a ação corretiva." error={fb.error}>

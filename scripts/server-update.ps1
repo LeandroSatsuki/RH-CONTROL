@@ -153,10 +153,18 @@ if (-not $ready) {
     New-Item -ItemType Directory -Path $Logs -Force | Out-Null
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$apiScript`"" -WindowStyle Hidden -RedirectStandardOutput (Join-Path $Logs "api-fallback.log") -RedirectStandardError (Join-Path $Logs "api-fallback-error.log")
     $ready = Wait-ApiReady 30
+    if (-not $ready) {
+        throw "A API nao iniciou nem no modo de diagnostico. $(Get-PortDiagnostic) Consulte os logs em C:\Nexo\logs."
+    }
+
+    Write-Host "API validada. Transferindo a execucao para a tarefa automatica..." -ForegroundColor Cyan
+    Stop-PortListener 8000
     Register-NexoApiTask $apiScript
+    Start-ScheduledTask -TaskName $TaskName
+    $ready = Wait-ApiReady 30
 }
 if (-not $ready) {
-    throw "A API nao respondeu apos a atualizacao. $(Get-PortDiagnostic) Rode C:\Nexo\scripts\server-status.ps1 para diagnosticar."
+    throw "A API funciona diretamente, mas a tarefa automatica nao assumiu a execucao. $(Get-PortDiagnostic) Rode C:\Nexo\scripts\repair-server-api.ps1 como Administrador."
 }
 Write-Host "Servidor Nexo atualizado." -ForegroundColor Green
 Stop-Transcript -ErrorAction SilentlyContinue | Out-Null

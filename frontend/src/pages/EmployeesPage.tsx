@@ -100,6 +100,8 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
   const [quickJobTitle, setQuickJobTitle] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
   const [cnpjStatus, setCnpjStatus] = useState("");
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const employeeDraftKey = `nexo-employee-draft-v1:${user.username}`;
 
   const load = async () => {
     setLoading(true);
@@ -126,12 +128,41 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
 
   useEffect(() => { void load(); }, [token, selectedCompany.id]);
   useEffect(() => {
-    if (!open || !centers.length || !types.length) return;
-    setDraft(createEmployeeDraft(settings ?? selectedCompany.settings ?? demoSettings, centers, types, defaultCompanyId));
+    if (!open) {
+      setDraftLoaded(false);
+      return;
+    }
+    if (draftLoaded || !centers.length || !types.length) return;
+    const emptyDraft = createEmployeeDraft(settings ?? selectedCompany.settings ?? demoSettings, centers, types, defaultCompanyId);
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(employeeDraftKey) ?? "null") as Partial<EmployeeDraft> | null;
+      const savedCompanyId = Number(saved?.company_id);
+      const companyId = selectableCompanies.some(company => company.id === savedCompanyId) ? savedCompanyId : defaultCompanyId;
+      const companyCenters = centers.filter(item => item.company_id === companyId && item.active);
+      const companyTypes = types.filter(item => item.company_id === companyId && item.active);
+      const savedCenterId = Number(saved?.result_center_id);
+      const savedTypeId = Number(saved?.employment_type_id);
+      setDraft({
+        ...emptyDraft,
+        ...(saved ?? {}),
+        company_id: String(companyId || ""),
+        result_center_id: String(companyCenters.some(item => item.id === savedCenterId) ? savedCenterId : companyCenters[0]?.id ?? ""),
+        employment_type_id: String(companyTypes.some(item => item.id === savedTypeId) ? savedTypeId : companyTypes[0]?.id ?? "")
+      });
+    } catch {
+      window.localStorage.removeItem(employeeDraftKey);
+      setDraft(emptyDraft);
+    }
     setAddressLocked(false);
     setCepStatus("");
     setCnpjStatus("");
-  }, [open, centers, types, settings, selectedCompany.settings, defaultCompanyId]);
+    setDraftLoaded(true);
+  }, [centers, defaultCompanyId, draftLoaded, employeeDraftKey, open, selectableCompanies, selectedCompany.settings, settings, types]);
+
+  useEffect(() => {
+    if (!open || !draftLoaded) return;
+    window.localStorage.setItem(employeeDraftKey, JSON.stringify(draft));
+  }, [draft, draftLoaded, employeeDraftKey, open]);
 
   const filtered = useMemo(() => {
     const normalized = query.replace(/\D/g, "");
@@ -304,11 +335,13 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         })
       }, token);
       setOpen(false);
+      window.localStorage.removeItem(employeeDraftKey);
       setSuccess("Colaborador cadastrado com sucesso.");
       setDraft(createEmployeeDraft(settings ?? selectedCompany.settings ?? demoSettings, centers, types, defaultCompanyId));
       setAddressLocked(false);
       setCepStatus("");
       setCnpjStatus("");
+      setDraftLoaded(false);
       void load();
     } catch (err) { setError(err instanceof Error ? err.message : "Erro ao cadastrar"); }
   }
@@ -551,7 +584,8 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         required
         aria-invalid={Boolean(pixMessage)}
       /></label>
-      {(draft.pix_key_type === "CPF" || draft.pix_key_type === "CNPJ") && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === cpfDigits && cpfDigits.length === (draft.pix_key_type === "CPF" ? 11 : 14)} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? cpfDigits : "" }))} /> Meu {draft.pix_key_type}</label>}
+      {(draft.pix_key_type === "CPF" || draft.pix_key_type === "CNPJ") && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === cpfDigits && cpfDigits.length === (draft.pix_key_type === "CPF" ? 11 : 14)} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? cpfDigits : "" }))} /> Meu CPF/CNPJ</label>}
+      {draft.pix_key_type === "EMAIL" && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.email && Boolean(draft.email)} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.email : "" }))} /> Meu e-mail</label>}
       {draft.pix_key_type === "PHONE" && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.phone && Boolean(draft.phone)} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.phone : "" }))} /> Meu celular</label>}
       <fieldset className="span-2 benefits-fieldset">
         <legend>Benefícios</legend>
@@ -641,7 +675,7 @@ function EmployeeDrawer({
   const [benefitDraft, setBenefitDraft] = useState<string[]>(employee.benefits ?? []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const history = [...employee.salary_history].sort((a, b) => salaryHistoryDate(b).localeCompare(salaryHistoryDate(a)));
+  const history = [...(employee.salary_history ?? [])].sort((a, b) => salaryHistoryDate(b).localeCompare(salaryHistoryDate(a)));
   const estimatedCost = employee.salary_base * (employee.employment_type.has_charges ? 1.72 : 1.18);
   const salaryChanged = Number(draft.salary_base || 0) !== Number(employee.salary_base || 0);
   const pixMessage = editing ? validatePixKey(draft.pix_key_type, draft.pix_key) : "";
@@ -796,9 +830,10 @@ function EmployeeDrawer({
       <label>Dígito<input value={draft.bank_account_digit} onChange={event => setDraft(current => ({ ...current, bank_account_digit: event.target.value.replace(/\D/g, "").slice(0, 1) }))} /></label>
       <label>Tipo PIX<select value={draft.pix_key_type} onChange={event => setDraft(current => ({ ...current, pix_key_type: event.target.value, pix_key: "" }))} required><option value="CPF">CPF</option><option value="CNPJ">CNPJ</option><option value="EMAIL">E-mail</option><option value="PHONE">Telefone</option><option value="RANDOM">Chave aleatória</option></select></label>
       <label>Chave PIX<input value={draft.pix_key} onChange={event => setDraft(current => ({ ...current, pix_key: sanitizePixKey(current.pix_key_type, event.target.value) }))} required /></label>
-      {draft.pix_key_type === "CPF" && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.cpf_cnpj} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.cpf_cnpj : "" }))} /> Meu CPF</label>}
+      {(draft.pix_key_type === "CPF" || draft.pix_key_type === "CNPJ") && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.cpf_cnpj} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.cpf_cnpj : "" }))} /> Meu CPF/CNPJ</label>}
+      {draft.pix_key_type === "EMAIL" && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.email && Boolean(draft.email)} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.email : "" }))} /> Meu e-mail</label>}
       {draft.pix_key_type === "PHONE" && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.phone && Boolean(draft.phone)} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.phone : "" }))} /> Meu celular</label>}
-      <fieldset className="span-2 benefits-fieldset"><legend>Benefícios</legend>{["Vale transporte", "Alimentação", "Plano de saúde", "Seguro de vida", "Ajuda de custo"].map(benefit => <label className="check" key={benefit}><input type="checkbox" checked={benefitDraft.includes(benefit)} onChange={event => setBenefitDraft(current => event.target.checked ? [...current, benefit] : current.filter(item => item !== benefit))} /> {benefit}</label>)}{benefitDraft.includes("Ajuda de custo") && <label className="span-2">Valor da ajuda de custo<input value={draft.cost_aid} onChange={event => setDraft(current => ({ ...current, cost_aid: event.target.value }))} type="number" min="0" step="0.01" /></label>}</fieldset>
+      <fieldset className="span-2 benefits-fieldset"><legend>Benefícios</legend>{["Vale transporte", "Alimentação", "Cesta básica", "Plano de saúde", "Seguro de vida", "Ajuda de custo"].map(benefit => <label className="check" key={benefit}><input type="checkbox" checked={benefitDraft.includes(benefit)} onChange={event => setBenefitDraft(current => event.target.checked ? [...current, benefit] : current.filter(item => item !== benefit))} /> {benefit}</label>)}{benefitDraft.includes("Ajuda de custo") && <label className="span-2">Valor da ajuda de custo<input value={draft.cost_aid} onChange={event => setDraft(current => ({ ...current, cost_aid: event.target.value }))} type="number" min="0" step="0.01" /></label>}</fieldset>
       <label className="span-2">Observações<textarea value={draft.notes} onChange={event => setDraft(current => ({ ...current, notes: upperText(event.target.value) }))} rows={2} /></label>
       <div className="span-2 field-feedback-group">
         {pixMessage && <p className="field-feedback error">{pixMessage}</p>}
@@ -820,10 +855,10 @@ function EmployeeDrawer({
       <Info label="PIX" value={`${employee.pix_key_type}: ${employee.pix_key}`} />
       <Info label="Benefícios" value={(employee.benefits ?? []).length ? (employee.benefits ?? []).join(", ") : "Nenhum"} />
     </div>
-    <Section title="Férias" items={employee.vacations.map(item => `${item.period} - ${item.status}`)} />
-    <Section title="Afastamentos" items={employee.leaves.length ? employee.leaves.map(item => `${item.period} - ${item.reason} (${item.days} dias)`) : ["Nenhum afastamento ativo"]} />
-    <Section title="Históricos Salariais" items={history.map(item => `${date(salaryHistoryDate(item))} - ${money.format(item.amount)} (${item.reason})`)} />
-    <Section title="Histórico de Movimentos" items={employee.movement_history.map(item => `${date(item.date)} - ${item.description}`)} />
+    <Section title="Férias" items={(employee.vacations ?? []).length ? (employee.vacations ?? []).map(item => `${item.period} - ${item.status}`) : ["Nenhuma férias cadastrada"]} />
+    <Section title="Afastamentos" items={(employee.leaves ?? []).length ? (employee.leaves ?? []).map(item => `${item.period} - ${item.reason} (${item.days} dias)`) : ["Nenhum afastamento ativo"]} />
+    <Section title="Históricos Salariais" items={history.length ? history.map(item => `${date(salaryHistoryDate(item))} - ${money.format(item.amount)} (${item.reason})`) : ["Nenhum histórico salarial"]} />
+    <Section title="Histórico de Movimentos" items={(employee.movement_history ?? []).length ? (employee.movement_history ?? []).map(item => `${date(item.date)} - ${item.description}`) : ["Consulte Movimentações para ver o histórico operacional"]} />
   </aside></div>;
 }
 

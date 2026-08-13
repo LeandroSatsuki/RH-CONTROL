@@ -127,18 +127,50 @@ describe("modo local multiempresa", () => {
     }, adminToken)).rejects.toThrow("Reative ou transfira");
   });
 
-  it("cadastra, edita e inativa Centros de Resultado por empresa", async () => {
+  it("mantém Centros de Resultado, modalidades e cargos globais", async () => {
+    const company = await demoApi<Company>("/companies", {
+      method: "POST",
+      body: JSON.stringify({
+        code: "GLOBAL",
+        cnpj: "11222333000181",
+        name: "EMPRESA CATÁLOGO GLOBAL",
+        kind: "OUTRA",
+        group_name: "GRUPO GLOBAL",
+        active: true
+      })
+    }, adminToken);
     const created = await demoApi<ResultCenter>("/result-centers?company_id=1", {
       method: "POST",
       body: JSON.stringify({ code: "LOG", name: "LOGÍSTICA", color: "#123456" })
     }, adminToken);
     expect(created.company_id).toBe(1);
-    const edited = await demoApi<ResultCenter>(`/result-centers/${created.id}?company_id=1`, {
+    const companyCenter = (await demoApi<ResultCenter[]>(`/result-centers?company_id=${company.id}`, {}, adminToken))
+      .find(item => item.code === "LOG")!;
+    expect(companyCenter.name).toBe("LOGÍSTICA");
+    const edited = await demoApi<ResultCenter>(`/result-centers/${companyCenter.id}?company_id=${company.id}`, {
       method: "PATCH",
       body: JSON.stringify({ name: "LOGÍSTICA INTERNA", active: false })
     }, adminToken);
     expect(edited.name).toBe("LOGÍSTICA INTERNA");
     expect(edited.active).toBe(false);
+    const primaryCenter = (await demoApi<ResultCenter[]>("/result-centers?company_id=1", {}, adminToken))
+      .find(item => item.code === "LOG")!;
+    expect(primaryCenter.name).toBe("LOGÍSTICA INTERNA");
+    expect(primaryCenter.active).toBe(false);
+
+    const type = await demoApi<EmploymentType>(`/employment-types?company_id=${company.id}`, {
+      method: "POST",
+      body: JSON.stringify({ name: "ESTAGIÁRIO", has_charges: false, active: true })
+    }, adminToken);
+    expect((await demoApi<EmploymentType[]>("/employment-types?company_id=1", {}, adminToken))
+      .some(item => item.name === type.name)).toBe(true);
+
+    await demoApi(`/demo/settings?company_id=${company.id}`, {
+      method: "POST",
+      body: JSON.stringify({ job_titles: ["ANALISTA", "SUPERVISOR GLOBAL"] })
+    }, adminToken);
+    const primarySettings = await demoApi<{ job_titles: string[] }>("/demo/settings?company_id=1", {}, adminToken);
+    expect(primarySettings.job_titles).toEqual(["ANALISTA", "SUPERVISOR GLOBAL"]);
     await expect(demoApi(`/result-centers/${created.id}?company_id=999`, {
       method: "PATCH",
       body: JSON.stringify({ active: true })

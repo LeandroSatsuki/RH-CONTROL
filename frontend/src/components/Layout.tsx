@@ -39,7 +39,6 @@ interface Props {
 const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] = [
   { page: "dashboard", label: "Dashboard", icon: "▦" },
   { page: "employees", label: "Colaboradores", icon: "ID" },
-  { page: "companies", label: "Empresas", icon: "EM", adminOnly: true },
   { page: "movements", label: "Movimentações", icon: "MV" },
   { page: "mei-contracts", label: "Contratos MEI", icon: "ME" },
   { page: "benefits", label: "Benefícios", icon: "BF" },
@@ -81,7 +80,7 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
 
   function openAlert(alert: DemoAlert) {
     setNotificationsOpen(false);
-    onPage(alert.type.includes("Contrato") ? "mei-contracts" : "employees");
+    onPage(alert.type === "Ajuste pendente" ? "movements" : alert.type.includes("Contrato") ? "mei-contracts" : "employees");
   }
 
   return (
