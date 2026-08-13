@@ -5,6 +5,7 @@ $TaskName = "Nexo API"
 $BackupTaskName = "Nexo Backup Diario"
 $EnvPath = Join-Path $Root ".env"
 $BackupDirectory = Join-Path $Root "backups"
+$hasCriticalFailure = $false
 
 Write-Host "Nexo - Diagnostico do servidor"
 Write-Host ""
@@ -16,6 +17,7 @@ if ($task) {
     Write-Host "Ultimo resultado: $($taskInfo.LastTaskResult)"
 } else {
     Write-Host "Tarefa da API: NAO INSTALADA" -ForegroundColor Red
+    $hasCriticalFailure = $true
 }
 
 $backupTask = Get-ScheduledTask -TaskName $BackupTaskName -ErrorAction SilentlyContinue
@@ -40,9 +42,11 @@ if ($latestBackup) {
 
 $postgres = Test-NetConnection -ComputerName 127.0.0.1 -Port 5432 -WarningAction SilentlyContinue
 Write-Host "PostgreSQL 5432: $($postgres.TcpTestSucceeded)"
+if (-not $postgres.TcpTestSucceeded) { $hasCriticalFailure = $true }
 
 $api = Test-NetConnection -ComputerName 127.0.0.1 -Port 8000 -WarningAction SilentlyContinue
 Write-Host "API 8000: $($api.TcpTestSucceeded)"
+if (-not $api.TcpTestSucceeded) { $hasCriticalFailure = $true }
 
 $listener = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($listener) {
@@ -58,6 +62,7 @@ try {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 5
     Write-Host "Saude da API: $($health.status)" -ForegroundColor Green
 } catch {
+    $hasCriticalFailure = $true
     Write-Host "Saude da API: indisponivel" -ForegroundColor Red
     Write-Host "Teste /health: $($_.Exception.Message)" -ForegroundColor Yellow
     try {
@@ -80,3 +85,6 @@ Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object { $_.IPAddress -notlike "127.*" -and $_.PrefixOrigin -ne "WellKnown" } |
     Sort-Object InterfaceAlias, IPAddress |
     ForEach-Object { Write-Host "http://$($_.IPAddress):8000" }
+
+if ($hasCriticalFailure) { exit 1 }
+exit 0
