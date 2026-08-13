@@ -25,11 +25,12 @@ class Employee(Base):
 
 class Employment(Base):
     __tablename__ = "employments"
+    __table_args__ = (UniqueConstraint("company_id", "employee_code"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
     employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
-    employee_code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    employee_code: Mapped[str] = mapped_column(String(40), index=True)
     employment_type_id: Mapped[int] = mapped_column(ForeignKey("employment_types.id"))
     result_center_id: Mapped[int] = mapped_column(ForeignKey("result_centers.id"))
     job_title: Mapped[str] = mapped_column(String(120))
