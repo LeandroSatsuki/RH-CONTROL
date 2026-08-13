@@ -12,9 +12,17 @@ from sqlalchemy.exc import IntegrityError
 from app.api.dependencies import AdminUser, CurrentUser, DbSession
 from app.core.config import settings
 from app.models.company import Company
+from app.models.employment_type import EmploymentType
+from app.models.result_center import ResultCenter
 from app.models.system_setting import SystemSetting
 from app.models.enums import CompanyKind
-from app.schemas.catalog import CompanyCreate, CompanyLookupRead, CompanyRead, CompanyUpdate, is_valid_cnpj
+from app.schemas.catalog import (
+    CompanyCreate,
+    CompanyLookupRead,
+    CompanyRead,
+    CompanyUpdate,
+    is_valid_cnpj,
+)
 from app.api.routes.demo import DEFAULT_JOB_TITLES, DEFAULT_PAYROLL_RATES
 
 router = APIRouter()
@@ -61,9 +69,20 @@ def format_cnpj(value: str) -> str:
     return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}"
 
 
-def build_company_lookup(payload: dict[str, object], source: str, cnpj: str) -> CompanyLookupRead:
-    name = get_any(payload, "nomeEmpresarial", "razao_social", "razaoSocial", "nome", default="")
-    trade_name = get_any(payload, "nomeFantasia", "nome_fantasia", "nomeFantasiaEstabelecimento", "fantasia", default="")
+def build_company_lookup(
+    payload: dict[str, object], source: str, cnpj: str
+) -> CompanyLookupRead:
+    name = get_any(
+        payload, "nomeEmpresarial", "razao_social", "razaoSocial", "nome", default=""
+    )
+    trade_name = get_any(
+        payload,
+        "nomeFantasia",
+        "nome_fantasia",
+        "nomeFantasiaEstabelecimento",
+        "fantasia",
+        default="",
+    )
     status = get_any(
         payload,
         "situacaoCadastral",
@@ -73,7 +92,14 @@ def build_company_lookup(payload: dict[str, object], source: str, cnpj: str) -> 
         "situacao",
         default="",
     )
-    opening_date = get_any(payload, "dataInicioAtividade", "data_inicio_atividade", "dataAbertura", "abertura", default="")
+    opening_date = get_any(
+        payload,
+        "dataInicioAtividade",
+        "data_inicio_atividade",
+        "dataAbertura",
+        "abertura",
+        default="",
+    )
     kind_text = get_any(
         payload,
         "descricaoTipoEstabelecimento",
@@ -88,10 +114,14 @@ def build_company_lookup(payload: dict[str, object], source: str, cnpj: str) -> 
         kind = CompanyKind.FILIAL
     elif "matriz" in kind_text.lower():
         kind = CompanyKind.MATRIZ
-    street_type = get_any(payload, "tipoLogradouro", "descricao_tipo_de_logradouro", default="").strip()
+    street_type = get_any(
+        payload, "tipoLogradouro", "descricao_tipo_de_logradouro", default=""
+    ).strip()
     street = get_any(payload, "logradouro", default="").strip()
     address_parts = [
-        f"{street_type} {street}".strip() if street_type and street else street or street_type,
+        f"{street_type} {street}".strip()
+        if street_type and street
+        else street or street_type,
         get_any(payload, "logradouroNumero", "numero", default="").strip(),
         get_any(payload, "complemento", "enderecoComplemento", default="").strip(),
         get_any(payload, "bairro", "district", default="").strip(),
@@ -128,11 +158,23 @@ def lookup_company_data(cnpj: str) -> CompanyLookupRead:
         try:
             payload = request_json(url)
             if isinstance(payload, dict):
-                message = str(payload.get("message") or payload.get("erro") or payload.get("status") or "")
+                message = str(
+                    payload.get("message")
+                    or payload.get("erro")
+                    or payload.get("status")
+                    or ""
+                )
                 if message.upper() == "ERROR":
                     continue
                 return build_company_lookup(payload, source, cnpj)
-        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
+        except (
+            HTTPError,
+            URLError,
+            TimeoutError,
+            OSError,
+            json.JSONDecodeError,
+            ValueError,
+        ):
             continue
 
     official_url = settings.cnpj_lookup_url.strip()
@@ -150,7 +192,14 @@ def lookup_company_data(cnpj: str) -> CompanyLookupRead:
             payload = request_json(url, headers)
             if isinstance(payload, dict):
                 return build_company_lookup(payload, "Receita Federal / Serpro", cnpj)
-        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
+        except (
+            HTTPError,
+            URLError,
+            TimeoutError,
+            OSError,
+            json.JSONDecodeError,
+            ValueError,
+        ):
             pass
     return CompanyLookupRead(
         cnpj=format_cnpj(cnpj),
@@ -173,7 +222,9 @@ def lookup_company_data(cnpj: str) -> CompanyLookupRead:
 
 @router.get("", response_model=list[CompanyRead])
 def list_companies(db: DbSession, _: CurrentUser) -> list[Company]:
-    return list(db.scalars(select(Company).order_by(Company.is_primary.desc(), Company.code)))
+    return list(
+        db.scalars(select(Company).order_by(Company.is_primary.desc(), Company.code))
+    )
 
 
 @router.get("/lookup", response_model=CompanyLookupRead)
@@ -189,14 +240,18 @@ def create_company(payload: CompanyCreate, db: DbSession, _: AdminUser) -> Compa
         existing_cnpj = db.scalar(select(Company).where(Company.cnpj == cnpj))
         if existing_cnpj:
             raise HTTPException(status_code=409, detail="CNPJ já cadastrado")
-    existing_code = db.scalar(select(Company).where(Company.code == company_data["code"]))
+    existing_code = db.scalar(
+        select(Company).where(Company.code == company_data["code"])
+    )
     if existing_code:
         raise HTTPException(status_code=409, detail="Código de empresa já existe")
     if not str(company_data.get("group_name", "")).strip():
         parent_id = company_data.get("parent_company_id")
         if parent_id:
             parent = db.get(Company, parent_id)
-            company_data["group_name"] = parent.group_name or parent.name if parent else company_data["name"]
+            company_data["group_name"] = (
+                parent.group_name or parent.name if parent else company_data["name"]
+            )
         else:
             company_data["group_name"] = company_data["name"]
     has_company = db.scalar(select(Company.id).limit(1)) is not None
@@ -207,9 +262,14 @@ def create_company(payload: CompanyCreate, db: DbSession, _: AdminUser) -> Compa
     item = Company(**company_data)
     db.add(item)
     try:
+        source_company = db.scalar(
+            select(Company).order_by(Company.is_primary.desc(), Company.id)
+        )
         db.flush()
         if item.is_primary:
-            db.execute(update(Company).where(Company.id != item.id).values(is_primary=False))
+            db.execute(
+                update(Company).where(Company.id != item.id).values(is_primary=False)
+            )
         db.add(
             SystemSetting(
                 id=item.id,
@@ -222,19 +282,60 @@ def create_company(payload: CompanyCreate, db: DbSession, _: AdminUser) -> Compa
                 include_sundays=False,
                 default_daily_hours=8.8,
                 payroll_rates=DEFAULT_PAYROLL_RATES,
-                job_titles=DEFAULT_JOB_TITLES,
+                job_titles=(
+                    list(
+                        db.scalar(
+                            select(SystemSetting.job_titles).where(
+                                SystemSetting.company_id == source_company.id
+                            )
+                        )
+                        or DEFAULT_JOB_TITLES
+                    )
+                    if source_company
+                    else DEFAULT_JOB_TITLES
+                ),
             )
         )
+        if source_company:
+            for center in db.scalars(
+                select(ResultCenter).where(ResultCenter.company_id == source_company.id)
+            ):
+                db.add(
+                    ResultCenter(
+                        company_id=item.id,
+                        code=center.code,
+                        name=center.name,
+                        color=center.color,
+                        active=center.active,
+                    )
+                )
+            for employment_type in db.scalars(
+                select(EmploymentType).where(
+                    EmploymentType.company_id == source_company.id
+                )
+            ):
+                db.add(
+                    EmploymentType(
+                        company_id=item.id,
+                        name=employment_type.name,
+                        has_charges=employment_type.has_charges,
+                        active=employment_type.active,
+                    )
+                )
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Código de empresa já existe") from None
+        raise HTTPException(
+            status_code=409, detail="Código de empresa já existe"
+        ) from None
     db.refresh(item)
     return item
 
 
 @router.patch("/{company_id}", response_model=CompanyRead)
-def update_company(company_id: int, payload: CompanyUpdate, db: DbSession, _: AdminUser) -> Company:
+def update_company(
+    company_id: int, payload: CompanyUpdate, db: DbSession, _: AdminUser
+) -> Company:
     item = db.get(Company, company_id)
     if not item:
         raise HTTPException(status_code=404, detail="Empresa não encontrada")
@@ -242,33 +343,55 @@ def update_company(company_id: int, payload: CompanyUpdate, db: DbSession, _: Ad
     company_data = payload.model_dump(exclude_unset=True)
     code = company_data.get("code")
     if code:
-        existing_code = db.scalar(select(Company).where(Company.code == code, Company.id != company_id))
+        existing_code = db.scalar(
+            select(Company).where(Company.code == code, Company.id != company_id)
+        )
         if existing_code:
             raise HTTPException(status_code=409, detail="Código de empresa já existe")
 
     cnpj = company_data.get("cnpj")
     if cnpj:
-        existing_cnpj = db.scalar(select(Company).where(Company.cnpj == cnpj, Company.id != company_id))
+        existing_cnpj = db.scalar(
+            select(Company).where(Company.cnpj == cnpj, Company.id != company_id)
+        )
         if existing_cnpj:
             raise HTTPException(status_code=409, detail="CNPJ já cadastrado")
 
-    if "parent_company_id" in company_data and company_data["parent_company_id"] == company_id:
-        raise HTTPException(status_code=422, detail="A matriz pai não pode ser a própria empresa")
+    if (
+        "parent_company_id" in company_data
+        and company_data["parent_company_id"] == company_id
+    ):
+        raise HTTPException(
+            status_code=422, detail="A matriz pai não pode ser a própria empresa"
+        )
     if company_data.get("is_primary"):
         company_data["active"] = True
     if item.is_primary and company_data.get("active") is False:
-        raise HTTPException(status_code=422, detail="A empresa principal precisa estar ativa")
+        raise HTTPException(
+            status_code=422, detail="A empresa principal precisa estar ativa"
+        )
     if item.is_primary and company_data.get("is_primary") is False:
-        another_primary = db.scalar(select(Company).where(Company.id != company_id, Company.is_primary.is_(True)))
+        another_primary = db.scalar(
+            select(Company).where(
+                Company.id != company_id, Company.is_primary.is_(True)
+            )
+        )
         if not another_primary:
-            raise HTTPException(status_code=422, detail="Escolha outra empresa como principal antes de remover esta marcação")
+            raise HTTPException(
+                status_code=422,
+                detail="Escolha outra empresa como principal antes de remover esta marcação",
+            )
 
     for field, value in company_data.items():
         setattr(item, field, value)
     if item.is_primary:
-        db.execute(update(Company).where(Company.id != item.id).values(is_primary=False))
+        db.execute(
+            update(Company).where(Company.id != item.id).values(is_primary=False)
+        )
 
-    setting = db.scalar(select(SystemSetting).where(SystemSetting.company_id == company_id))
+    setting = db.scalar(
+        select(SystemSetting).where(SystemSetting.company_id == company_id)
+    )
     if setting and "name" in company_data:
         setting.company_name = item.name
 
@@ -276,6 +399,8 @@ def update_company(company_id: int, payload: CompanyUpdate, db: DbSession, _: Ad
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Código ou CNPJ já cadastrado") from None
+        raise HTTPException(
+            status_code=409, detail="Código ou CNPJ já cadastrado"
+        ) from None
     db.refresh(item)
     return item

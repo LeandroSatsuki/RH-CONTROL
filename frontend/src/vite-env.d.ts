@@ -25,6 +25,7 @@ interface Window {
   nexoUpdater?: {
     onStatus: (callback: (status: NexoUpdateStatus) => void) => () => void;
     restart: () => void;
+    check: () => void;
   };
   nexoCredentials?: {
     load: () => Promise<{ username: string; password: string } | null>;

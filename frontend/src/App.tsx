@@ -16,6 +16,13 @@ import { Company, User } from "./types";
 type LoadState = "loading" | "ready" | "error";
 
 const isDev = import.meta.env.DEV;
+const LAST_PAGE_KEY = "nexo:last-page";
+const pages: Page[] = ["dashboard", "alerts", "audit", "employees", "movements", "mei-contracts", "benefits", "payroll", "indicators", "report-maker", "reports", "import", "backup", "closing", "settings", "centers", "types"];
+
+function storedPage(): Page {
+  const value = localStorage.getItem(LAST_PAGE_KEY);
+  return pages.includes(value as Page) ? value as Page : "dashboard";
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Erro inesperado.";
@@ -33,7 +40,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authState, setAuthState] = useState<"idle" | "checking">("idle");
   const [authError, setAuthError] = useState("");
-  const [page, setPage] = useState<Page>("dashboard");
+  const [page, setPage] = useState<Page>(storedPage);
   const [setupRetry, setSetupRetry] = useState(0);
   const [companiesRetry, setCompaniesRetry] = useState(0);
   const [localMode, setLocalMode] = useState(isLocalDataMode);
@@ -229,7 +236,7 @@ export default function App() {
     setToken(newToken);
     setUser(newUser);
     setAuthError("");
-    setPage("dashboard");
+    navigate("dashboard");
   }
 
   function logout() {
@@ -249,6 +256,17 @@ export default function App() {
     } catch (error) {
       setServerAddressError(errorMessage(error));
     }
+  }
+
+  function navigate(nextPage: Page) {
+    localStorage.setItem(LAST_PAGE_KEY, nextPage);
+    setPage(nextPage);
+  }
+
+  function refreshCurrentPage() {
+    localStorage.setItem(LAST_PAGE_KEY, page);
+    window.nexoUpdater?.check();
+    window.location.reload();
   }
 
   devLog("render-state", {
@@ -304,7 +322,7 @@ export default function App() {
 
   return (
     <DemoScopeProvider companies={companies}>
-      <Layout user={user} page={page} onPage={setPage} onLogout={logout} localMode={localMode}>
+      <Layout user={user} token={token} page={page} onPage={navigate} onRefresh={refreshCurrentPage} onLogout={logout} localMode={localMode}>
         {updateStatus && (
           <div className={`update-banner update-${updateStatus.state}`}>
             <span>{updateStatus.message}</span>
@@ -316,7 +334,7 @@ export default function App() {
           </div>
         )}
         {page === "dashboard" && <DashboardPage token={token} />}
-        {page === "alerts" && <AlertsPage token={token} user={user} />}
+        {page === "alerts" && <AlertsPage token={token} user={user} onPage={navigate} />}
         {page === "audit" && <AuditPage token={token} user={user} />}
         {page === "employees" && <EmployeesPage token={token} user={user} />}
         {page === "movements" && <MovementsPage token={token} user={user} />}

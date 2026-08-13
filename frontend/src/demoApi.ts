@@ -235,19 +235,32 @@ function loadState(): DemoState {
 }
 
 function normalizeCompanyCatalogs(state: DemoState) {
-  const sharedCenters = state.resultCenters.filter(item => !item.company_id);
-  const sharedTypes = state.employmentTypes.filter(item => !item.company_id);
+  const primaryCompanyId = state.companies.find(item => item.is_primary)?.id ?? state.companies[0]?.id ?? 1;
+  const centerTemplates = new Map<string, ResultCenter>();
+  const typeTemplates = new Map<string, EmploymentType>();
+  state.resultCenters.forEach(item => {
+    const key = item.code.trim().toUpperCase();
+    if (!centerTemplates.has(key) || item.company_id === primaryCompanyId) centerTemplates.set(key, item);
+  });
+  state.employmentTypes.forEach(item => {
+    const key = normalizeText(item.name);
+    if (!typeTemplates.has(key) || item.company_id === primaryCompanyId) typeTemplates.set(key, item);
+  });
   let centerId = Math.max(0, ...state.resultCenters.map(item => item.id));
   let typeId = Math.max(0, ...state.employmentTypes.map(item => item.id));
 
   for (const company of state.companies) {
-    for (const template of sharedCenters) {
-      if (!state.resultCenters.some(item => item.company_id === company.id && item.code === template.code)) {
+    for (const template of centerTemplates.values()) {
+      const existing = state.resultCenters.find(item => item.company_id === company.id && item.code.trim().toUpperCase() === template.code.trim().toUpperCase());
+      if (existing) Object.assign(existing, { code: template.code, name: template.name, color: template.color, active: template.active });
+      else {
         state.resultCenters.push({ ...template, id: ++centerId, company_id: company.id });
       }
     }
-    for (const template of sharedTypes) {
-      if (!state.employmentTypes.some(item => item.company_id === company.id && normalizeText(item.name) === normalizeText(template.name))) {
+    for (const template of typeTemplates.values()) {
+      const existing = state.employmentTypes.find(item => item.company_id === company.id && normalizeText(item.name) === normalizeText(template.name));
+      if (existing) Object.assign(existing, { name: template.name, has_charges: template.has_charges, active: template.active });
+      else {
         state.employmentTypes.push({ ...template, id: ++typeId, company_id: company.id });
       }
     }
@@ -265,6 +278,8 @@ function normalizeCompanyCatalogs(state: DemoState) {
   state.allocations.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
   state.meiContracts.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
   state.benefitDistributions.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
+  const globalJobTitles = [...new Set(state.companies.flatMap(item => item.settings.job_titles ?? []).map(item => item.trim().toUpperCase()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  state.companies.forEach(item => { item.settings.job_titles = globalJobTitles; });
 }
 
 function saveState(state: DemoState) {
@@ -394,6 +409,7 @@ function benefitLabelFor(code: string) {
   return {
     VT: "Vale transporte",
     AL: "Alimentação",
+    CB: "Cesta básica",
     PS: "Plano de saúde",
     SV: "Seguro de vida"
   }[normalizeBenefitCode(code)] ?? code;
@@ -526,7 +542,7 @@ function missingBenefitDistributions(state: DemoState, companyId: number, compet
   return activeEmployees.flatMap(employee => {
     return (employee.benefits ?? []).flatMap(rawBenefit => {
       const label = normalizeText(String(rawBenefit));
-      const requiredCodes = label === "vale transporte" || label === "transporte" ? ["VT"] : label === "alimentação" ? ["AL"] : label === "plano de saúde" || label === "plano de saude" ? ["PS"] : label === "seguro de vida" || label === "seguro" ? ["SV"] : [];
+      const requiredCodes = label === "vale transporte" || label === "transporte" ? ["VT"] : label === "alimentação" ? ["AL"] : label === "cesta básica" || label === "cesta basica" ? ["CB"] : label === "plano de saúde" || label === "plano de saude" ? ["PS"] : label === "seguro de vida" || label === "seguro" ? ["SV"] : [];
       return requiredCodes.flatMap(code => {
         if (monthlyDistributions.some(item => item.employee_id === employee.id && normalizeBenefitCode(item.benefit_code) === code)) return [];
         return [{ employee_name: employee.employee.full_name, benefit: benefitLabelFor(code) }];
@@ -559,6 +575,7 @@ function buildAlerts(state: DemoState, companyId: number): DemoAlert[] {
     if (contract.status === "Pendente de assinatura") {
       alerts.push({
         id: contract.id * 100 + 1,
+        target_id: contract.id,
         company_id: contract.company_id,
         company_name: companyNameFor(state, contract.company_id),
         type: "Contrato não assinado",
@@ -572,6 +589,7 @@ function buildAlerts(state: DemoState, companyId: number): DemoAlert[] {
     if (contract.status === "Ativo" && daysLeft <= 15) {
       alerts.push({
         id: contract.id * 100 + 2,
+        target_id: contract.id,
         company_id: contract.company_id,
         company_name: companyNameFor(state, contract.company_id),
         type: "Contrato próximo do vencimento",
@@ -1046,7 +1064,15 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
   }
 
   if (route === "/demo/alerts" && method === "GET") return buildAlerts(state, companyId) as T;
-  if (route === "/demo/audit-logs" && method === "GET") return scopeAuditLogs(state, companyId) as T;
+  if (route === "/demo/audit-logs" && method === "GET") {
+    const module = params.get("module")?.trim().toLowerCase() ?? "";
+    const query = params.get("query")?.trim().toLowerCase() ?? "";
+    const limit = Math.min(Math.max(Number(params.get("limit") ?? 100), 1), 200);
+    return scopeAuditLogs(state, companyId)
+      .filter(item => !module || item.module.toLowerCase() === module)
+      .filter(item => !query || `${item.action} ${item.details} ${item.employee_name ?? ""} ${item.performed_by}`.toLowerCase().includes(query))
+      .slice(0, limit) as T;
+  }
   if (route === "/result-centers" && method === "GET") return scopeResultCenters(state, companyId) as T;
   if (route === "/employment-types" && method === "GET") return scopeEmploymentTypes(state, companyId) as T;
   if (route === "/employees" && method === "GET") return scopeEmployees(state, companyId) as T;
@@ -1128,6 +1154,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       signed_by: currentUser.full_name
     };
     state.meiContracts[index] = updated;
+    state.movements.filter(item => item.observation.includes(`MEI#${contractId} - contrato pendente`)).forEach(item => { item.status = "Aplicada"; });
     syncMeiContracts(state);
     appendAudit(state, {
       company_id: companyId,
@@ -1143,70 +1170,140 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     return updated as T;
   }
 
+  if (route.startsWith("/demo/mei-contracts/") && route.endsWith("/renew") && method === "POST") {
+    assertAdmin(token);
+    const contractId = Number(route.split("/")[3]);
+    const source = state.meiContracts.find(item => item.id === contractId && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
+    if (!source) throw new Error("Contrato MEI não encontrado");
+    if (source.status !== "Ativo") throw new Error("Somente contratos ativos podem ser renovados.");
+    if (state.meiContracts.some(item => item.company_id === source.company_id && item.employee_id === source.employee_id && item.status === "Pendente de assinatura")) throw new Error("Já existe uma renovação pendente de assinatura para este MEI.");
+    const payload = body<{ start_date?: string; end_date?: string }>(options);
+    const startDate = String(payload.start_date ?? "");
+    const endDate = String(payload.end_date ?? "");
+    if (!startDate || !endDate || endDate < startDate) throw new Error("Informe uma vigência válida.");
+    const renewed: DemoMeiContract = { ...source, id: nextId(state.meiContracts), status: "Pendente de assinatura", start_date: startDate, end_date: endDate, attachment_name: null, attachment_data_url: null, created_at: new Date().toLocaleString("pt-BR"), signed_at: null, signed_by: null, notified_not_signed: false, notified_15: false, notified_10: false, notified_5: false, movement_created_5: false };
+    state.meiContracts = [renewed, ...state.meiContracts];
+    syncMeiContracts(state);
+    appendAudit(state, { company_id: source.company_id, module: "Contratos MEI", action: "Renovação de contrato criada", employee_name: source.employee_name, result_center: source.result_center, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Contrato anterior #${source.id} | nova vigência ${startDate} a ${endDate}` });
+    saveState(state);
+    return renewed as T;
+  }
+
+  if (route.startsWith("/demo/mei-contracts/") && method === "PATCH") {
+    assertAdmin(token);
+    const contractId = Number(route.split("/")[3]);
+    const index = state.meiContracts.findIndex(item => item.id === contractId && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
+    if (index < 0) throw new Error("Contrato MEI não encontrado");
+    const current = state.meiContracts[index];
+    if (current.status !== "Pendente de assinatura") throw new Error("Contrato assinado não pode ser alterado. Use Renovar para preservar o documento original.");
+    const payload = body<{ employee_id?: number; start_date?: string; end_date?: string }>(options);
+    const employee = state.employees.find(item => item.id === Number(payload.employee_id ?? current.employee_id) && item.company_id === current.company_id && item.status === "ACTIVE" && item.employment_type.name === "MEI");
+    if (!employee) throw new Error("Selecione um colaborador MEI ativo.");
+    const startDate = String(payload.start_date ?? current.start_date);
+    const endDate = String(payload.end_date ?? current.end_date);
+    if (endDate < startDate) throw new Error("A vigência final não pode ser anterior à inicial.");
+    const updated: DemoMeiContract = { ...current, employee_id: employee.id, employee_name: employee.employee.full_name, employee_code: employee.employee_code, result_center: employee.result_center, start_date: startDate, end_date: endDate };
+    state.meiContracts[index] = updated;
+    appendAudit(state, { company_id: updated.company_id, module: "Contratos MEI", action: "Contrato pendente editado", employee_name: updated.employee_name, result_center: updated.result_center, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `${current.start_date} a ${current.end_date} → ${startDate} a ${endDate}` });
+    saveState(state);
+    return updated as T;
+  }
+
+  if (route.startsWith("/demo/mei-contracts/") && method === "DELETE") {
+    assertAdmin(token);
+    const contractId = Number(route.split("/")[3]);
+    const index = state.meiContracts.findIndex(item => item.id === contractId && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
+    if (index < 0) throw new Error("Contrato MEI não encontrado");
+    const current = state.meiContracts[index];
+    if (current.status !== "Pendente de assinatura") throw new Error("Contrato assinado não pode ser excluído; ele deve permanecer no histórico.");
+    const payload = body<{ password?: string }>(options);
+    const currentPassword = state.users.find(item => item.username === currentUser.username)?.password;
+    if (!payload.password || payload.password !== currentPassword) throw new Error("Senha de confirmação inválida.");
+    state.meiContracts.splice(index, 1);
+    state.movements = state.movements.filter(item => !item.observation.includes(`MEI#${contractId} - contrato pendente`));
+    appendAudit(state, { company_id: current.company_id, module: "Contratos MEI", action: "Contrato pendente excluído", employee_name: current.employee_name, result_center: current.result_center, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Contrato #${current.id} | ${current.start_date} a ${current.end_date}` });
+    saveState(state);
+    return { deleted: true } as T;
+  }
+
   if (route === "/result-centers" && method === "POST") {
     assertAdmin(token);
-    if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para cadastrar o Centro de Resultado.");
     const payload = body<Partial<ResultCenter>>(options);
     const code = String(payload.code ?? "").trim().toUpperCase();
     const name = String(payload.name ?? "").trim().toUpperCase();
     if (!code || !name) throw new Error("Informe código e nome do Centro de Resultado.");
-    if (scopeResultCenters(state, companyId).some(item => item.code.toUpperCase() === code)) throw new Error("Código de Centro de Resultado já cadastrado para esta empresa.");
-    const item = { id: nextId(state.resultCenters), company_id: companyId, code, name, color: payload.color ?? "#2563eb", active: true };
-    state.resultCenters = [...state.resultCenters, item];
+    if (state.resultCenters.some(item => item.code.toUpperCase() === code)) throw new Error("Código de Centro de Resultado já cadastrado no catálogo global.");
+    let id = nextId(state.resultCenters);
+    const created = state.companies.map(company => ({ id: id++, company_id: company.id, code, name, color: payload.color ?? "#2563eb", active: true }));
+    state.resultCenters = [...state.resultCenters, ...created];
     saveState(state);
-    return item as T;
+    return (created.find(item => item.company_id === companyId) ?? created[0]) as T;
   }
 
   if (route === "/employment-types" && method === "POST") {
     assertAdmin(token);
-    if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para cadastrar a modalidade.");
     const payload = body<Partial<EmploymentType>>(options);
     const name = String(payload.name ?? "").trim().toUpperCase();
     if (!name) throw new Error("Informe o nome da modalidade.");
-    if (scopeEmploymentTypes(state, companyId).some(item => normalizeText(item.name) === normalizeText(name))) throw new Error("Modalidade já cadastrada para esta empresa.");
-    const item = { id: nextId(state.employmentTypes), company_id: companyId, name, has_charges: Boolean(payload.has_charges), active: true };
-    state.employmentTypes = [...state.employmentTypes, item];
+    if (state.employmentTypes.some(item => normalizeText(item.name) === normalizeText(name))) throw new Error("Modalidade já cadastrada no catálogo global.");
+    let id = nextId(state.employmentTypes);
+    const created = state.companies.map(company => ({ id: id++, company_id: company.id, name, has_charges: Boolean(payload.has_charges), active: true }));
+    state.employmentTypes = [...state.employmentTypes, ...created];
     saveState(state);
-    return item as T;
+    return (created.find(item => item.company_id === companyId) ?? created[0]) as T;
   }
 
   if (route.startsWith("/result-centers/") && method === "PATCH") {
     assertAdmin(token);
     const id = Number(route.split("/")[2]);
-    const item = state.resultCenters.find(center => center.id === id && (companyId === ALL_COMPANIES_ID || center.company_id === companyId));
+    const item = state.resultCenters.find(center => center.id === id);
     if (!item) throw new Error("Centro de Resultado não encontrado.");
     const payload = body<Partial<ResultCenter>>(options);
     const nextCode = String(payload.code ?? item.code).trim().toUpperCase();
-    if (state.resultCenters.some(center => center.id !== id && center.company_id === item.company_id && center.code === nextCode)) {
-      throw new Error("Código de Centro de Resultado já cadastrado para esta empresa.");
+    if (state.resultCenters.some(center => center.code !== item.code && center.code === nextCode)) {
+      throw new Error("Código de Centro de Resultado já cadastrado no catálogo global.");
     }
-    Object.assign(item, {
-      code: nextCode,
-      name: String(payload.name ?? item.name).trim().toUpperCase(),
-      color: payload.color ?? item.color,
-      active: payload.active ?? item.active
-    });
+    state.resultCenters.filter(center => center.code === item.code).forEach(center => Object.assign(center, { code: nextCode, name: String(payload.name ?? item.name).trim().toUpperCase(), color: payload.color ?? item.color, active: payload.active ?? item.active }));
     saveState(state);
     return item as T;
+  }
+
+  if (route.startsWith("/result-centers/") && method === "DELETE") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[2]);
+    const item = state.resultCenters.find(center => center.id === id);
+    if (!item) throw new Error("Centro de Resultado não encontrado.");
+    const inUse = state.employees.some(employee => employee.result_center.code === item.code) || state.movements.some(movement => movement.result_center.code === item.code);
+    if (inUse) throw new Error("Este Centro de Resultado possui colaboradores ou movimentações vinculadas. Inative-o em vez de excluir.");
+    state.resultCenters = state.resultCenters.filter(center => center.code !== item.code);
+    saveState(state);
+    return undefined as T;
   }
 
   if (route.startsWith("/employment-types/") && method === "PATCH") {
     assertAdmin(token);
     const id = Number(route.split("/")[2]);
-    const item = state.employmentTypes.find(type => type.id === id && (companyId === ALL_COMPANIES_ID || type.company_id === companyId));
+    const item = state.employmentTypes.find(type => type.id === id);
     if (!item) throw new Error("Modalidade não encontrada.");
     const payload = body<Partial<EmploymentType>>(options);
     const nextName = String(payload.name ?? item.name).trim().toUpperCase();
-    if (state.employmentTypes.some(type => type.id !== id && type.company_id === item.company_id && normalizeText(type.name) === normalizeText(nextName))) {
-      throw new Error("Modalidade já cadastrada para esta empresa.");
+    if (state.employmentTypes.some(type => normalizeText(type.name) !== normalizeText(item.name) && normalizeText(type.name) === normalizeText(nextName))) {
+      throw new Error("Modalidade já cadastrada no catálogo global.");
     }
-    Object.assign(item, {
-      name: nextName,
-      has_charges: payload.has_charges ?? item.has_charges,
-      active: payload.active ?? item.active
-    });
+    state.employmentTypes.filter(type => normalizeText(type.name) === normalizeText(item.name)).forEach(type => Object.assign(type, { name: nextName, has_charges: payload.has_charges ?? item.has_charges, active: payload.active ?? item.active }));
     saveState(state);
     return item as T;
+  }
+
+  if (route.startsWith("/employment-types/") && method === "DELETE") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[2]);
+    const item = state.employmentTypes.find(type => type.id === id);
+    if (!item) throw new Error("Modalidade não encontrada.");
+    if (state.employees.some(employee => normalizeText(employee.employment_type.name) === normalizeText(item.name))) throw new Error("Esta modalidade possui colaboradores, contratos ou movimentações vinculadas. Inative-a em vez de excluir.");
+    state.employmentTypes = state.employmentTypes.filter(type => normalizeText(type.name) !== normalizeText(item.name));
+    saveState(state);
+    return undefined as T;
   }
 
   if (route === "/demo/benefits/catalog" && method === "POST") {
@@ -1664,6 +1761,33 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     return updated as T;
   }
 
+  if (route.startsWith("/demo/movements/") && method === "DELETE") {
+    assertAdmin(token);
+    const movementId = Number(route.split("/")[3]);
+    const payload = body<{ password?: string }>(options);
+    const currentPassword = state.users.find(item => item.username === currentUser.username)?.password;
+    if (!payload.password || payload.password !== currentPassword) {
+      throw new Error("Senha de confirmação inválida.");
+    }
+    const index = companyId === ALL_COMPANIES_ID
+      ? state.movements.findIndex(item => item.id === movementId)
+      : state.movements.findIndex(item => item.id === movementId && item.company_id === companyId);
+    if (index < 0) throw new Error("Movimentação não encontrada");
+    const [removed] = state.movements.splice(index, 1);
+    appendAudit(state, {
+      company_id: removed.company_id,
+      module: "Movimentações",
+      action: "Movimentação excluída",
+      employee_name: removed.employee_name,
+      result_center: removed.result_center,
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${removed.type} em ${removed.competency} excluída com confirmação por senha`
+    });
+    saveState(state);
+    return undefined as T;
+  }
+
   if (route === "/demo/cost-allocations" && method === "GET") {
     const competency = params.get("competency") ?? "2026-06";
     return scopeAllocations(state, companyId).filter(item => item.competency === competency) as T;
@@ -1762,6 +1886,10 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const normalizedPayload: Partial<DemoSettings> = { ...payload };
     if (Array.isArray(payload.job_titles)) {
       normalizedPayload.job_titles = [...new Set(payload.job_titles.map(item => String(item).trim().toUpperCase()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    }
+    if (Array.isArray(normalizedPayload.job_titles)) {
+      state.companies = state.companies.map(current => ({ ...current, settings: { ...current.settings, job_titles: normalizedPayload.job_titles! } }));
+      delete normalizedPayload.job_titles;
     }
     if (companyId === ALL_COMPANIES_ID) {
       state.companies = state.companies.map(current => ({ ...current, settings: { ...current.settings, ...normalizedPayload } }));

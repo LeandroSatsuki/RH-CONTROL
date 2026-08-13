@@ -36,6 +36,19 @@ function Write-Step([string]$Message) {
     Write-Host "[Nexo Servidor] $Message" -ForegroundColor Cyan
 }
 
+function Test-PrivateIPv4([string]$Address) {
+    try {
+        $bytes = [Net.IPAddress]::Parse($Address).GetAddressBytes()
+        return (
+            $bytes[0] -eq 10 -or
+            ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
+            ($bytes[0] -eq 192 -and $bytes[1] -eq 168)
+        )
+    } catch {
+        return $false
+    }
+}
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -173,7 +186,7 @@ function Register-NexoApiTask([string]$ScriptPath) {
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`""
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $taskPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 3650)
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $taskPrincipal -Settings $settings -Force | Out-Null
 }
 
@@ -255,6 +268,7 @@ Stop-NexoApiProcess
 if ($LASTEXITCODE -gt 7) { throw "Falha ao copiar o backend para $TargetBackend" }
 Copy-Item (Join-Path $PSScriptRoot "server-api.ps1") $TargetScripts -Force
 Copy-Item (Join-Path $PSScriptRoot "server-status.ps1") $TargetScripts -Force
+Copy-Item (Join-Path $PSScriptRoot "server-status.bat") $TargetScripts -Force
 Copy-Item (Join-Path $PSScriptRoot "server-update.ps1") $TargetScripts -Force
 Copy-Item (Join-Path $PSScriptRoot "repair-server-api.ps1") $TargetScripts -Force
 Copy-Item (Join-Path $PSScriptRoot "reset-admin-password.ps1") $TargetScripts -Force
@@ -328,16 +342,30 @@ Start-ScheduledTask -TaskName $TaskName
 Write-Step "Aguardando API..."
 $ready = Wait-ApiReady 30
 if (-not $ready) {
-    Write-Step "Agendador nao respondeu a tempo. Iniciando API diretamente..."
+    Write-Step "Agendador nao respondeu a tempo. Validando a API diretamente antes de reparar a tarefa..."
     Stop-NexoApiProcess
     $fallbackLog = Join-Path $InstallLogs "api-fallback.log"
     $fallbackErr = Join-Path $InstallLogs "api-fallback-error.log"
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$apiScript`"" -WindowStyle Hidden -RedirectStandardOutput $fallbackLog -RedirectStandardError $fallbackErr
     $ready = Wait-ApiReady 30
+    if (-not $ready) {
+        throw "A API nao iniciou nem no modo de diagnostico. $(Get-PortDiagnostic) Verifique C:\Nexo\logs\api.log e C:\Nexo\logs\api-error.log."
+    }
+
+    Write-Step "API validada. Transferindo a execucao para a tarefa automatica..."
+    $listeners = @(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue)
+    foreach ($listener in $listeners) {
+        if ([int]$listener.OwningProcess -gt 0) {
+            Stop-Process -Id ([int]$listener.OwningProcess) -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Seconds 2
     Register-NexoApiTask $apiScript
+    Start-ScheduledTask -TaskName $TaskName
+    $ready = Wait-ApiReady 30
 }
 if (-not $ready) {
-    throw "A API nao iniciou. $(Get-PortDiagnostic) Verifique C:\Nexo\logs\api.log, C:\Nexo\logs\api-error.log e rode C:\Nexo\scripts\server-status.ps1."
+    throw "A API funciona diretamente, mas a tarefa automatica nao assumiu a execucao. $(Get-PortDiagnostic) Rode C:\Nexo\scripts\repair-server-api.ps1 como Administrador."
 }
 
 Write-Host ""
@@ -345,7 +373,7 @@ Write-Host "Servidor Nexo instalado com sucesso." -ForegroundColor Green
 Write-Host "Usuario inicial: admin"
 Write-Host "Configure os aplicativos clientes com um dos enderecos abaixo:"
 Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-    Where-Object { $_.IPAddress -notlike "127.*" -and $_.PrefixOrigin -ne "WellKnown" } |
+    Where-Object { (Test-PrivateIPv4 $_.IPAddress) -and $_.PrefixOrigin -ne "WellKnown" } |
     Sort-Object InterfaceAlias, IPAddress |
     ForEach-Object { Write-Host "http://$($_.IPAddress):8000" -ForegroundColor Yellow }
 

@@ -37,7 +37,9 @@ def client() -> Generator[TestClient, None, None]:
 
 
 def auth_header(client: TestClient, username: str, password: str) -> dict[str, str]:
-    response = client.post("/api/auth/login", json={"username": username, "password": password})
+    response = client.post(
+        "/api/auth/login", json={"username": username, "password": password}
+    )
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
@@ -65,7 +67,12 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     created_user = client.post(
         "/api/users",
         headers=admin,
-        json={"username": "consulta", "full_name": "Consulta", "password": "SenhaForte123", "role": "CONSULTANT"},
+        json={
+            "username": "consulta",
+            "full_name": "Consulta",
+            "password": "SenhaForte123",
+            "role": "CONSULTANT",
+        },
     )
     assert created_user.status_code == 201
     toggled_user = client.patch(
@@ -77,7 +84,12 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     center = client.post(
         "/api/result-centers",
         headers=admin,
-        json={"code": "ADM", "name": "Administrativo", "color": "#2563EB", "active": True},
+        json={
+            "code": "ADM",
+            "name": "Administrativo",
+            "color": "#2563EB",
+            "active": True,
+        },
     )
     employment_type = client.post(
         "/api/employment-types",
@@ -89,7 +101,9 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         headers=admin,
         json={"name": "MEI", "has_charges": False, "active": True},
     )
-    assert center.status_code == employment_type.status_code == mei_type.status_code == 201
+    assert (
+        center.status_code == employment_type.status_code == mei_type.status_code == 201
+    )
     edited_center = client.patch(
         f"/api/result-centers/{center.json()['id']}?company_id=1",
         headers=admin,
@@ -98,11 +112,14 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert edited_center.status_code == 200
     assert edited_center.json()["name"] == "ADMINISTRATIVO GERAL"
     assert edited_center.json()["active"] is False
-    assert client.patch(
-        f"/api/result-centers/{center.json()['id']}?company_id=1",
-        headers=admin,
-        json={"active": True},
-    ).status_code == 200
+    assert (
+        client.patch(
+            f"/api/result-centers/{center.json()['id']}?company_id=1",
+            headers=admin,
+            json={"active": True},
+        ).status_code
+        == 200
+    )
 
     employee = {
         "cpf": "529.982.247-25",
@@ -134,10 +151,14 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert created_employee["email"] == "pessoa@empresa.com.br"
     assert created_employee["phone"] == "27999990000"
     assert Decimal(created_employee["salary_history"][0]["amount"]) == Decimal("4500")
-    assert Decimal(created_employee["salary_history"][0]["family_allowance"]) == Decimal("0")
+    assert Decimal(
+        created_employee["salary_history"][0]["family_allowance"]
+    ) == Decimal("0")
     assert created_employee["salary_history"][0]["reason"] == "Cadastro inicial"
     employee["employee_code"] = "0002"
-    assert client.post("/api/employees", headers=admin, json=employee).status_code == 409
+    assert (
+        client.post("/api/employees", headers=admin, json=employee).status_code == 409
+    )
     missing_pix = {**employee, "employee_code": "0003"}
     missing_pix.pop("pix_key")
     response = client.post("/api/employees", headers=admin, json=missing_pix)
@@ -205,7 +226,9 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     )
     assert movement.status_code == 201
     movement_id = movement.json()["id"]
-    listed_movements = client.get("/api/demo/movements?competency=2026-06", headers=admin)
+    listed_movements = client.get(
+        "/api/demo/movements?competency=2026-06", headers=admin
+    )
     assert listed_movements.status_code == 200
     assert listed_movements.json()[0]["observation"] == "Falta homologada"
     forbidden_movement_update = client.patch(
@@ -230,6 +253,42 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     )
     assert updated_movement.status_code == 200
     assert updated_movement.json()["status"] == "Conferida"
+    forbidden_movement_delete = client.request(
+        "DELETE",
+        f"/api/demo/movements/{movement_id}",
+        headers=admin,
+        json={"password": "senha-errada"},
+    )
+    assert forbidden_movement_delete.status_code == 403
+    deleted_movement = client.request(
+        "DELETE",
+        f"/api/demo/movements/{movement_id}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert deleted_movement.status_code == 200
+    assert deleted_movement.json() == {"deleted": True}
+    assert (
+        client.get("/api/demo/movements?competency=2026-06", headers=admin).json() == []
+    )
+
+    vacation = client.post(
+        "/api/demo/movements",
+        headers=admin,
+        json={
+            "competency": "2026-06",
+            "employee_id": created_employee["id"],
+            "type": "férias",
+            "start_date": "2026-06-10",
+            "end_date": "2026-06-30",
+            "days": 3,
+            "hour_impact": 1,
+            "observation": "Férias com cálculo automático",
+        },
+    )
+    assert vacation.status_code == 201
+    assert vacation.json()["end_date"] == "2026-06-12"
+    assert Decimal(str(vacation.json()["hour_impact"])) == Decimal("26.4")
 
     mei_employee_payload = {
         "cpf": "111.444.777-35",
@@ -254,7 +313,9 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         "pix_key": "11144477735",
         "benefits": [],
     }
-    mei_employee = client.post("/api/employees", headers=admin, json=mei_employee_payload)
+    mei_employee = client.post(
+        "/api/employees", headers=admin, json=mei_employee_payload
+    )
     assert mei_employee.status_code == 201
     mei_contract = client.post(
         "/api/demo/mei-contracts",
@@ -267,20 +328,91 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     )
     assert mei_contract.status_code == 201
     assert mei_contract.json()["status"] == "Pendente de assinatura"
+    edited_mei_contract = client.patch(
+        f"/api/demo/mei-contracts/{mei_contract.json()['id']}",
+        headers=admin,
+        json={
+            "employee_id": mei_employee.json()["id"],
+            "start_date": "2026-06-02",
+            "end_date": "2026-07-02",
+        },
+    )
+    assert edited_mei_contract.status_code == 200
+    assert edited_mei_contract.json()["start_date"] == "2026-06-02"
     mei_movements = client.get("/api/demo/movements?competency=2026-06", headers=admin)
     assert any(item["type"] == "contrato não assinado" for item in mei_movements.json())
     signed_contract = client.patch(
         f"/api/demo/mei-contracts/{mei_contract.json()['id']}/sign",
         headers=admin,
-        json={"attachment_name": "contrato-mei.pdf", "attachment_data_url": "data:application/pdf;base64,JVBERi0="},
+        json={
+            "attachment_name": "contrato-mei.pdf",
+            "attachment_data_url": "data:application/pdf;base64,JVBERi0=",
+        },
     )
     assert signed_contract.status_code == 200
     assert signed_contract.json()["status"] == "Ativo"
     assert signed_contract.json()["attachment_name"] == "contrato-mei.pdf"
+    movements_after_sign = client.get(
+        "/api/demo/movements?competency=2026-06", headers=admin
+    ).json()
+    assert any(
+        item["type"] == "contrato não assinado" and item["status"] == "Aplicada"
+        for item in movements_after_sign
+    )
+    protected_signed_contract = client.patch(
+        f"/api/demo/mei-contracts/{mei_contract.json()['id']}",
+        headers=admin,
+        json={"end_date": "2026-08-01"},
+    )
+    assert protected_signed_contract.status_code == 409
+    renewed_contract = client.post(
+        f"/api/demo/mei-contracts/{mei_contract.json()['id']}/renew",
+        headers=admin,
+        json={"start_date": "2026-07-03", "end_date": "2027-07-02"},
+    )
+    assert renewed_contract.status_code == 201
+    assert renewed_contract.json()["status"] == "Pendente de assinatura"
+    deleted_renewal = client.request(
+        "DELETE",
+        f"/api/demo/mei-contracts/{renewed_contract.json()['id']}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert deleted_renewal.status_code == 200
+    assert deleted_renewal.json()["deleted"] is True
+
+    unused_center = client.post(
+        "/api/result-centers",
+        headers=admin,
+        json={"code": "TMP", "name": "Temporário", "color": "#64748B", "active": True},
+    )
+    assert unused_center.status_code == 201
+    assert client.delete(
+        f"/api/result-centers/{unused_center.json()['id']}?company_id=1",
+        headers=admin,
+    ).status_code == 204
+    assert client.delete(
+        f"/api/result-centers/{center.json()['id']}?company_id=1", headers=admin
+    ).status_code == 409
+
+    unused_type = client.post(
+        "/api/employment-types",
+        headers=admin,
+        json={"name": "TEMPORÁRIO", "has_charges": False, "active": True},
+    )
+    assert unused_type.status_code == 201
+    assert client.delete(
+        f"/api/employment-types/{unused_type.json()['id']}?company_id=1",
+        headers=admin,
+    ).status_code == 204
+    assert client.delete(
+        f"/api/employment-types/{mei_type.json()['id']}?company_id=1",
+        headers=admin,
+    ).status_code == 409
 
     benefits = client.get("/api/demo/benefits/catalog", headers=admin)
     assert benefits.status_code == 200
-    assert {item["code"] for item in benefits.json()} >= {"VT", "AL", "PS", "SV"}
+    assert {item["code"] for item in benefits.json()} >= {"VT", "AL", "CB", "PS", "SV"}
     distribution = client.post(
         "/api/demo/benefit-distributions",
         headers=admin,
@@ -310,8 +442,15 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert Decimal(str(row["subtotal_earnings"])) == Decimal("4800.0")
     assert Decimal(str(row["inss"])) == Decimal("960.0")
     assert Decimal(str(row["gross_payroll"])) == Decimal("5020.0")
-    templates = [{"id": 1, "name": "Custo mensal", "source": "Custo / Folha", "fields": []}]
-    assert client.put("/api/demo/report-templates", headers=admin, json=templates).status_code == 200
+    templates = [
+        {"id": 1, "name": "Custo mensal", "source": "Custo / Folha", "fields": []}
+    ]
+    assert (
+        client.put(
+            "/api/demo/report-templates", headers=admin, json=templates
+        ).status_code
+        == 200
+    )
     assert client.get("/api/demo/report-templates", headers=admin).json() == templates
     revenue = client.patch(
         "/api/demo/indicator-revenue",
@@ -319,7 +458,12 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         json={"scope": "1:2026:ADM", "values": {"Jan": 100000}},
     )
     assert revenue.status_code == 200
-    assert client.get("/api/demo/indicator-revenue", headers=admin).json()["1:2026:ADM"]["Jan"] == 100000
+    assert (
+        client.get("/api/demo/indicator-revenue", headers=admin).json()["1:2026:ADM"][
+            "Jan"
+        ]
+        == 100000
+    )
     override = client.patch(
         f"/api/demo/payroll/{created_employee['id']}?competency=2026-06",
         headers=admin,
@@ -327,14 +471,23 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     )
     assert override.status_code == 200
     adjusted = client.get("/api/demo/payroll?competency=2026-06", headers=admin).json()
-    adjusted_row = next(item for item in adjusted if item["employee_id"] == created_employee["id"])
+    adjusted_row = next(
+        item for item in adjusted if item["employee_id"] == created_employee["id"]
+    )
     assert Decimal(str(adjusted_row["cost_aid"])) == Decimal("125.0")
-    report_preview = client.get("/api/demo/report-preview?competency=2026-06", headers=admin)
+    report_preview = client.get(
+        "/api/demo/report-preview?competency=2026-06", headers=admin
+    )
     assert report_preview.status_code == 200
     assert report_preview.json()["company"] == "Empresa Teste"
     assert report_preview.json()["cards"][0]["code"] == "ADM"
     assert Decimal(str(report_preview.json()["cards"][0]["total_cost"])) >= Decimal("0")
-    assert client.get("/api/demo/cost-allocations?competency=2026-06", headers=admin).json() == []
+    assert (
+        client.get(
+            "/api/demo/cost-allocations?competency=2026-06", headers=admin
+        ).json()
+        == []
+    )
     indicators = client.get("/api/demo/indicators?competency=2026-06", headers=admin)
     assert indicators.status_code == 200
     assert indicators.json()["final_headcount"] == 0
@@ -353,18 +506,36 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert locked_distribution.status_code == 409
     alerts = client.get("/api/demo/alerts?company_id=1", headers=admin)
     assert alerts.status_code == 200
-    assert any(item["type"] == "Contrato próximo do vencimento" for item in alerts.json())
+    assert any(
+        item["type"] == "Contrato próximo do vencimento" for item in alerts.json()
+    )
     audit_logs = client.get("/api/demo/audit-logs?company_id=1", headers=admin)
     assert audit_logs.status_code == 200
     assert any(item["module"] == "Benefícios" for item in audit_logs.json())
+    movement_audit = client.get(
+        "/api/demo/audit-logs?company_id=1&module=Movimenta%C3%A7%C3%B5es&query=movimenta%C3%A7%C3%A3o&limit=100",
+        headers=admin,
+    )
+    assert movement_audit.status_code == 200
+    assert {item["action"] for item in movement_audit.json()} >= {
+        "Movimentação editada",
+        "Movimentação excluída",
+    }
+    assert all(item["module"] == "Movimentações" for item in movement_audit.json())
     indicators = client.get("/api/demo/indicators?competency=2026-06", headers=admin)
     assert indicators.status_code == 200
     assert indicators.json()["final_headcount"] >= 1
     assert Decimal(str(indicators.json()["total_cost"])) >= Decimal("0")
-    indicator_sheets = client.get("/api/demo/indicators/sheets?competency=2026-06", headers=admin)
+    indicator_sheets = client.get(
+        "/api/demo/indicators/sheets?competency=2026-06", headers=admin
+    )
     assert indicator_sheets.status_code == 200
     assert "ADM" in indicator_sheets.json()["sheets"]
-    adm_total = next(row for row in indicator_sheets.json()["sheets"]["ADM"]["costRows"] if row["label"] == "Total")
+    adm_total = next(
+        row
+        for row in indicator_sheets.json()["sheets"]["ADM"]["costRows"]
+        if row["label"] == "Total"
+    )
     assert Decimal(str(adm_total["values"][5])) >= Decimal("0")
 
     for code, name, color in [
@@ -381,9 +552,16 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
 
     dashboard = client.get("/api/dashboard?month=6&year=2026", headers=admin)
     assert dashboard.status_code == 200
-    assert [card["code"] for card in dashboard.json()["cards"]] == ["ADM", "COM", "DIR", "IND"]
+    assert [card["code"] for card in dashboard.json()["cards"]] == [
+        "ADM",
+        "COM",
+        "DIR",
+        "IND",
+    ]
     assert dashboard.json()["consolidated"]["total_cost"] == 0
-    dashboard_by_competency = client.get("/api/dashboard?competency=2026-06", headers=admin)
+    dashboard_by_competency = client.get(
+        "/api/dashboard?competency=2026-06", headers=admin
+    )
     assert dashboard_by_competency.status_code == 200
     dashboard_default = client.get("/api/dashboard", headers=admin)
     assert dashboard_default.status_code == 200
@@ -475,35 +653,67 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         },
     )
     assert scoped_center.status_code == 201
-    filtered_centers = client.get(f"/api/result-centers?company_id={company_id}", headers=admin)
-    assert filtered_centers.status_code == 200
-    assert [item["code"] for item in filtered_centers.json()] == ["BETA"]
-    scoped_type = client.post(
-        "/api/employment-types",
-        headers=admin,
-        json={
-            "company_id": company_id,
-            "name": "CLT",
-            "has_charges": True,
-            "active": True,
-        },
+    filtered_centers = client.get(
+        f"/api/result-centers?company_id={company_id}", headers=admin
     )
-    assert scoped_type.status_code == 201
+    assert filtered_centers.status_code == 200
+    assert [item["code"] for item in filtered_centers.json()] == [
+        "ADM",
+        "BETA",
+        "COM",
+        "DIR",
+        "IND",
+    ]
+    primary_centers = client.get(
+        "/api/result-centers?company_id=1", headers=admin
+    ).json()
+    assert any(item["code"] == "BETA" for item in primary_centers)
+    scoped_type = next(
+        item
+        for item in client.get(
+            f"/api/employment-types?company_id={company_id}", headers=admin
+        ).json()
+        if item["name"] == "CLT"
+    )
+    updated_global_center = client.patch(
+        f"/api/result-centers/{scoped_center.json()['id']}?company_id={company_id}",
+        headers=admin,
+        json={"name": "BETA GLOBAL"},
+    )
+    assert updated_global_center.status_code == 200
+    assert (
+        next(
+            item
+            for item in client.get(
+                "/api/result-centers?company_id=1", headers=admin
+            ).json()
+            if item["code"] == "BETA"
+        )["name"]
+        == "BETA GLOBAL"
+    )
     transferred_employee = client.patch(
         f"/api/employees/{created_employee['id']}?company_id=1",
         headers=admin,
         json={
             "company_id": company_id,
             "result_center_id": scoped_center.json()["id"],
-            "employment_type_id": scoped_type.json()["id"],
+            "employment_type_id": scoped_type["id"],
         },
     )
     assert transferred_employee.status_code == 200
     assert transferred_employee.json()["company_id"] == company_id
     assert transferred_employee.json()["employee_code"].startswith("BETA-")
     assert client.get("/api/employees?company_id=1", headers=admin).status_code == 200
-    assert all(item["id"] != created_employee["id"] for item in client.get("/api/employees?company_id=1", headers=admin).json())
-    assert any(item["id"] == created_employee["id"] for item in client.get(f"/api/employees?company_id={company_id}", headers=admin).json())
+    assert all(
+        item["id"] != created_employee["id"]
+        for item in client.get("/api/employees?company_id=1", headers=admin).json()
+    )
+    assert any(
+        item["id"] == created_employee["id"]
+        for item in client.get(
+            f"/api/employees?company_id={company_id}", headers=admin
+        ).json()
+    )
 
     with next(app.dependency_overrides[get_db]()) as db:
         db.add(
@@ -524,7 +734,9 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert forbidden.status_code == 403
 
 
-def test_company_lookup_endpoint_uses_brasil_api_payload_shape(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_company_lookup_endpoint_uses_brasil_api_payload_shape(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     setup = client.post(
         "/api/setup",
         json={
@@ -542,7 +754,9 @@ def test_company_lookup_endpoint_uses_brasil_api_payload_shape(client: TestClien
     assert setup.status_code == 201
     admin = auth_header(client, "admin", "SenhaForte123")
 
-    def fake_request_json(url: str, headers: dict[str, str] | None = None) -> dict[str, object]:
+    def fake_request_json(
+        url: str, headers: dict[str, str] | None = None
+    ) -> dict[str, object]:
         assert "brasilapi.com.br/api/cnpj" in url
         return {
             "razao_social": "Alpha Matriz Ltda.",
@@ -571,7 +785,9 @@ def test_company_lookup_endpoint_uses_brasil_api_payload_shape(client: TestClien
     assert data["source"] == "BrasilAPI"
 
 
-def test_company_lookup_falls_back_without_blocking_form(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_company_lookup_falls_back_without_blocking_form(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     setup = client.post(
         "/api/setup",
         json={
@@ -592,7 +808,9 @@ def test_company_lookup_falls_back_without_blocking_form(client: TestClient, mon
     monkeypatch.setattr(companies_routes.settings, "cnpj_lookup_bearer_token", "")
     monkeypatch.setattr(companies_routes.settings, "cnpj_lookup_url", "")
 
-    def broken_request_json(url: str, headers: dict[str, str] | None = None) -> dict[str, object]:
+    def broken_request_json(
+        url: str, headers: dict[str, str] | None = None
+    ) -> dict[str, object]:
         raise OSError("service down")
 
     monkeypatch.setattr(companies_routes, "request_json", broken_request_json)

@@ -4,7 +4,7 @@ Sistema de controle de custos e pessoas com operação multiempresa, histórico 
 
 ## Versão de produção
 
-A versão `1.0.0` utiliza uma arquitetura cliente-servidor:
+A versão `1.0.4` utiliza uma arquitetura cliente-servidor:
 
 - **Servidor principal:** FastAPI, PostgreSQL, migrations, backup e API compartilhada.
 - **Estações clientes:** aplicativo Windows Electron com frontend React.
@@ -19,9 +19,9 @@ O computador principal deve permanecer ligado durante o uso e ter IP fixo ou res
 - autenticação por usuário e senha, com perfis Administrador e Consultor;
 - multiempresas, empresa principal, ativação/inativação e consulta pública de CNPJ;
 - colaboradores por empresa, CPF/CNPJ validado, matrícula automática, endereço, contato, PIX e dados bancários;
-- cargos/funções, modalidades e Centros de Resultado configuráveis;
+- cargos/funções, modalidades e Centros de Resultado globais, com exclusão protegida quando houver vínculos;
 - histórico salarial e movimentações auditáveis;
-- contratos MEI, assinatura, anexo, vigência e alertas;
+- contratos MEI com ações pendentes, edição antes da assinatura, anexo, renovação, download, auditoria e alertas;
 - benefícios mensais, distribuição individual ou em lote e dependentes de plano de saúde;
 - custo/folha por competência, CR e modalidade, com encargos e provisões configuráveis;
 - fechamento mensal e bloqueios de pendências;
@@ -36,26 +36,27 @@ O computador principal deve permanecer ligado durante o uso e ter IP fixo ou res
 
 Os artefatos finais ficam em `entregas/`:
 
-- `Nexo-Servidor-Setup-1.0.1.exe`
-- `Nexo-Cliente-Setup-1.0.0.exe`
+- `Nexo-Servidor-Setup-1.0.4.exe` para primeira instalação;
+- `Nexo-Servidor-Atualizador-1.0.4.exe` para servidor já instalado;
+- `Nexo-Cliente-Setup-1.0.4.exe` para instalação manual do cliente.
 
 ### Computador principal
 
-1. Execute `Nexo-Servidor-Setup-1.0.1.exe` como Administrador.
+1. Execute `Nexo-Servidor-Setup-1.0.4.exe` como Administrador na primeira instalação.
 2. Informe uma senha para o PostgreSQL e uma senha inicial para o usuário `admin`.
 3. Aguarde a confirmação de que banco, migrations, seed, API, firewall e backup foram configurados.
-4. Execute também `Nexo-Cliente-Setup-1.0.0.exe` para usar o Nexo no computador principal.
-5. Rode o diagnóstico em PowerShell aberto como Administrador:
+4. Execute também `Nexo-Cliente-Setup-1.0.4.exe` para usar o Nexo no computador principal.
+5. Clique duas vezes no atalho de diagnóstico; ele solicitará permissão de Administrador:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File C:\Nexo\scripts\server-status.ps1
+```text
+C:\Nexo\scripts\server-status.bat
 ```
 
 O resultado deve mostrar `PostgreSQL 5432: True`, `API 8000: True` e `Saude da API: ok`.
 
 ### Outros computadores
 
-1. Instale somente `Nexo-Cliente-Setup-1.0.0.exe`.
+1. Instale somente `Nexo-Cliente-Setup-1.0.4.exe`.
 2. Na primeira abertura, informe o endereço privado mostrado pelo diagnóstico, por exemplo `http://192.168.0.10:8000`.
 3. Entre com o usuário criado pelo Administrador.
 
@@ -95,17 +96,21 @@ Boas práticas:
 
 ## Atualizações
 
-O cliente Electron consulta versões publicadas em GitHub Releases. A atualização do servidor é aplicada pelo instalador novo ou pelo pacote correspondente.
+O cliente Electron consulta versões publicadas em GitHub Releases, baixa a nova versão em segundo plano e oferece a reinicialização. Se o usuário escolher “Depois”, a versão baixada será aplicada quando o Nexo for fechado.
+
+Em um servidor já instalado, execute `Nexo-Servidor-Atualizador-1.0.4.exe` como Administrador. Esse entregável não faz instalação inicial: ele exige `C:\Nexo\.env`, cria e valida o backup, atualiza os arquivos, aplica migrations e só conclui depois que a API responder pela tarefa automática. Use `Nexo-Servidor-Setup-1.0.4.exe` apenas para uma máquina sem servidor ou para reparo assistido.
 
 Antes de qualquer migration, `server-update.ps1` cria e valida um backup integral. Se isso falhar, a atualização é interrompida antes de modificar o banco.
 
-Nunca desinstale PostgreSQL nem apague `C:\Nexo` para atualizar. Instale a nova versão por cima da existente.
+Nunca desinstale PostgreSQL nem apague `C:\Nexo` para atualizar.
 
 ## Diagnóstico
 
-```powershell
-powershell -ExecutionPolicy Bypass -File C:\Nexo\scripts\server-status.ps1
+```text
+C:\Nexo\scripts\server-status.bat
 ```
+
+O atalho mantém a janela aberta para leitura. Use-o antes/depois de atualizar ou quando algum cliente não conseguir conectar; não é necessário executá-lo diariamente.
 
 O diagnóstico informa:
 
@@ -154,15 +159,16 @@ cd frontend
 npm.cmd run desktop:build
 
 cd ..
-.\scripts\build-server-package.ps1 -Version 1.0.0
-.\scripts\build-separated-installers.ps1 -Version 1.0.0
+.\scripts\build-server-package.ps1 -Version 1.0.4
+.\scripts\build-separated-installers.ps1 -Version 1.0.4
 ```
 
 Antes da entrega, valide hashes e tamanhos:
 
 ```powershell
-Get-FileHash .\entregas\Nexo-Servidor-Setup-1.0.0.exe -Algorithm SHA256
-Get-FileHash .\entregas\Nexo-Cliente-Setup-1.0.0.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Servidor-Setup-1.0.4.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Servidor-Atualizador-1.0.4.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Cliente-Setup-1.0.4.exe -Algorithm SHA256
 ```
 
 ## Estrutura

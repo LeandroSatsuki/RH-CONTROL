@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import calendar
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -13,6 +13,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.api.dependencies import AdminUser, CurrentUser, DbSession
 from app.core.security import verify_password
 from app.models.benefit import BenefitDefinition, BenefitDistribution
+from app.models.audit_entry import AuditEntry
 from app.models.company import Company
 from app.models.employment import Employment
 from app.models.enums import EmploymentStatus
@@ -45,11 +46,28 @@ DEFAULT_JOB_TITLES = [
     "Gerente",
 ]
 DEFAULT_BENEFITS = [
-    ("VT", "Vale transporte", "DAILY", "Pode ser distribuído em lote ou individualmente no mês."),
-    ("AL", "Alimentação", "DAILY", "Pode ser distribuído em lote ou individualmente no mês."),
+    (
+        "VT",
+        "Vale transporte",
+        "DAILY",
+        "Pode ser distribuído em lote ou individualmente no mês.",
+    ),
+    (
+        "AL",
+        "Alimentação",
+        "DAILY",
+        "Pode ser distribuído em lote ou individualmente no mês.",
+    ),
+    (
+        "CB",
+        "Cesta básica",
+        "MONTHLY",
+        "Benefício mensal de cesta básica por colaborador.",
+    ),
     ("PS", "Plano de saúde", "MONTHLY", "Valor mensal por titular e dependentes."),
     ("SV", "Seguro de vida", "MONTHLY", "Valor mensal recorrente por colaborador."),
 ]
+PERIOD_MOVEMENT_TYPES = {"atestado", "afastamento", "férias"}
 
 
 def money(value: Decimal | float | int) -> Decimal:
@@ -60,6 +78,22 @@ def as_float(value: Decimal | float | int) -> float:
     return float(money(value))
 
 
+def movement_period_values(
+    movement_type: str,
+    start_date: date,
+    days: int,
+    daily_hours: Decimal | float | int,
+    end_date: date | None,
+    hour_impact: Decimal | float | int,
+) -> tuple[date | None, Decimal]:
+    """Keep period movements consistent regardless of the client that saved them."""
+    if movement_type.strip().lower() in PERIOD_MOVEMENT_TYPES:
+        return start_date + timedelta(days=days - 1), money(
+            Decimal(str(daily_hours)) * days
+        )
+    return end_date, Decimal(str(hour_impact))
+
+
 def ensure_company(db: DbSession, company_id: int) -> Company:
     company = db.get(Company, company_id)
     if not company:
@@ -68,7 +102,9 @@ def ensure_company(db: DbSession, company_id: int) -> Company:
 
 
 def ensure_settings(db: DbSession, company: Company) -> SystemSetting:
-    settings = db.scalar(select(SystemSetting).where(SystemSetting.company_id == company.id))
+    settings = db.scalar(
+        select(SystemSetting).where(SystemSetting.company_id == company.id)
+    )
     if settings:
         changed = False
         if not settings.payroll_rates:
@@ -101,7 +137,9 @@ def ensure_settings(db: DbSession, company: Company) -> SystemSetting:
 
 def settings_for_scope(db: DbSession, company_id: int) -> SystemSetting:
     if company_id == 0:
-        company = db.scalar(select(Company).order_by(Company.is_primary.desc(), Company.id))
+        company = db.scalar(
+            select(Company).order_by(Company.is_primary.desc(), Company.id)
+        )
         if not company:
             raise HTTPException(status_code=404, detail="Empresa não encontrada")
     else:
@@ -109,11 +147,33 @@ def settings_for_scope(db: DbSession, company_id: int) -> SystemSetting:
     return ensure_settings(db, company)
 
 
+def global_job_titles(db: DbSession) -> list[str]:
+    settings = list(
+        db.scalars(
+            select(SystemSetting)
+            .join(SystemSetting.company)
+            .order_by(Company.is_primary.desc(), Company.id)
+        )
+    )
+    titles: list[str] = []
+    for item in settings:
+        for title in item.job_titles or []:
+            normalized = str(title).strip().upper()
+            if normalized and normalized not in titles:
+                titles.append(normalized)
+    return sorted(titles or DEFAULT_JOB_TITLES, key=str.casefold)
+
+
 def ensure_benefits(db: DbSession, company_id: int) -> list[BenefitDefinition]:
-    existing = list(db.scalars(select(BenefitDefinition).where(BenefitDefinition.company_id == company_id)))
-    if existing:
-        return sorted(existing, key=lambda item: item.code)
+    existing = list(
+        db.scalars(
+            select(BenefitDefinition).where(BenefitDefinition.company_id == company_id)
+        )
+    )
+    existing_codes = {item.code for item in existing}
     for code, name, mode, notes in DEFAULT_BENEFITS:
+        if code in existing_codes:
+            continue
         db.add(
             BenefitDefinition(
                 company_id=company_id,
@@ -126,7 +186,13 @@ def ensure_benefits(db: DbSession, company_id: int) -> list[BenefitDefinition]:
             )
         )
     db.commit()
-    return list(db.scalars(select(BenefitDefinition).where(BenefitDefinition.company_id == company_id).order_by(BenefitDefinition.code)))
+    return list(
+        db.scalars(
+            select(BenefitDefinition)
+            .where(BenefitDefinition.company_id == company_id)
+            .order_by(BenefitDefinition.code)
+        )
+    )
 
 
 def benefit_to_dict(item: BenefitDefinition) -> dict[str, Any]:
@@ -243,7 +309,9 @@ def parse_date(value: Any, fallback: date | None = None) -> date:
         try:
             return date.fromisoformat(str(value))
         except ValueError:
-            raise HTTPException(status_code=422, detail="Data inválida. Use o formato AAAA-MM-DD") from None
+            raise HTTPException(
+                status_code=422, detail="Data inválida. Use o formato AAAA-MM-DD"
+            ) from None
     if fallback:
         return fallback
     raise HTTPException(status_code=422, detail="Data é obrigatória")
@@ -254,9 +322,16 @@ def parse_competency(value: str) -> tuple[int, int, date, date]:
         year_raw, month_raw = value.split("-")
         year = int(year_raw)
         month = int(month_raw)
-        return year, month, date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+        return (
+            year,
+            month,
+            date(year, month, 1),
+            date(year, month, calendar.monthrange(year, month)[1]),
+        )
     except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="Competência deve estar no formato AAAA-MM") from None
+        raise HTTPException(
+            status_code=422, detail="Competência deve estar no formato AAAA-MM"
+        ) from None
 
 
 def employment_active_in_period(employment: Employment, start: date, end: date) -> bool:
@@ -265,7 +340,9 @@ def employment_active_in_period(employment: Employment, start: date, end: date) 
     )
 
 
-def get_or_create_closing(db: DbSession, company_id: int, competency: str) -> MonthlyClosing:
+def get_or_create_closing(
+    db: DbSession, company_id: int, competency: str
+) -> MonthlyClosing:
     closing = db.scalar(
         select(MonthlyClosing).where(
             MonthlyClosing.company_id == company_id,
@@ -339,14 +416,19 @@ def benefit_matches(employment: Employment, benefit: BenefitDefinition) -> bool:
         "PS": "plano de saúde",
         "SV": "seguro de vida",
     }
-    wanted = {benefit.name.strip().lower(), aliases.get(benefit.code.upper(), benefit.code).lower()}
+    wanted = {
+        benefit.name.strip().lower(),
+        aliases.get(benefit.code.upper(), benefit.code).lower(),
+    }
     return any(str(item).strip().lower() in wanted for item in employment.benefits)
 
 
 @router.get("/settings")
 def get_settings(db: DbSession, _: CurrentUser, company_id: int = 1) -> dict[str, Any]:
     if company_id == 0:
-        company = db.scalar(select(Company).order_by(Company.is_primary.desc(), Company.id))
+        company = db.scalar(
+            select(Company).order_by(Company.is_primary.desc(), Company.id)
+        )
         if not company:
             raise HTTPException(status_code=404, detail="Empresa não encontrada")
     else:
@@ -366,13 +448,19 @@ def get_settings(db: DbSession, _: CurrentUser, company_id: int = 1) -> dict[str
         "backup_directory": settings.backup_directory,
         "auto_backup_on_start": settings.auto_backup_on_start,
         "backup_retention": 90,
-        "job_titles": settings.job_titles or DEFAULT_JOB_TITLES,
+        "job_titles": global_job_titles(db),
     }
 
 
 @router.post("/settings")
-def update_settings(payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1) -> dict[str, Any]:
-    companies = list(db.scalars(select(Company).order_by(Company.id))) if company_id == 0 else [ensure_company(db, company_id)]
+def update_settings(
+    payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1
+) -> dict[str, Any]:
+    companies = (
+        list(db.scalars(select(Company).order_by(Company.id)))
+        if company_id == 0
+        else [ensure_company(db, company_id)]
+    )
     if not companies:
         raise HTTPException(status_code=404, detail="Empresa não encontrada")
     for company in companies:
@@ -382,17 +470,33 @@ def update_settings(payload: dict[str, Any], db: DbSession, _: AdminUser, compan
         if "company_logo" in payload:
             settings.company_logo = str(payload["company_logo"] or "")
         if "default_daily_hours" in payload:
-            settings.default_daily_hours = Decimal(str(payload["default_daily_hours"] or "8.80"))
-        if "job_titles" in payload and isinstance(payload["job_titles"], list):
-            settings.job_titles = [str(item).strip() for item in payload["job_titles"] if str(item).strip()]
+            settings.default_daily_hours = Decimal(
+                str(payload["default_daily_hours"] or "8.80")
+            )
         if "payroll_rates" in payload and isinstance(payload["payroll_rates"], dict):
-            settings.payroll_rates = {**DEFAULT_PAYROLL_RATES, **payload["payroll_rates"]}
+            settings.payroll_rates = {
+                **DEFAULT_PAYROLL_RATES,
+                **payload["payroll_rates"],
+            }
+    if "job_titles" in payload and isinstance(payload["job_titles"], list):
+        global_titles = sorted(
+            {
+                str(item).strip().upper()
+                for item in payload["job_titles"]
+                if str(item).strip()
+            },
+            key=str.casefold,
+        )
+        for company in db.scalars(select(Company).order_by(Company.id)):
+            ensure_settings(db, company).job_titles = global_titles
     db.commit()
     return get_settings(db, _, company_id)
 
 
 @router.get("/report-templates")
-def list_report_templates(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict[str, Any]]:
+def list_report_templates(
+    db: DbSession, _: CurrentUser, company_id: int = 1
+) -> list[dict[str, Any]]:
     return list(settings_for_scope(db, company_id).report_templates or [])
 
 
@@ -407,7 +511,9 @@ def save_report_templates(
 
 
 @router.get("/indicator-revenue")
-def get_indicator_revenue(db: DbSession, _: CurrentUser, company_id: int = 1) -> dict[str, Any]:
+def get_indicator_revenue(
+    db: DbSession, _: CurrentUser, company_id: int = 1
+) -> dict[str, Any]:
     return dict(settings_for_scope(db, company_id).indicator_revenue or {})
 
 
@@ -418,7 +524,9 @@ def update_indicator_revenue(
     scope = str(payload.get("scope", "")).strip()
     values = payload.get("values")
     if not scope or not isinstance(values, dict):
-        raise HTTPException(status_code=422, detail="Escopo e valores de faturamento são obrigatórios")
+        raise HTTPException(
+            status_code=422, detail="Escopo e valores de faturamento são obrigatórios"
+        )
     settings = settings_for_scope(db, company_id)
     revenue = dict(settings.indicator_revenue or {})
     revenue[scope] = {str(month): as_float(value) for month, value in values.items()}
@@ -428,7 +536,9 @@ def update_indicator_revenue(
 
 
 @router.get("/benefits/catalog")
-def list_benefits(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict[str, Any]]:
+def list_benefits(
+    db: DbSession, _: CurrentUser, company_id: int = 1
+) -> list[dict[str, Any]]:
     if company_id != 0:
         ensure_company(db, company_id)
         return [benefit_to_dict(item) for item in ensure_benefits(db, company_id)]
@@ -440,7 +550,9 @@ def list_benefits(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[di
 
 
 @router.post("/benefits/catalog", status_code=201)
-def upsert_benefit(payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1) -> dict[str, Any]:
+def upsert_benefit(
+    payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1
+) -> dict[str, Any]:
     ensure_company(db, company_id)
     code = str(payload.get("code", "")).strip().upper()
     if not code:
@@ -457,7 +569,9 @@ def upsert_benefit(payload: dict[str, Any], db: DbSession, _: AdminUser, company
     item.name = str(payload.get("name", code)).strip()
     item.mode = str(payload.get("mode", "DAILY")).strip().upper()
     item.active = bool(payload.get("active", True))
-    item.applies_to = [str(value) for value in payload.get("applies_to", ["ADM", "IND", "COM", "DIR"])]
+    item.applies_to = [
+        str(value) for value in payload.get("applies_to", ["ADM", "IND", "COM", "DIR"])
+    ]
     item.notes = str(payload.get("notes", ""))
     db.commit()
     db.refresh(item)
@@ -465,13 +579,19 @@ def upsert_benefit(payload: dict[str, Any], db: DbSession, _: AdminUser, company
 
 
 @router.get("/benefit-distributions")
-def list_distributions(db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> list[dict[str, Any]]:
+def list_distributions(
+    db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1
+) -> list[dict[str, Any]]:
     query = (
         select(BenefitDistribution)
         .options(
             joinedload(BenefitDistribution.employment).joinedload(Employment.employee),
-            joinedload(BenefitDistribution.employment).joinedload(Employment.result_center),
-            joinedload(BenefitDistribution.employment).joinedload(Employment.employment_type),
+            joinedload(BenefitDistribution.employment).joinedload(
+                Employment.result_center
+            ),
+            joinedload(BenefitDistribution.employment).joinedload(
+                Employment.employment_type
+            ),
         )
         .where(BenefitDistribution.competency == competency)
         .order_by(BenefitDistribution.created_at.desc())
@@ -482,7 +602,9 @@ def list_distributions(db: DbSession, _: CurrentUser, competency: str = "2026-06
 
 
 @router.get("/movements")
-def list_movements(db: DbSession, _: CurrentUser, competency: str | None = None, company_id: int = 1) -> list[dict[str, Any]]:
+def list_movements(
+    db: DbSession, _: CurrentUser, competency: str | None = None, company_id: int = 1
+) -> list[dict[str, Any]]:
     query = (
         select(Movement)
         .options(
@@ -499,31 +621,51 @@ def list_movements(db: DbSession, _: CurrentUser, competency: str | None = None,
 
 
 @router.post("/movements", status_code=201)
-def create_movement(payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1) -> dict[str, Any]:
+def create_movement(
+    payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1
+) -> dict[str, Any]:
     ensure_company(db, company_id)
     employee_id = payload.get("employee_id")
     employment_query = (
         select(Employment)
         .options(joinedload(Employment.employee), joinedload(Employment.result_center))
-        .where(Employment.company_id == company_id, Employment.status == EmploymentStatus.ACTIVE)
+        .where(
+            Employment.company_id == company_id,
+            Employment.status == EmploymentStatus.ACTIVE,
+        )
         .order_by(Employment.id)
     )
     if employee_id:
         employment_query = employment_query.where(Employment.id == int(employee_id))
     employment = db.scalar(employment_query)
     if not employment:
-        raise HTTPException(status_code=422, detail="Cadastre ao menos um colaborador ativo antes de lançar movimentações.")
+        raise HTTPException(
+            status_code=422,
+            detail="Cadastre ao menos um colaborador ativo antes de lançar movimentações.",
+        )
     start_date = parse_date(payload.get("start_date"), date.today())
+    movement_type = str(payload.get("type") or "falta")
+    days = max(int(payload.get("days") or 1), 1)
+    end_date, hour_impact = movement_period_values(
+        movement_type,
+        start_date,
+        days,
+        employment.daily_hours or 0,
+        parse_date(payload.get("end_date")) if payload.get("end_date") else None,
+        payload.get("hour_impact") or employment.daily_hours or 0,
+    )
     movement = Movement(
         company_id=company_id,
         competency=str(payload.get("competency") or start_date.strftime("%Y-%m")),
         employee_id=employment.id,
-        type=str(payload.get("type") or "falta"),
+        type=movement_type,
         start_date=start_date,
-        end_date=parse_date(payload.get("end_date")) if payload.get("end_date") else None,
-        days=max(int(payload.get("days") or 1), 1),
-        hour_impact=Decimal(str(payload.get("hour_impact") or employment.daily_hours or 0)),
-        observation=str(payload.get("observation") or "Movimentação criada no modo oficial."),
+        end_date=end_date,
+        days=days,
+        hour_impact=hour_impact,
+        observation=str(
+            payload.get("observation") or "Movimentação criada no modo oficial."
+        ),
         status="Pendente",
     )
     db.add(movement)
@@ -533,7 +675,13 @@ def create_movement(payload: dict[str, Any], db: DbSession, _: AdminUser, compan
 
 
 @router.patch("/movements/{movement_id}")
-def update_movement(movement_id: int, payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1) -> dict[str, Any]:
+def update_movement(
+    movement_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, Any]:
     if not verify_password(str(payload.get("password") or ""), user.password_hash):
         raise HTTPException(status_code=403, detail="Senha de confirmação inválida.")
     query = (
@@ -549,21 +697,82 @@ def update_movement(movement_id: int, payload: dict[str, Any], db: DbSession, us
     movement = db.scalar(query)
     if not movement:
         raise HTTPException(status_code=404, detail="Movimentação não encontrada")
+    previous = movement_to_dict(movement)
     movement.competency = str(payload.get("competency") or movement.competency)
     movement.type = str(payload.get("type") or movement.type)
     movement.start_date = parse_date(payload.get("start_date"), movement.start_date)
-    movement.end_date = parse_date(payload.get("end_date")) if payload.get("end_date") else None
     movement.days = max(int(payload.get("days") or movement.days), 1)
-    movement.hour_impact = Decimal(str(payload.get("hour_impact") or movement.hour_impact))
+    movement.end_date, movement.hour_impact = movement_period_values(
+        movement.type,
+        movement.start_date,
+        movement.days,
+        movement.employment.daily_hours or 0,
+        parse_date(payload.get("end_date")) if payload.get("end_date") else None,
+        payload.get("hour_impact") or movement.hour_impact,
+    )
     movement.observation = str(payload.get("observation") or movement.observation)
     movement.status = str(payload.get("status") or movement.status)
+    db.add(
+        AuditEntry(
+            company_id=movement.company_id,
+            module="Movimentações",
+            action="Movimentação editada",
+            employee_name=movement.employment.employee.full_name,
+            result_center=result_center_to_dict(movement.employment),
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"Antes: {previous['type']} | {previous['status']} | {previous['start_date']} | Depois: {movement.type} | {movement.status} | {movement.start_date.isoformat()}",
+        )
+    )
     db.commit()
     db.refresh(movement)
     return movement_to_dict(movement)
 
 
+@router.delete("/movements/{movement_id}")
+def delete_movement(
+    movement_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, bool]:
+    if not verify_password(str(payload.get("password") or ""), user.password_hash):
+        raise HTTPException(status_code=403, detail="Senha de confirmação inválida.")
+    query = (
+        select(Movement)
+        .options(
+            joinedload(Movement.employment).joinedload(Employment.employee),
+            joinedload(Movement.employment).joinedload(Employment.result_center),
+        )
+        .where(Movement.id == movement_id)
+    )
+    if company_id != 0:
+        query = query.where(Movement.company_id == company_id)
+    movement = db.scalar(query)
+    if not movement:
+        raise HTTPException(status_code=404, detail="Movimentação não encontrada")
+    db.add(
+        AuditEntry(
+            company_id=movement.company_id,
+            module="Movimentações",
+            action="Movimentação excluída",
+            employee_name=movement.employment.employee.full_name,
+            result_center=result_center_to_dict(movement.employment),
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"{movement.type} | {movement.status} | início {movement.start_date.isoformat()} | {movement.observation}",
+        )
+    )
+    db.delete(movement)
+    db.commit()
+    return {"deleted": True}
+
+
 @router.get("/mei-contracts")
-def list_mei_contracts(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict[str, Any]]:
+def list_mei_contracts(
+    db: DbSession, _: CurrentUser, company_id: int = 1
+) -> list[dict[str, Any]]:
     query = (
         select(MeiContract)
         .options(
@@ -579,7 +788,9 @@ def list_mei_contracts(db: DbSession, _: CurrentUser, company_id: int = 1) -> li
 
 
 @router.post("/mei-contracts", status_code=201)
-def create_mei_contract(payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1) -> dict[str, Any]:
+def create_mei_contract(
+    payload: dict[str, Any], db: DbSession, _: AdminUser, company_id: int = 1
+) -> dict[str, Any]:
     ensure_company(db, company_id)
     employment = db.scalar(
         select(Employment)
@@ -597,9 +808,15 @@ def create_mei_contract(payload: dict[str, Any], db: DbSession, _: AdminUser, co
     if not employment:
         raise HTTPException(status_code=422, detail="Selecione um MEI cadastrado.")
     if employment.employment_type.name.upper() != "MEI":
-        raise HTTPException(status_code=422, detail="Selecione apenas colaboradores da modalidade MEI.")
+        raise HTTPException(
+            status_code=422, detail="Selecione apenas colaboradores da modalidade MEI."
+        )
     start_date = parse_date(payload.get("start_date"))
     end_date = parse_date(payload.get("end_date"))
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=422, detail="A vigência final não pode ser anterior à inicial."
+        )
     contract = MeiContract(
         company_id=company_id,
         employee_id=employment.id,
@@ -638,10 +855,18 @@ def create_mei_contract(payload: dict[str, Any], db: DbSession, _: AdminUser, co
 
 
 @router.patch("/mei-contracts/{contract_id}/sign")
-def sign_mei_contract(contract_id: int, payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1) -> dict[str, Any]:
+def sign_mei_contract(
+    contract_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, Any]:
     attachment_name = str(payload.get("attachment_name") or "").strip()
     if not attachment_name:
-        raise HTTPException(status_code=422, detail="Anexe o contrato para concluir a assinatura.")
+        raise HTTPException(
+            status_code=422, detail="Anexe o contrato para concluir a assinatura."
+        )
     query = (
         select(MeiContract)
         .options(
@@ -661,17 +886,250 @@ def sign_mei_contract(contract_id: int, payload: dict[str, Any], db: DbSession, 
     contract.attachment_data_url = str(payload.get("attachment_data_url") or "") or None
     contract.signed_at = datetime.now()
     contract.signed_by = user.full_name
+    pending_movements = db.scalars(
+        select(Movement).where(
+            Movement.company_id == contract.company_id,
+            Movement.observation.like(f"MEI#{contract.id} - contrato pendente%"),
+            Movement.status == "Pendente",
+        )
+    )
+    for movement in pending_movements:
+        movement.status = "Aplicada"
     db.commit()
     db.refresh(contract)
     return mei_contract_to_dict(contract)
 
 
+@router.patch("/mei-contracts/{contract_id}")
+def update_mei_contract(
+    contract_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, Any]:
+    query = (
+        select(MeiContract)
+        .options(
+            joinedload(MeiContract.employment).joinedload(Employment.employee),
+            joinedload(MeiContract.employment).joinedload(Employment.result_center),
+            joinedload(MeiContract.employment).joinedload(Employment.employment_type),
+        )
+        .where(MeiContract.id == contract_id)
+    )
+    if company_id != 0:
+        query = query.where(MeiContract.company_id == company_id)
+    contract = db.scalar(query)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
+    if contract.status != "Pendente de assinatura":
+        raise HTTPException(
+            status_code=409,
+            detail="Contrato assinado não pode ser alterado. Use Renovar para preservar o documento original.",
+        )
+    previous = mei_contract_to_dict(contract)
+    employment_id = int(payload.get("employee_id") or contract.employee_id)
+    employment = db.scalar(
+        select(Employment)
+        .options(
+            joinedload(Employment.employee),
+            joinedload(Employment.result_center),
+            joinedload(Employment.employment_type),
+        )
+        .where(
+            Employment.id == employment_id,
+            Employment.company_id == contract.company_id,
+            Employment.status == EmploymentStatus.ACTIVE,
+        )
+    )
+    if not employment or employment.employment_type.name.strip().upper() != "MEI":
+        raise HTTPException(status_code=422, detail="Selecione um colaborador MEI ativo.")
+    start_date = parse_date(payload.get("start_date"), contract.start_date)
+    end_date = parse_date(payload.get("end_date"), contract.end_date)
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=422, detail="A vigência final não pode ser anterior à inicial."
+        )
+    contract.employee_id = employment.id
+    contract.start_date = start_date
+    contract.end_date = end_date
+    for movement in db.scalars(
+        select(Movement).where(
+            Movement.company_id == contract.company_id,
+            Movement.observation.like(f"MEI#{contract.id} - contrato pendente%"),
+            Movement.status == "Pendente",
+        )
+    ):
+        movement.employee_id = employment.id
+        movement.competency = start_date.strftime("%Y-%m")
+        movement.start_date = start_date
+    db.add(
+        AuditEntry(
+            company_id=contract.company_id,
+            module="Contratos MEI",
+            action="Contrato pendente editado",
+            employee_name=employment.employee.full_name,
+            result_center=result_center_to_dict(employment),
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"Antes: {previous['start_date']} a {previous['end_date']} | Depois: {start_date.isoformat()} a {end_date.isoformat()}",
+        )
+    )
+    db.commit()
+    db.refresh(contract)
+    return mei_contract_to_dict(contract)
+
+
+@router.post("/mei-contracts/{contract_id}/renew", status_code=201)
+def renew_mei_contract(
+    contract_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, Any]:
+    query = (
+        select(MeiContract)
+        .options(
+            joinedload(MeiContract.employment).joinedload(Employment.employee),
+            joinedload(MeiContract.employment).joinedload(Employment.result_center),
+            joinedload(MeiContract.employment).joinedload(Employment.employment_type),
+        )
+        .where(MeiContract.id == contract_id)
+    )
+    if company_id != 0:
+        query = query.where(MeiContract.company_id == company_id)
+    source = db.scalar(query)
+    if not source:
+        raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
+    if source.status != "Ativo":
+        raise HTTPException(status_code=409, detail="Somente contratos ativos podem ser renovados.")
+    start_date = parse_date(payload.get("start_date"))
+    end_date = parse_date(payload.get("end_date"))
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=422, detail="A vigência final não pode ser anterior à inicial."
+        )
+    duplicate = db.scalar(
+        select(MeiContract.id).where(
+            MeiContract.company_id == source.company_id,
+            MeiContract.employee_id == source.employee_id,
+            MeiContract.status == "Pendente de assinatura",
+        )
+    )
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail="Já existe uma renovação pendente de assinatura para este MEI.",
+        )
+    renewed = MeiContract(
+        company_id=source.company_id,
+        employee_id=source.employee_id,
+        status="Pendente de assinatura",
+        start_date=start_date,
+        end_date=end_date,
+        notified_not_signed=True,
+        notified_15=False,
+        notified_10=False,
+        notified_5=False,
+        movement_created_5=False,
+    )
+    db.add(renewed)
+    db.flush()
+    db.add(
+        Movement(
+            company_id=source.company_id,
+            competency=start_date.strftime("%Y-%m"),
+            employee_id=source.employee_id,
+            type="contrato não assinado",
+            start_date=start_date,
+            end_date=None,
+            days=0,
+            hour_impact=Decimal("0.00"),
+            observation=f"MEI#{renewed.id} - contrato pendente de assinatura",
+            status="Pendente",
+        )
+    )
+    db.add(
+        AuditEntry(
+            company_id=source.company_id,
+            module="Contratos MEI",
+            action="Renovação de contrato criada",
+            employee_name=source.employment.employee.full_name,
+            result_center=result_center_to_dict(source.employment),
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"Contrato anterior #{source.id} | nova vigência {start_date.isoformat()} a {end_date.isoformat()}",
+        )
+    )
+    db.commit()
+    db.refresh(renewed)
+    return mei_contract_to_dict(renewed)
+
+
+@router.delete("/mei-contracts/{contract_id}")
+def delete_mei_contract(
+    contract_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, bool]:
+    if not verify_password(str(payload.get("password") or ""), user.password_hash):
+        raise HTTPException(status_code=403, detail="Senha de confirmação inválida.")
+    query = (
+        select(MeiContract)
+        .options(
+            joinedload(MeiContract.employment).joinedload(Employment.employee),
+            joinedload(MeiContract.employment).joinedload(Employment.result_center),
+        )
+        .where(MeiContract.id == contract_id)
+    )
+    if company_id != 0:
+        query = query.where(MeiContract.company_id == company_id)
+    contract = db.scalar(query)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
+    if contract.status != "Pendente de assinatura":
+        raise HTTPException(
+            status_code=409,
+            detail="Contrato assinado não pode ser excluído; ele deve permanecer no histórico.",
+        )
+    db.add(
+        AuditEntry(
+            company_id=contract.company_id,
+            module="Contratos MEI",
+            action="Contrato pendente excluído",
+            employee_name=contract.employment.employee.full_name,
+            result_center=result_center_to_dict(contract.employment),
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"Contrato #{contract.id} | vigência {contract.start_date.isoformat()} a {contract.end_date.isoformat()}",
+        )
+    )
+    for movement in db.scalars(
+        select(Movement).where(
+            Movement.company_id == contract.company_id,
+            Movement.observation.like(f"MEI#{contract.id} - contrato pendente%"),
+        )
+    ):
+        db.delete(movement)
+    db.delete(contract)
+    db.commit()
+    return {"deleted": True}
+
+
 @router.post("/benefit-distributions", status_code=201)
-def create_distribution(payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1) -> dict[str, Any]:
+def create_distribution(
+    payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1
+) -> dict[str, Any]:
     company = ensure_company(db, company_id)
     competency = str(payload.get("competency", "2026-06"))
     if is_competency_closed(db, company.id, competency):
-        raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para alterar benefícios.")
+        raise HTTPException(
+            status_code=409,
+            detail="Competência fechada. Reabra o mês para alterar benefícios.",
+        )
     benefit_code = str(payload.get("benefit_code", "")).strip().upper()
     benefit = db.scalar(
         select(BenefitDefinition).where(
@@ -681,19 +1139,31 @@ def create_distribution(payload: dict[str, Any], db: DbSession, user: AdminUser,
         )
     )
     if not benefit:
-        raise HTTPException(status_code=404, detail="Benefício não encontrado ou inativo")
+        raise HTTPException(
+            status_code=404, detail="Benefício não encontrado ou inativo"
+        )
     employee_ids = [int(value) for value in payload.get("employee_ids", [])]
     if not employee_ids:
         raise HTTPException(status_code=422, detail="Selecione ao menos um colaborador")
     description = str(payload.get("description", "")).strip()
     if not description:
-        raise HTTPException(status_code=422, detail="Informe a descrição da distribuição")
+        raise HTTPException(
+            status_code=422, detail="Informe a descrição da distribuição"
+        )
 
-    items = {int(item.get("employee_id")): item for item in payload.get("items", []) if item.get("employee_id")}
+    items = {
+        int(item.get("employee_id")): item
+        for item in payload.get("items", [])
+        if item.get("employee_id")
+    }
     employments = list(
         db.scalars(
             select(Employment)
-            .options(joinedload(Employment.employee), joinedload(Employment.result_center), joinedload(Employment.employment_type))
+            .options(
+                joinedload(Employment.employee),
+                joinedload(Employment.result_center),
+                joinedload(Employment.employment_type),
+            )
             .where(
                 Employment.company_id == company.id,
                 Employment.id.in_(employee_ids),
@@ -701,21 +1171,42 @@ def create_distribution(payload: dict[str, Any], db: DbSession, user: AdminUser,
             )
         )
     )
-    eligible = [employment for employment in employments if benefit_matches(employment, benefit)]
+    eligible = [
+        employment for employment in employments if benefit_matches(employment, benefit)
+    ]
     if not eligible:
-        raise HTTPException(status_code=422, detail="Nenhum colaborador elegível foi encontrado para este benefício")
+        raise HTTPException(
+            status_code=422,
+            detail="Nenhum colaborador elegível foi encontrado para este benefício",
+        )
 
     created: list[BenefitDistribution] = []
     for employment in eligible:
         item = items.get(employment.id, {})
-        days_worked = Decimal(str(item.get("days_worked", payload.get("days_worked", 0)) or 0))
-        value_per_day = Decimal(str(item.get("value_per_day", payload.get("value_per_day", 0)) or 0))
-        monthly_value = Decimal(str(item.get("monthly_value", payload.get("monthly_value", 0)) or 0))
-        dependents_count = int(item.get("dependents_count", payload.get("dependents_count", 0)) or 0)
-        dependent_value = Decimal(str(item.get("dependent_value", payload.get("dependent_value", 0)) or 0))
-        amount = money(days_worked * value_per_day) if benefit.mode == "DAILY" else money(monthly_value + Decimal(dependents_count) * dependent_value)
+        days_worked = Decimal(
+            str(item.get("days_worked", payload.get("days_worked", 0)) or 0)
+        )
+        value_per_day = Decimal(
+            str(item.get("value_per_day", payload.get("value_per_day", 0)) or 0)
+        )
+        monthly_value = Decimal(
+            str(item.get("monthly_value", payload.get("monthly_value", 0)) or 0)
+        )
+        dependents_count = int(
+            item.get("dependents_count", payload.get("dependents_count", 0)) or 0
+        )
+        dependent_value = Decimal(
+            str(item.get("dependent_value", payload.get("dependent_value", 0)) or 0)
+        )
+        amount = (
+            money(days_worked * value_per_day)
+            if benefit.mode == "DAILY"
+            else money(monthly_value + Decimal(dependents_count) * dependent_value)
+        )
         if amount <= 0:
-            raise HTTPException(status_code=422, detail="Valor do benefício deve ser maior que zero")
+            raise HTTPException(
+                status_code=422, detail="Valor do benefício deve ser maior que zero"
+            )
         distribution = BenefitDistribution(
             company_id=company.id,
             competency=competency,
@@ -737,7 +1228,10 @@ def create_distribution(payload: dict[str, Any], db: DbSession, user: AdminUser,
     db.commit()
     for item in created:
         db.refresh(item)
-    return {"created": len(created), "items": [distribution_to_dict(item) for item in created]}
+    return {
+        "created": len(created),
+        "items": [distribution_to_dict(item) for item in created],
+    }
 
 
 @router.patch("/benefit-distributions/{distribution_id}")
@@ -752,8 +1246,12 @@ def update_distribution(
         select(BenefitDistribution)
         .options(
             joinedload(BenefitDistribution.employment).joinedload(Employment.employee),
-            joinedload(BenefitDistribution.employment).joinedload(Employment.result_center),
-            joinedload(BenefitDistribution.employment).joinedload(Employment.employment_type),
+            joinedload(BenefitDistribution.employment).joinedload(
+                Employment.result_center
+            ),
+            joinedload(BenefitDistribution.employment).joinedload(
+                Employment.employment_type
+            ),
         )
         .where(BenefitDistribution.id == distribution_id)
     )
@@ -761,23 +1259,43 @@ def update_distribution(
         query = query.where(BenefitDistribution.company_id == company_id)
     distribution = db.scalar(query)
     if not distribution:
-        raise HTTPException(status_code=404, detail="Distribuição de benefício não encontrada")
+        raise HTTPException(
+            status_code=404, detail="Distribuição de benefício não encontrada"
+        )
     if is_competency_closed(db, distribution.company_id, distribution.competency):
-        raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para alterar benefícios.")
+        raise HTTPException(
+            status_code=409,
+            detail="Competência fechada. Reabra o mês para alterar benefícios.",
+        )
 
-    distribution.days_worked = Decimal(str(payload.get("days_worked", distribution.days_worked) or 0))
-    distribution.value_per_day = Decimal(str(payload.get("value_per_day", distribution.value_per_day) or 0))
-    distribution.monthly_value = Decimal(str(payload.get("monthly_value", distribution.monthly_value) or 0))
-    distribution.dependents_count = int(payload.get("dependents_count", distribution.dependents_count) or 0)
-    distribution.dependent_value = Decimal(str(payload.get("dependent_value", distribution.dependent_value) or 0))
-    distribution.description = str(payload.get("description", distribution.description)).strip()
+    distribution.days_worked = Decimal(
+        str(payload.get("days_worked", distribution.days_worked) or 0)
+    )
+    distribution.value_per_day = Decimal(
+        str(payload.get("value_per_day", distribution.value_per_day) or 0)
+    )
+    distribution.monthly_value = Decimal(
+        str(payload.get("monthly_value", distribution.monthly_value) or 0)
+    )
+    distribution.dependents_count = int(
+        payload.get("dependents_count", distribution.dependents_count) or 0
+    )
+    distribution.dependent_value = Decimal(
+        str(payload.get("dependent_value", distribution.dependent_value) or 0)
+    )
+    distribution.description = str(
+        payload.get("description", distribution.description)
+    ).strip()
     distribution.amount = money(
         distribution.days_worked * distribution.value_per_day
         if distribution.days_worked > 0
-        else distribution.monthly_value + Decimal(distribution.dependents_count) * distribution.dependent_value
+        else distribution.monthly_value
+        + Decimal(distribution.dependents_count) * distribution.dependent_value
     )
     if distribution.amount <= 0:
-        raise HTTPException(status_code=422, detail="Valor do benefício deve ser maior que zero")
+        raise HTTPException(
+            status_code=422, detail="Valor do benefício deve ser maior que zero"
+        )
     db.commit()
     db.refresh(distribution)
     return distribution_to_dict(distribution)
@@ -795,27 +1313,42 @@ def delete_distribution(
         query = query.where(BenefitDistribution.company_id == company_id)
     distribution = db.scalar(query)
     if not distribution:
-        raise HTTPException(status_code=404, detail="Distribuição de benefício não encontrada")
+        raise HTTPException(
+            status_code=404, detail="Distribuição de benefício não encontrada"
+        )
     if is_competency_closed(db, distribution.company_id, distribution.competency):
-        raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para alterar benefícios.")
+        raise HTTPException(
+            status_code=409,
+            detail="Competência fechada. Reabra o mês para alterar benefícios.",
+        )
     db.delete(distribution)
     db.commit()
     return {"ok": True}
 
 
 @router.get("/cost-allocations")
-def list_cost_allocations(_: CurrentUser, company_id: int = 1, competency: str = "2026-06") -> list[dict[str, Any]]:
+def list_cost_allocations(
+    _: CurrentUser, company_id: int = 1, competency: str = "2026-06"
+) -> list[dict[str, Any]]:
     return []
 
 
 @router.get("/payroll")
-def payroll(db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> list[dict[str, Any]]:
+def payroll(
+    db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1
+) -> list[dict[str, Any]]:
     company = ensure_company(db, company_id) if company_id != 0 else None
-    rates = ensure_settings(db, company).payroll_rates if company else DEFAULT_PAYROLL_RATES
+    rates = (
+        ensure_settings(db, company).payroll_rates if company else DEFAULT_PAYROLL_RATES
+    )
     rates = {**DEFAULT_PAYROLL_RATES, **(rates or {})}
     employment_query = (
         select(Employment)
-        .options(joinedload(Employment.employee), joinedload(Employment.result_center), joinedload(Employment.employment_type))
+        .options(
+            joinedload(Employment.employee),
+            joinedload(Employment.result_center),
+            joinedload(Employment.employment_type),
+        )
         .where(Employment.status != EmploymentStatus.INACTIVE)
         .order_by(Employment.employee_id)
     )
@@ -826,11 +1359,16 @@ def payroll(db: DbSession, _: CurrentUser, competency: str = "2026-06", company_
         db.scalars(
             select(BenefitDistribution).where(
                 BenefitDistribution.competency == competency,
-                BenefitDistribution.company_id.in_([employment.company_id for employment in employments] or [company_id]),
+                BenefitDistribution.company_id.in_(
+                    [employment.company_id for employment in employments]
+                    or [company_id]
+                ),
             )
         )
     )
-    benefit_totals: dict[int, dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: Decimal("0.00")))
+    benefit_totals: dict[int, dict[str, Decimal]] = defaultdict(
+        lambda: defaultdict(lambda: Decimal("0.00"))
+    )
     for item in distributions:
         benefit_totals[item.employee_id][item.benefit_code.upper()] += item.amount
     overrides = {
@@ -838,7 +1376,10 @@ def payroll(db: DbSession, _: CurrentUser, competency: str = "2026-06", company_
         for item in db.scalars(
             select(PayrollOverride).where(
                 PayrollOverride.competency == competency,
-                PayrollOverride.company_id.in_([employment.company_id for employment in employments] or [company_id]),
+                PayrollOverride.company_id.in_(
+                    [employment.company_id for employment in employments]
+                    or [company_id]
+                ),
             )
         )
     }
@@ -850,7 +1391,14 @@ def payroll(db: DbSession, _: CurrentUser, competency: str = "2026-06", company_
             employment_company = ensure_company(db, employment.company_id)
             stored_rates = ensure_settings(db, employment_company).payroll_rates
             employment_rates = {**DEFAULT_PAYROLL_RATES, **(stored_rates or {})}
-        rows.append(payroll_row(employment, benefit_totals[employment.id], employment_rates, overrides.get(employment.id)))
+        rows.append(
+            payroll_row(
+                employment,
+                benefit_totals[employment.id],
+                employment_rates,
+                overrides.get(employment.id),
+            )
+        )
     return rows
 
 
@@ -867,10 +1415,20 @@ def save_payroll_override(
     if not employment or (company_id != 0 and employment.company_id != company_id):
         raise HTTPException(status_code=404, detail="Colaborador não encontrado")
     if is_competency_closed(db, employment.company_id, competency):
-        raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para editar o custo.")
+        raise HTTPException(
+            status_code=409,
+            detail="Competência fechada. Reabra o mês para editar o custo.",
+        )
     allowed = {
-        "salary", "pro_labore", "profit_distribution", "cost_aid",
-        "transport", "meal", "lodging", "insurance", "health_plan",
+        "salary",
+        "pro_labore",
+        "profit_distribution",
+        "cost_aid",
+        "transport",
+        "meal",
+        "lodging",
+        "insurance",
+        "health_plan",
     }
     values = {key: as_float(value) for key, value in payload.items() if key in allowed}
     override = db.scalar(
@@ -893,11 +1451,18 @@ def save_payroll_override(
         )
         db.add(override)
     db.commit()
-    return {"saved": True, "employment_id": employment.id, "competency": competency, "values": values}
+    return {
+        "saved": True,
+        "employment_id": employment.id,
+        "competency": competency,
+        "values": values,
+    }
 
 
 @router.get("/report-preview")
-def report_preview(db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> dict[str, Any]:
+def report_preview(
+    db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1
+) -> dict[str, Any]:
     company = ensure_company(db, company_id) if company_id != 0 else None
     settings = ensure_settings(db, company) if company else None
     rows = payroll(db, user, competency, company_id)
@@ -927,7 +1492,9 @@ def report_preview(db: DbSession, user: CurrentUser, competency: str = "2026-06"
 
 
 @router.get("/closing")
-def get_closing(db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> dict[str, Any]:
+def get_closing(
+    db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1
+) -> dict[str, Any]:
     company = ensure_company(db, company_id)
     parse_competency(competency)
     closing = get_or_create_closing(db, company.id, competency)
@@ -935,7 +1502,9 @@ def get_closing(db: DbSession, _: CurrentUser, competency: str = "2026-06", comp
 
 
 @router.post("/closing")
-def update_closing(payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1) -> dict[str, Any]:
+def update_closing(
+    payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1
+) -> dict[str, Any]:
     company = ensure_company(db, company_id)
     competency = str(payload.get("competency") or "2026-06")
     parse_competency(competency)
@@ -957,7 +1526,9 @@ def update_closing(payload: dict[str, Any], db: DbSession, user: AdminUser, comp
 
 
 @router.get("/alerts")
-def list_alerts(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict[str, Any]]:
+def list_alerts(
+    db: DbSession, _: CurrentUser, company_id: int = 1
+) -> list[dict[str, Any]]:
     today = date.today()
     alerts: list[dict[str, Any]] = []
 
@@ -991,21 +1562,30 @@ def list_alerts(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict
         employment = contract.employment
         if not employment:
             continue
-        company_name = contract.company.name if contract.company else employment.company.name if employment.company else ""
+        company_name = (
+            contract.company.name
+            if contract.company
+            else employment.company.name
+            if employment.company
+            else ""
+        )
         days_left = (contract.end_date - today).days
 
         if contract.status == "Pendente de assinatura":
-            alerts.append({
-                "id": f"mei-pending-{contract.id}",
-                "company_id": contract.company_id,
-                "company_name": company_name,
-                "type": "Contrato não assinado",
-                "employee_name": employment.employee.full_name,
-                "result_center": result_center_to_dict(employment),
-                "due_date": contract.start_date.isoformat(),
-                "message": f"Assine o contrato de {employment.employee.full_name} para ativar o vínculo.",
-                "severity": "Alta",
-            })
+            alerts.append(
+                {
+                    "id": f"mei-pending-{contract.id}",
+                    "target_id": contract.id,
+                    "company_id": contract.company_id,
+                    "company_name": company_name,
+                    "type": "Contrato não assinado",
+                    "employee_name": employment.employee.full_name,
+                    "result_center": result_center_to_dict(employment),
+                    "due_date": contract.start_date.isoformat(),
+                    "message": f"Assine o contrato de {employment.employee.full_name} para ativar o vínculo.",
+                    "severity": "Alta",
+                }
+            )
             continue
 
         if days_left > 15:
@@ -1017,48 +1597,73 @@ def list_alerts(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict
         elif days_left <= 10:
             severity = "Média"
 
-        alerts.append({
-            "id": f"mei-due-{contract.id}",
-            "company_id": contract.company_id,
-            "company_name": company_name,
-            "type": "Contrato próximo do vencimento",
-            "employee_name": employment.employee.full_name,
-            "result_center": result_center_to_dict(employment),
-            "due_date": contract.end_date.isoformat(),
-            "message": f"A vigência termina em {days_left} dia(s).",
-            "severity": severity,
-        })
+        alerts.append(
+            {
+                "id": f"mei-due-{contract.id}",
+                "target_id": contract.id,
+                "company_id": contract.company_id,
+                "company_name": company_name,
+                "type": "Contrato próximo do vencimento",
+                "employee_name": employment.employee.full_name,
+                "result_center": result_center_to_dict(employment),
+                "due_date": contract.end_date.isoformat(),
+                "message": f"A vigência termina em {days_left} dia(s).",
+                "severity": severity,
+            }
+        )
 
     for movement in db.scalars(movement_query):
         employment = movement.employment
         if not employment:
             continue
-        company_name = movement.company.name if movement.company else employment.company.name if employment.company else ""
+        company_name = (
+            movement.company.name
+            if movement.company
+            else employment.company.name
+            if employment.company
+            else ""
+        )
         age_days = max((today - movement.start_date).days, 0)
         severity = "Baixa"
         if age_days >= 7:
             severity = "Alta"
         elif age_days >= 3:
             severity = "Média"
-        alerts.append({
-            "id": f"movement-pending-{movement.id}",
-            "company_id": movement.company_id,
-            "company_name": company_name,
-            "type": "Ajuste pendente",
-            "employee_name": employment.employee.full_name,
-            "result_center": result_center_to_dict(employment),
-            "due_date": movement.start_date.isoformat(),
-            "message": f"Movimentação {movement.type} pendente de conferência.",
-            "severity": severity,
-        })
+        alerts.append(
+            {
+                "id": f"movement-pending-{movement.id}",
+                "target_id": movement.id,
+                "company_id": movement.company_id,
+                "company_name": company_name,
+                "type": "Ajuste pendente",
+                "employee_name": employment.employee.full_name,
+                "result_center": result_center_to_dict(employment),
+                "due_date": movement.start_date.isoformat(),
+                "message": f"Movimentação {movement.type} pendente de conferência.",
+                "severity": severity,
+            }
+        )
 
     severity_order = {"Alta": 0, "Média": 1, "Baixa": 2}
-    alerts.sort(key=lambda item: (severity_order.get(item["severity"], 99), item["due_date"], item["employee_name"]))
+    alerts.sort(
+        key=lambda item: (
+            severity_order.get(item["severity"], 99),
+            item["due_date"],
+            item["employee_name"],
+        )
+    )
     return alerts[:200]
 
 
 @router.get("/audit-logs")
-def audit_logs(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict[str, Any]]:
+def audit_logs(
+    db: DbSession,
+    _: CurrentUser,
+    company_id: int = 1,
+    module: str = "",
+    query: str = "",
+    limit: int = 100,
+) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
 
     employment_query = (
@@ -1078,7 +1683,9 @@ def audit_logs(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict[
             joinedload(BenefitDistribution.company),
             joinedload(BenefitDistribution.employment).joinedload(Employment.company),
             joinedload(BenefitDistribution.employment).joinedload(Employment.employee),
-            joinedload(BenefitDistribution.employment).joinedload(Employment.result_center),
+            joinedload(BenefitDistribution.employment).joinedload(
+                Employment.result_center
+            ),
         )
         .order_by(BenefitDistribution.created_at.desc(), BenefitDistribution.id.desc())
     )
@@ -1103,124 +1710,214 @@ def audit_logs(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict[
         )
         .order_by(MeiContract.created_at.desc(), MeiContract.id.desc())
     )
-    settings_query = select(SystemSetting).options(joinedload(SystemSetting.company)).order_by(SystemSetting.id.desc())
+    settings_query = (
+        select(SystemSetting)
+        .options(joinedload(SystemSetting.company))
+        .order_by(SystemSetting.id.desc())
+    )
+    persistent_query = (
+        select(AuditEntry)
+        .options(joinedload(AuditEntry.company))
+        .order_by(AuditEntry.created_at.desc())
+    )
 
     if company_id != 0:
         ensure_company(db, company_id)
         employment_query = employment_query.where(Employment.company_id == company_id)
-        benefit_query = benefit_query.where(BenefitDistribution.company_id == company_id)
+        benefit_query = benefit_query.where(
+            BenefitDistribution.company_id == company_id
+        )
         movement_query = movement_query.where(Movement.company_id == company_id)
         mei_query = mei_query.where(MeiContract.company_id == company_id)
         settings_query = settings_query.where(SystemSetting.company_id == company_id)
+        persistent_query = persistent_query.where(AuditEntry.company_id == company_id)
+    if module:
+        persistent_query = persistent_query.where(AuditEntry.module == module)
+
+    for item in db.scalars(persistent_query.limit(min(max(limit, 1), 200))):
+        entries.append(
+            {
+                "id": f"audit-{item.id}",
+                "company_id": item.company_id,
+                "company_name": item.company.name if item.company else "",
+                "module": item.module,
+                "action": item.action,
+                "employee_name": item.employee_name,
+                "result_center": item.result_center,
+                "performed_by": item.performed_by,
+                "performed_role": item.performed_role,
+                "created_at": item.created_at.isoformat() if item.created_at else "",
+                "details": item.details,
+            }
+        )
 
     for employment in db.scalars(employment_query):
         if not employment.salary_history:
             continue
-        for item in sorted(employment.salary_history, key=lambda history: history.effective_date, reverse=True):
+        for item in sorted(
+            employment.salary_history,
+            key=lambda history: history.effective_date,
+            reverse=True,
+        ):
             company_name = employment.company.name if employment.company else ""
-            entries.append({
-                "id": f"salary-{employment.id}-{item.effective_date.isoformat()}",
-                "company_id": employment.company_id,
-                "company_name": company_name,
-                "module": "Colaboradores",
-                "action": "Atualização salarial",
-                "employee_name": employment.employee.full_name,
-                "result_center": result_center_to_dict(employment),
-                "performed_by": "Sistema",
-                "performed_role": "ADMIN",
-                "created_at": item.effective_date.isoformat(),
-                "details": f"{item.reason or 'Histórico salarial'} | salário {money(item.amount)} | família {money(item.family_allowance)}",
-            })
+            entries.append(
+                {
+                    "id": f"salary-{employment.id}-{item.effective_date.isoformat()}",
+                    "company_id": employment.company_id,
+                    "company_name": company_name,
+                    "module": "Colaboradores",
+                    "action": "Atualização salarial",
+                    "employee_name": employment.employee.full_name,
+                    "result_center": result_center_to_dict(employment),
+                    "performed_by": "Sistema",
+                    "performed_role": "ADMIN",
+                    "created_at": item.effective_date.isoformat(),
+                    "details": f"{item.reason or 'Histórico salarial'} | salário {money(item.amount)} | família {money(item.family_allowance)}",
+                }
+            )
 
     for item in db.scalars(benefit_query):
         employment = item.employment
         if not employment:
             continue
-        company_name = item.company.name if item.company else employment.company.name if employment.company else ""
-        entries.append({
-            "id": f"benefit-{item.id}",
-            "company_id": item.company_id,
-            "company_name": company_name,
-            "module": "Benefícios",
-            "action": f"Distribuição de {item.benefit_name}",
-            "employee_name": employment.employee.full_name,
-            "result_center": result_center_to_dict(employment),
-            "performed_by": item.created_by or "Sistema",
-            "performed_role": "ADMIN",
-            "created_at": item.created_at.isoformat(),
-            "details": f"{item.source} | {item.description} | valor {money(item.amount)}",
-        })
+        company_name = (
+            item.company.name
+            if item.company
+            else employment.company.name
+            if employment.company
+            else ""
+        )
+        entries.append(
+            {
+                "id": f"benefit-{item.id}",
+                "company_id": item.company_id,
+                "company_name": company_name,
+                "module": "Benefícios",
+                "action": f"Distribuição de {item.benefit_name}",
+                "employee_name": employment.employee.full_name,
+                "result_center": result_center_to_dict(employment),
+                "performed_by": item.created_by or "Sistema",
+                "performed_role": "ADMIN",
+                "created_at": item.created_at.isoformat(),
+                "details": f"{item.source} | {item.description} | valor {money(item.amount)}",
+            }
+        )
 
     for movement in db.scalars(movement_query):
         employment = movement.employment
         if not employment:
             continue
-        company_name = movement.company.name if movement.company else employment.company.name if employment.company else ""
-        entries.append({
-            "id": f"movement-{movement.id}",
-            "company_id": movement.company_id,
-            "company_name": company_name,
-            "module": "Movimentações",
-            "action": f"Lançamento de {movement.type}",
-            "employee_name": employment.employee.full_name,
-            "result_center": result_center_to_dict(employment),
-            "performed_by": "Sistema",
-            "performed_role": "ADMIN",
-            "created_at": movement.start_date.isoformat(),
-            "details": f"{movement.status} | {movement.observation}",
-        })
+        company_name = (
+            movement.company.name
+            if movement.company
+            else employment.company.name
+            if employment.company
+            else ""
+        )
+        entries.append(
+            {
+                "id": f"movement-{movement.id}",
+                "company_id": movement.company_id,
+                "company_name": company_name,
+                "module": "Movimentações",
+                "action": f"Lançamento de {movement.type}",
+                "employee_name": employment.employee.full_name,
+                "result_center": result_center_to_dict(employment),
+                "performed_by": "Sistema",
+                "performed_role": "ADMIN",
+                "created_at": movement.start_date.isoformat(),
+                "details": f"{movement.status} | {movement.observation}",
+            }
+        )
 
     for contract in db.scalars(mei_query):
         employment = contract.employment
         if not employment:
             continue
-        company_name = contract.company.name if contract.company else employment.company.name if employment.company else ""
-        entries.append({
-            "id": f"mei-{contract.id}",
-            "company_id": contract.company_id,
-            "company_name": company_name,
-            "module": "Contratos MEI",
-            "action": "Lançamento de contrato",
-            "employee_name": employment.employee.full_name,
-            "result_center": result_center_to_dict(employment),
-            "performed_by": "Sistema",
-            "performed_role": "ADMIN",
-            "created_at": contract.created_at.isoformat() if contract.created_at else contract.start_date.isoformat(),
-            "details": f"{contract.status} | vigência {contract.start_date.isoformat()} a {contract.end_date.isoformat()}",
-        })
-        if contract.signed_at:
-            entries.append({
-                "id": f"mei-sign-{contract.id}",
+        company_name = (
+            contract.company.name
+            if contract.company
+            else employment.company.name
+            if employment.company
+            else ""
+        )
+        entries.append(
+            {
+                "id": f"mei-{contract.id}",
                 "company_id": contract.company_id,
                 "company_name": company_name,
                 "module": "Contratos MEI",
-                "action": "Assinatura de contrato",
+                "action": "Lançamento de contrato",
                 "employee_name": employment.employee.full_name,
                 "result_center": result_center_to_dict(employment),
-                "performed_by": contract.signed_by or "Sistema",
+                "performed_by": "Sistema",
                 "performed_role": "ADMIN",
-                "created_at": contract.signed_at.isoformat(),
-                "details": f"Anexo {contract.attachment_name or '-'}",
-            })
+                "created_at": contract.created_at.isoformat()
+                if contract.created_at
+                else contract.start_date.isoformat(),
+                "details": f"{contract.status} | vigência {contract.start_date.isoformat()} a {contract.end_date.isoformat()}",
+            }
+        )
+        if contract.signed_at:
+            entries.append(
+                {
+                    "id": f"mei-sign-{contract.id}",
+                    "company_id": contract.company_id,
+                    "company_name": company_name,
+                    "module": "Contratos MEI",
+                    "action": "Assinatura de contrato",
+                    "employee_name": employment.employee.full_name,
+                    "result_center": result_center_to_dict(employment),
+                    "performed_by": contract.signed_by or "Sistema",
+                    "performed_role": "ADMIN",
+                    "created_at": contract.signed_at.isoformat(),
+                    "details": f"Anexo {contract.attachment_name or '-'}",
+                }
+            )
 
     for settings in db.scalars(settings_query):
-        company_name = settings.company.name if settings.company else settings.company_name
-        entries.append({
-            "id": f"settings-{settings.id}",
-            "company_id": settings.company_id,
-            "company_name": company_name,
-            "module": "Configurações",
-            "action": "Ajustes do sistema salvos",
-            "employee_name": None,
-            "result_center": None,
-            "performed_by": "Sistema",
-            "performed_role": "ADMIN",
-            "created_at": settings.configured_at.isoformat() if settings.configured_at else "",
-            "details": "Cargos, encargos, backup e parâmetros por empresa.",
-        })
+        company_name = (
+            settings.company.name if settings.company else settings.company_name
+        )
+        entries.append(
+            {
+                "id": f"settings-{settings.id}",
+                "company_id": settings.company_id,
+                "company_name": company_name,
+                "module": "Configurações",
+                "action": "Ajustes do sistema salvos",
+                "employee_name": None,
+                "result_center": None,
+                "performed_by": "Sistema",
+                "performed_role": "ADMIN",
+                "created_at": settings.configured_at.isoformat()
+                if settings.configured_at
+                else "",
+                "details": "Cargos, encargos, backup e parâmetros por empresa.",
+            }
+        )
 
+    if module:
+        entries = [item for item in entries if item["module"] == module]
+    if query.strip():
+        normalized_query = query.strip().casefold()
+        entries = [
+            item
+            for item in entries
+            if normalized_query
+            in " ".join(
+                str(item.get(field) or "")
+                for field in (
+                    "action",
+                    "details",
+                    "performed_by",
+                    "employee_name",
+                    "company_name",
+                )
+            ).casefold()
+        ]
     entries.sort(key=lambda item: item["created_at"], reverse=True)
-    return entries[:250]
+    return entries[: min(max(limit, 1), 200)]
 
 
 @router.post("/import-preview")
@@ -1229,7 +1926,9 @@ def import_preview(_: CurrentUser) -> dict[str, Any]:
 
 
 @router.get("/indicators")
-def indicators(db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> dict[str, Any]:
+def indicators(
+    db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1
+) -> dict[str, Any]:
     _, _, start, end = parse_competency(competency)
     if company_id != 0:
         ensure_company(db, company_id)
@@ -1250,9 +1949,10 @@ def indicators(db: DbSession, user: CurrentUser, competency: str = "2026-06", co
             "productive_days": 0,
             "non_productive_hours": 0,
         }
-    employment_query = (
-        select(Employment)
-        .options(joinedload(Employment.employee), joinedload(Employment.result_center), joinedload(Employment.employment_type))
+    employment_query = select(Employment).options(
+        joinedload(Employment.employee),
+        joinedload(Employment.result_center),
+        joinedload(Employment.employment_type),
     )
     employment_query = employment_query.where(Employment.company_id.in_(closed_ids))
     employments = list(db.scalars(employment_query))
@@ -1260,16 +1960,25 @@ def indicators(db: DbSession, user: CurrentUser, competency: str = "2026-06", co
     active = [
         item
         for item in employments
-        if employment_active_in_period(item, start, end) and item.status != EmploymentStatus.INACTIVE
+        if employment_active_in_period(item, start, end)
+        and item.status != EmploymentStatus.INACTIVE
     ]
     initial_headcount = sum(
-        employment_active_in_period(item, start, start) and item.status != EmploymentStatus.INACTIVE
+        employment_active_in_period(item, start, start)
+        and item.status != EmploymentStatus.INACTIVE
         for item in employments
     )
     final_headcount = len(active)
     admissions = sum(start <= item.admission_date <= end for item in employments)
-    terminations = sum(bool(item.termination_date and start <= item.termination_date <= end) for item in employments)
-    average_headcount = (initial_headcount + final_headcount) / 2 if (initial_headcount or final_headcount) else 0
+    terminations = sum(
+        bool(item.termination_date and start <= item.termination_date <= end)
+        for item in employments
+    )
+    average_headcount = (
+        (initial_headcount + final_headcount) / 2
+        if (initial_headcount or final_headcount)
+        else 0
+    )
 
     movement_query = select(Movement).where(Movement.competency == competency)
     movement_query = movement_query.where(Movement.company_id.in_(closed_ids))
@@ -1277,7 +1986,11 @@ def indicators(db: DbSession, user: CurrentUser, competency: str = "2026-06", co
     non_productive_hours = sum(as_float(item.hour_impact) for item in movements)
     scheduled_hours = sum(as_float(item.daily_hours) * 22 for item in active)
 
-    payroll_rows = [row for scoped_company_id in closed_ids for row in payroll(db, user, competency, scoped_company_id)]
+    payroll_rows = [
+        row
+        for scoped_company_id in closed_ids
+        for row in payroll(db, user, competency, scoped_company_id)
+    ]
     gross_payroll = sum(float(row["gross_payroll"]) for row in payroll_rows)
     net_payroll = sum(float(row["net_payroll"]) for row in payroll_rows)
     total_cost = sum(float(row["total_cost"]) for row in payroll_rows)
@@ -1289,7 +2002,9 @@ def indicators(db: DbSession, user: CurrentUser, competency: str = "2026-06", co
         "final_headcount": int(final_headcount),
         "average_headcount": average_headcount,
         "absenteeism": non_productive_hours / scheduled_hours if scheduled_hours else 0,
-        "turnover": ((admissions + terminations) / 2 / final_headcount) if final_headcount else 0,
+        "turnover": ((admissions + terminations) / 2 / final_headcount)
+        if final_headcount
+        else 0,
         "gross_payroll": gross_payroll,
         "net_payroll": net_payroll,
         "salary_per_capita": gross_payroll / final_headcount if final_headcount else 0,
@@ -1300,7 +2015,9 @@ def indicators(db: DbSession, user: CurrentUser, competency: str = "2026-06", co
 
 
 @router.get("/indicators/sheets")
-def indicator_sheets(db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1) -> dict[str, Any]:
+def indicator_sheets(
+    db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1
+) -> dict[str, Any]:
     year, _, _, _ = parse_competency(competency)
     if company_id != 0:
         ensure_company(db, company_id)
@@ -1308,7 +2025,10 @@ def indicator_sheets(db: DbSession, user: CurrentUser, competency: str = "2026-0
     if company_id != 0:
         centers_query = centers_query.where(ResultCenter.company_id == company_id)
     centers = list(db.scalars(centers_query.order_by(ResultCenter.code)))
-    sheets = {center.code: build_indicator_sheet(db, user, year, center, company_id) for center in centers}
+    sheets = {
+        center.code: build_indicator_sheet(db, user, year, center, company_id)
+        for center in centers
+    }
     return {
         "year": year,
         "centers": [
@@ -1326,8 +2046,23 @@ def indicator_sheets(db: DbSession, user: CurrentUser, competency: str = "2026-0
     }
 
 
-def build_indicator_sheet(db: DbSession, user: CurrentUser, year: int, center: Any, company_id: int) -> dict[str, Any]:
-    month_labels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+def build_indicator_sheet(
+    db: DbSession, user: CurrentUser, year: int, center: Any, company_id: int
+) -> dict[str, Any]:
+    month_labels = [
+        "Jan",
+        "Fev",
+        "Mar",
+        "Abr",
+        "Mai",
+        "Jun",
+        "Jul",
+        "Ago",
+        "Set",
+        "Out",
+        "Nov",
+        "Dez",
+    ]
     cost_keys = {
         "Salário": "salary",
         "Prolabore": "pro_labore",
@@ -1355,7 +2090,9 @@ def build_indicator_sheet(db: DbSession, user: CurrentUser, year: int, center: A
     turnover_values: list[float] = []
     absenteeism_values: list[float] = []
 
-    employment_query = select(Employment).where(Employment.result_center_id == center.id)
+    employment_query = select(Employment).where(
+        Employment.result_center_id == center.id
+    )
     if company_id != 0:
         employment_query = employment_query.where(Employment.company_id == company_id)
     employments = list(db.scalars(employment_query))
@@ -1420,21 +2157,36 @@ def build_indicator_sheet(db: DbSession, user: CurrentUser, year: int, center: A
             for item in month_movements
             if item.employment and item.employment.result_center_id == center.id
         ]
-        initial = sum(employment_active_in_period(item, start, start) and item.status != EmploymentStatus.INACTIVE for item in employments)
-        final = sum(employment_active_in_period(item, start, end) and item.status != EmploymentStatus.INACTIVE for item in employments)
+        initial = sum(
+            employment_active_in_period(item, start, start)
+            and item.status != EmploymentStatus.INACTIVE
+            for item in employments
+        )
+        final = sum(
+            employment_active_in_period(item, start, end)
+            and item.status != EmploymentStatus.INACTIVE
+            for item in employments
+        )
         active_month = [
             item
             for item in employments
-            if employment_active_in_period(item, start, end) and item.status != EmploymentStatus.INACTIVE
+            if employment_active_in_period(item, start, end)
+            and item.status != EmploymentStatus.INACTIVE
         ]
         admissions = sum(start <= item.admission_date <= end for item in employments)
-        terminations = sum(bool(item.termination_date and start <= item.termination_date <= end) for item in employments)
+        terminations = sum(
+            bool(item.termination_date and start <= item.termination_date <= end)
+            for item in employments
+        )
         non_productive = sum(as_float(item.hour_impact) for item in month_movements)
         scheduled = sum(as_float(item.daily_hours) * 22 for item in active_month)
         absence_days = sum(
             item.days
             for item in month_movements
-            if any(marker in item.type.lower() for marker in ("afast", "falta", "ferias", "férias", "atestado"))
+            if any(
+                marker in item.type.lower()
+                for marker in ("afast", "falta", "ferias", "férias", "atestado")
+            )
         )
         average_headcount = (initial + final) / 2 if (initial or final) else 0
         turnover_value = ((admissions + terminations) / 2 / final) if final else 0
@@ -1445,7 +2197,11 @@ def build_indicator_sheet(db: DbSession, user: CurrentUser, year: int, center: A
         for label, key in cost_keys.items():
             if key == "benefits_total":
                 value = sum(
-                    float(row["transport"]) + float(row["meal"]) + float(row["lodging"]) + float(row["insurance"]) + float(row["health_plan"])
+                    float(row["transport"])
+                    + float(row["meal"])
+                    + float(row["lodging"])
+                    + float(row["insurance"])
+                    + float(row["health_plan"])
                     for row in month_payroll_rows
                 )
             else:
@@ -1499,8 +2255,14 @@ def build_indicator_sheet(db: DbSession, user: CurrentUser, year: int, center: A
     return {
         "title": f"{center.code} {year}",
         "subtitle": center.name,
-        "costRows": [{"label": label, "values": values, "total": round(sum(values), 2)} for label, values in costs.items()],
-        "operationalRows": [{"label": label, "values": values, "total": round(sum(values), 2)} for label, values in operational.items()],
+        "costRows": [
+            {"label": label, "values": values, "total": round(sum(values), 2)}
+            for label, values in costs.items()
+        ],
+        "operationalRows": [
+            {"label": label, "values": values, "total": round(sum(values), 2)}
+            for label, values in operational.items()
+        ],
         "financeRows": finance_rows,
         "turnoverRows": turnover_rows,
         "absenteeismRows": absenteeism_rows,
@@ -1519,8 +2281,23 @@ def payroll_row(
     override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     values = override or {}
-    salary = money(values.get("salary", employment.salary_base if employment.employment_type.name.upper() == "CLT" else 0))
-    pro_labore = money(values.get("pro_labore", employment.salary_base if "PRÓ" in employment.employment_type.name.upper() or "PRO" in employment.employment_type.name.upper() else 0))
+    salary = money(
+        values.get(
+            "salary",
+            employment.salary_base
+            if employment.employment_type.name.upper() == "CLT"
+            else 0,
+        )
+    )
+    pro_labore = money(
+        values.get(
+            "pro_labore",
+            employment.salary_base
+            if "PRÓ" in employment.employment_type.name.upper()
+            or "PRO" in employment.employment_type.name.upper()
+            else 0,
+        )
+    )
     cost_aid = money(values.get("cost_aid", employment.cost_aid))
     transport = money(values.get("transport", benefits.get("VT", Decimal("0.00"))))
     meal = money(values.get("meal", benefits.get("AL", Decimal("0.00"))))
@@ -1537,14 +2314,34 @@ def payroll_row(
     charges = money(inss + rat + terceiros + fgts)
     vacation = money(subtotal / 12)
     vacation_third = money(vacation / 3)
-    fgts_vacation = money((vacation + vacation_third) * Decimal(str(rates["fgts_vacation"])) / 100)
+    fgts_vacation = money(
+        (vacation + vacation_third) * Decimal(str(rates["fgts_vacation"])) / 100
+    )
     thirteenth = money(subtotal / 12)
     fgts_thirteenth = money(thirteenth * Decimal(str(rates["fgts_thirteenth"])) / 100)
     notice = money(subtotal / 12)
     fgts_notice = money(notice * Decimal(str(rates["fgts_notice"])) / 100)
-    fgts_fine = money((fgts + fgts_vacation + fgts_thirteenth + fgts_notice) * Decimal(str(rates["multa_fgts"])) / 100)
-    patronal = money((vacation + vacation_third + thirteenth + notice) * Decimal(str(rates["patronal"])) / 100)
-    provisions = money(vacation + vacation_third + fgts_vacation + thirteenth + fgts_thirteenth + notice + fgts_notice + fgts_fine + patronal)
+    fgts_fine = money(
+        (fgts + fgts_vacation + fgts_thirteenth + fgts_notice)
+        * Decimal(str(rates["multa_fgts"]))
+        / 100
+    )
+    patronal = money(
+        (vacation + vacation_third + thirteenth + notice)
+        * Decimal(str(rates["patronal"]))
+        / 100
+    )
+    provisions = money(
+        vacation
+        + vacation_third
+        + fgts_vacation
+        + thirteenth
+        + fgts_thirteenth
+        + notice
+        + fgts_notice
+        + fgts_fine
+        + patronal
+    )
     total_cost = money(subtotal + charges + provisions + benefit_total)
     return {
         "employee_id": employment.id,

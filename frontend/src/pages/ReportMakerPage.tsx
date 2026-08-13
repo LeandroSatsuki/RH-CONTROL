@@ -35,6 +35,8 @@ interface ReportTemplate {
   filters: Record<string, string>;
 }
 
+const sourceNames: SourceName[] = ["Colaboradores", "Movimentações", "Benefícios", "Custo / Folha", "Afastamentos"];
+
 function normalizeText(value: string) {
   return value.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
@@ -58,7 +60,13 @@ const fieldLibrary: FieldMeta[] = [
   { id: "center", source: "Colaboradores", label: "Centro de Resultado", extractor: row => row.center ?? row.result_center?.code ?? "" },
   { id: "supervisor", source: "Colaboradores", label: "Supervisor", extractor: row => row.supervisor ?? row.supervisor_name ?? "" },
   { id: "state", source: "Colaboradores", label: "UF", extractor: row => row.state ?? "" },
-  { id: "employment_type", source: "Colaboradores", label: "Modalidade", extractor: row => row.employment_type ?? "" },
+  { id: "employment_type", source: "Colaboradores", label: "Modalidade", extractor: row => row.employment_type?.name ?? row.employment_type ?? "" },
+  { id: "job_title", source: "Colaboradores", label: "Cargo", extractor: row => row.job_title ?? "" },
+  { id: "department", source: "Colaboradores", label: "Departamento", extractor: row => row.department ?? "" },
+  { id: "admission_date", source: "Colaboradores", label: "Admissão", extractor: row => row.admission_date ?? "" },
+  { id: "daily_hours", source: "Colaboradores", label: "Jornada diária", extractor: row => row.daily_hours ?? "" },
+  { id: "document", source: "Colaboradores", label: "CPF / CNPJ", extractor: row => row.employee?.cpf ?? row.cpf ?? row.cnpj ?? "" },
+  { id: "employee_benefits", source: "Colaboradores", label: "Benefícios", extractor: row => Array.isArray(row.benefits) ? row.benefits.join(", ") : "" },
   { id: "salary_base", source: "Colaboradores", label: "Salário base", display: "currency", extractor: row => Number(row.salary_base ?? 0) },
   { id: "status", source: "Colaboradores", label: "Status", extractor: row => row.status ?? "" },
 
@@ -85,6 +93,17 @@ const fieldLibrary: FieldMeta[] = [
   { id: "payroll_meal", source: "Custo / Folha", label: "Alimentação", display: "currency", extractor: row => Number(row.meal ?? 0) },
   { id: "payroll_health", source: "Custo / Folha", label: "Plano de saúde", display: "currency", extractor: row => Number(row.health_plan ?? 0) },
   { id: "payroll_insurance", source: "Custo / Folha", label: "Seguro de vida", display: "currency", extractor: row => Number(row.insurance ?? 0) },
+  { id: "payroll_lodging", source: "Custo / Folha", label: "Hospedagem", display: "currency", extractor: row => Number(row.lodging ?? 0) },
+  { id: "payroll_cost_aid", source: "Custo / Folha", label: "Ajuda de custo", display: "currency", extractor: row => Number(row.cost_aid ?? 0) },
+  { id: "payroll_pro_labore", source: "Custo / Folha", label: "Pró-labore", display: "currency", extractor: row => Number(row.pro_labore ?? 0) },
+  { id: "payroll_profit_distribution", source: "Custo / Folha", label: "Distribuição de lucros", display: "currency", extractor: row => Number(row.profit_distribution ?? 0) },
+  { id: "payroll_earnings", source: "Custo / Folha", label: "Total de proventos", display: "currency", extractor: row => Number(row.subtotal_earnings ?? 0) },
+  { id: "payroll_charges", source: "Custo / Folha", label: "Encargos", display: "currency", extractor: row => Number(row.charges ?? 0) },
+  { id: "payroll_provisions", source: "Custo / Folha", label: "Provisões", display: "currency", extractor: row => Number(row.total_provisions ?? 0) },
+  { id: "payroll_gross", source: "Custo / Folha", label: "Folha bruta", display: "currency", extractor: row => Number(row.gross_payroll ?? 0) },
+  { id: "payroll_net", source: "Custo / Folha", label: "Folha líquida", display: "currency", extractor: row => Number(row.net_payroll ?? 0) },
+  { id: "payroll_total_cost", source: "Custo / Folha", label: "Custo total", display: "currency", extractor: row => Number(row.total_cost ?? 0) },
+  { id: "payroll_grand_total", source: "Custo / Folha", label: "Total geral", display: "currency", extractor: row => Number(row.grand_total ?? 0) },
 
   { id: "abs_employee", source: "Afastamentos", label: "Colaborador", extractor: row => row.employee_name ?? "" },
   { id: "abs_center", source: "Afastamentos", label: "Centro de Resultado", extractor: row => row.center ?? row.result_center?.code ?? "" },
@@ -95,22 +114,12 @@ const fieldLibrary: FieldMeta[] = [
 ];
 
 const sourceDefaults: Record<SourceName, string[]> = {
-  "Colaboradores": ["employee_name", "center", "supervisor", "state", "employment_type", "salary_base"],
+  "Colaboradores": ["employee_name", "center", "job_title", "employment_type", "salary_base", "status"],
   "Movimentações": ["movement_employee", "movement_center", "movement_type", "movement_days", "movement_hours"],
   "Benefícios": ["benefit_employee", "benefit_center", "benefit_name", "benefit_days", "benefit_value_day", "benefit_amount"],
-  "Custo / Folha": ["payroll_employee", "payroll_center", "payroll_transport", "payroll_meal", "payroll_health", "payroll_insurance"],
+  "Custo / Folha": ["payroll_employee", "payroll_center", "payroll_earnings", "payroll_charges", "payroll_provisions", "payroll_grand_total"],
   "Afastamentos": ["abs_employee", "abs_center", "abs_type", "abs_days", "abs_hours", "abs_observation"]
 };
-
-const hiddenFieldIds = new Set([
-  "payroll_employee",
-  "payroll_center",
-  "payroll_salary",
-  "payroll_transport",
-  "payroll_meal",
-  "payroll_health",
-  "payroll_insurance"
-]);
 
 export function ReportMakerPage({ token, user }: { token: string; user: User }) {
   const { selectedCompany } = useDemoScope();
@@ -122,13 +131,14 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
   const [payroll, setPayroll] = useState<PayrollRow[]>([]);
   const [centers, setCenters] = useState<ResultCenter[]>([]);
   const [types, setTypes] = useState<EmploymentType[]>([]);
-  const [selectedFields, setSelectedFields] = useState<SelectedField[]>(sourceDefaults["Custo / Folha"].map(id => ({ id, aggregator: fieldLibrary.find(field => field.id === id)?.display !== "text" ? "sum" : "none" })));
+  const [selectedFields, setSelectedFields] = useState<SelectedField[]>(defaultSelectedFields("Custo / Folha"));
   const [groupBy, setGroupBy] = useState("payroll_center");
   const [filterCenter, setFilterCenter] = useState("");
   const [filterState, setFilterState] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterBenefit, setFilterBenefit] = useState("");
   const [query, setQuery] = useState("");
+  const [fieldSearch, setFieldSearch] = useState("");
   const [templateName, setTemplateName] = useState("Relatório customizado");
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [activeTemplateId, setActiveTemplateId] = useState<number | null>(null);
@@ -173,19 +183,19 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
       applyingTemplate.current = false;
       return;
     }
-    const defaults = sourceDefaults[source];
-    setSelectedFields(defaults.map(id => ({ id, aggregator: fieldLibrary.find(field => field.id === id)?.display !== "text" ? "sum" : "none" })));
+    setSelectedFields(defaultSelectedFields(source));
     setGroupBy(defaultGroupField(source));
   }, [source]);
 
   const sourceRows = useMemo(() => getSourceRows(source, employees, movements, benefits, payroll, competency), [benefits, competency, employees, movements, payroll, source]);
   const filteredRows = useMemo(() => sourceRows.filter(row => applyFilters(row, { filterCenter, filterState, filterType, filterBenefit, query })), [filterBenefit, filterCenter, filterState, filterType, query, sourceRows]);
-  const previewRows = useMemo(() => buildPreviewRows(filteredRows, groupBy, selectedFields), [filteredRows, groupBy, selectedFields]);
+  const outputFields = useMemo(() => selectedFields.filter(item => item.id !== groupBy), [groupBy, selectedFields]);
+  const previewRows = useMemo(() => buildPreviewRows(filteredRows, groupBy, outputFields), [filteredRows, groupBy, outputFields]);
   const reportTotal = useMemo(() => calculateReportTotal(source, filteredRows), [filteredRows, source]);
   function addField(fieldId: string) {
     if (selectedFields.some(item => item.id === fieldId)) return;
     const meta = fieldLibrary.find(item => item.id === fieldId);
-    setSelectedFields(current => [...current, { id: fieldId, aggregator: meta?.display !== "text" ? "sum" : "none" }]);
+    setSelectedFields(current => [...current, { id: fieldId, aggregator: defaultAggregator(meta) }]);
   }
 
   function updateField(id: string, aggregator: Aggregator) {
@@ -202,6 +212,28 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
       body: JSON.stringify(next)
     }, token);
     setTemplates(saved);
+  }
+
+  function moveField(id: string, direction: -1 | 1) {
+    setSelectedFields(current => {
+      const index = current.findIndex(item => item.id === id);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
+  function resetBuilder() {
+    setSelectedFields(defaultSelectedFields(source));
+    setGroupBy(defaultGroupField(source));
+    setFilterCenter("");
+    setFilterState("");
+    setFilterType("");
+    setFilterBenefit("");
+    setQuery("");
+    setActiveTemplateId(null);
   }
 
   function saveTemplate() {
@@ -279,127 +311,112 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
   }
 
   const groupField = fieldLibrary.find(item => item.id === groupBy) ?? fieldLibrary[0];
+  const sourceFields = fieldLibrary.filter(field => field.source === source && normalizeText(field.label).includes(normalizeText(fieldSearch)));
+  const activeFilterCount = [filterCenter, filterState, filterType, filterBenefit, query].filter(Boolean).length;
+  const activeTemplate = templates.find(template => template.id === activeTemplateId);
 
   return (
-    <div>
-      <div className="page-title">
+    <div className="report-maker-page">
+      <div className="page-title compact-title">
         <div>
           <span className="eyebrow">Analytics</span>
           <h1>Relatório Maker</h1>
-          <p>Monte relatórios misturando campos, filtros e agregações, e salve o modelo para reutilizar depois.</p>
+          <p>Escolha a fonte, monte as colunas, refine os dados e acompanhe a prévia em tempo real.</p>
         </div>
         <div className="actions">
-          <button className="secondary" type="button" onClick={applyAwayPreset}>Preset afastamentos</button>
+          <button className="ghost compact-button" type="button" onClick={resetBuilder}>Limpar</button>
+          <button className="secondary compact-button" type="button" onClick={applyAwayPreset}>Modelo de afastamentos</button>
           <button className="primary" type="button" onClick={saveTemplate}>Salvar modelo</button>
         </div>
       </div>
       <ErrorMessage message={error} />
       <SuccessMessage message={success} />
 
-      <div className="summary-grid">
-        <Summary label="Fonte" value={source} />
-        <Summary label="Linhas filtradas" value={String(filteredRows.length)} />
-        <Summary label="Agrupamento" value={groupField.label} />
-        <Summary label="Total do relatório" value={source === "Afastamentos" ? String(reportTotal) : money.format(reportTotal)} strong />
-      </div>
-
-      <div className="panel filters-panel report-maker-filters">
-        <select value={competency} onChange={event => setCompetency(event.target.value)}>{operationalCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
-        <select value={source} onChange={event => setSource(event.target.value as SourceName)}>
-          <option value="Colaboradores">Colaboradores</option>
-          <option value="Movimentações">Movimentações</option>
-          <option value="Benefícios">Benefícios</option>
-          <option value="Custo / Folha">Custo / Folha</option>
-          <option value="Afastamentos">Afastamentos</option>
-        </select>
-        <select value={groupBy} onChange={event => setGroupBy(event.target.value)}>
-          {fieldLibrary.filter(field => field.source === source).map(field => <option key={field.id} value={field.id}>{field.label}</option>)}
-        </select>
-        <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Filtro base por texto" />
-        <select value={filterCenter} onChange={event => setFilterCenter(event.target.value)}><option value="">Todos os CRs</option>{centers.map(center => <option key={center.id} value={center.code}>{center.code}</option>)}</select>
-        <select value={filterState} onChange={event => setFilterState(event.target.value)}><option value="">Todos os UF</option>{Array.from(new Set(employees.map(item => item.state).filter(Boolean))).map(state => <option key={state} value={state}>{state}</option>)}</select>
-        <select value={filterType} onChange={event => setFilterType(event.target.value)}><option value="">Todas as modalidades</option>{types.map(type => <option key={type.id} value={type.name}>{type.name}</option>)}</select>
-        <select value={filterBenefit} onChange={event => setFilterBenefit(event.target.value)}><option value="">Todos os benefícios</option>{Array.from(new Set(benefits.map(item => item.benefit_name))).map(benefit => <option key={benefit} value={benefit}>{benefit}</option>)}</select>
-      </div>
-
-      <section className="panel report-maker-panel report-maker-panel-wide">
-        <h2>Colunas do relatório</h2>
-        <div className="report-selected-list">
-          {selectedFields.map(item => {
-            const meta = fieldLibrary.find(field => field.id === item.id);
-            return (
-              <div className="report-selected-row" key={item.id}>
-                <strong>{meta?.label ?? item.id}</strong>
-                <div className="report-selected-controls">
-                  <select value={item.aggregator} onChange={event => updateField(item.id, event.target.value as Aggregator)}>
-                    <option value="none">Sem agregação</option>
-                    <option value="sum">Soma</option>
-                    <option value="avg">Média</option>
-                    <option value="count">Contagem</option>
-                    <option value="min">Mínimo</option>
-                    <option value="max">Máximo</option>
-                    <option value="multiply">Multiplicação</option>
-                  </select>
-                  <button type="button" className="ghost" onClick={() => removeField(item.id)}>Remover</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+      <section className="panel maker-commandbar">
+        <label>Fonte de dados<select value={source} onChange={event => setSource(event.target.value as SourceName)}>
+          {sourceNames.map(item => <option key={item} value={item}>{item}</option>)}
+        </select></label>
+        <label>Competência<select value={competency} onChange={event => setCompetency(event.target.value)}>{operationalCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+        <label>Buscar modelo<input value={templateSearch} onChange={event => setTemplateSearch(event.target.value)} placeholder="Digite parte do nome" /></label>
+        <label className="maker-model-select">Modelo salvo<select
+          value={activeTemplateId ?? ""}
+          onChange={event => {
+            const chosen = templates.find(template => String(template.id) === event.target.value);
+            if (chosen) loadTemplate(chosen);
+          }}
+        ><option value="">Novo relatório</option>{filteredTemplates.map(template => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label>
+        <div className="maker-context"><span>{selectedCompany.name}</span><strong>{activeTemplate?.name ?? "Rascunho não salvo"}</strong></div>
       </section>
 
-      <section className="panel report-maker-panel report-saved-panel">
-        <div className="report-saved-head">
-          <div>
-            <h2>Relatórios Salvos</h2>
-            <p>Pesquise pelo nome e abra um modelo salvo.</p>
+      <div className="maker-stats" aria-label="Resumo do relatório">
+        <div><span>Registros</span><strong>{filteredRows.length}</strong></div>
+        <div><span>Grupos</span><strong>{previewRows.length}</strong></div>
+        <div><span>Colunas</span><strong>{outputFields.length + 1}</strong></div>
+        <div><span>Filtros ativos</span><strong>{activeFilterCount}</strong></div>
+        <div className="strong"><span>Total</span><strong>{formatReportTotal(source, reportTotal)}</strong></div>
+      </div>
+
+      <div className="maker-workbench">
+        <aside className="panel maker-fields-panel">
+          <div className="maker-panel-title"><div><span>1</span><strong>Campos</strong></div><small>{sourceFields.length} disponíveis</small></div>
+          <input className="compact-input" value={fieldSearch} onChange={event => setFieldSearch(event.target.value)} placeholder="Buscar campo" />
+          <div className="maker-field-list">
+            {sourceFields.map(field => {
+              const selected = selectedFields.some(item => item.id === field.id);
+              return <button key={field.id} type="button" className={selected ? "selected" : ""} onClick={() => selected ? removeField(field.id) : addField(field.id)}>
+                <span><strong>{field.label}</strong><small>{field.display === "currency" ? "Moeda" : field.display === "number" ? "Número" : "Texto"}</small></span>
+                <b>{selected ? "✓" : "+"}</b>
+              </button>;
+            })}
           </div>
-          <span className="report-saved-count">{filteredTemplates.length} modelos</span>
-        </div>
-        <div className="report-saved-picker">
-          <input
-            value={templateSearch}
-            onChange={event => setTemplateSearch(event.target.value)}
-            placeholder="Digite o nome do relatório"
-          />
-          <button type="button" className="secondary" onClick={() => setTemplateSearch("")}>Limpar</button>
-        </div>
-        <div className="report-saved-select-row">
-          <label className="report-saved-select-label">
-            Modelo encontrado
-            <select
-              className="report-saved-select"
-              value={activeTemplateId ?? ""}
-              onChange={event => {
-                const chosen = templates.find(template => String(template.id) === event.target.value);
-                if (chosen) loadTemplate(chosen);
-              }}
-            >
-              <option value="">Selecione um relatório salvo</option>
-              {filteredTemplates.map(template => (
-                <option key={template.id} value={template.id}>
-                  {template.name} | {operationalCompetencies.find(item => item.id === template.competency)?.label ?? template.competency ?? competency} | {template.source}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </section>
+        </aside>
 
-      <div className="panel table-wrap report-maker-shell">
+        <section className="panel maker-columns-panel">
+          <div className="maker-panel-title"><div><span>2</span><strong>Estrutura</strong></div><small>{outputFields.length} colunas</small></div>
+          <label className="maker-group-field">Agrupar resultados por<select value={groupBy} onChange={event => setGroupBy(event.target.value)}>{fieldLibrary.filter(field => field.source === source).map(field => <option key={field.id} value={field.id}>{field.label}</option>)}</select></label>
+          <div className="maker-selected-list">
+            {selectedFields.map((item, index) => {
+              const meta = fieldLibrary.find(field => field.id === item.id);
+              const isGroup = item.id === groupBy;
+              const options = aggregationOptions(meta);
+              return <div className={`maker-selected-row ${isGroup ? "group-field" : ""}`} key={item.id}>
+                <div className="maker-order-actions"><button type="button" onClick={() => moveField(item.id, -1)} disabled={index === 0} aria-label={`Mover ${meta?.label} para cima`}>↑</button><button type="button" onClick={() => moveField(item.id, 1)} disabled={index === selectedFields.length - 1} aria-label={`Mover ${meta?.label} para baixo`}>↓</button></div>
+                <span><strong>{meta?.label ?? item.id}</strong><small>{isGroup ? "Campo de agrupamento" : meta?.display === "currency" ? "Valor monetário" : meta?.display === "number" ? "Valor numérico" : "Dimensão"}</small></span>
+                {isGroup ? <em>Agrupamento</em> : <select value={item.aggregator} onChange={event => updateField(item.id, event.target.value as Aggregator)} aria-label={`Agregação de ${meta?.label}`}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>}
+                <button type="button" className="maker-remove" onClick={() => removeField(item.id)} aria-label={`Remover ${meta?.label}`}>×</button>
+              </div>;
+            })}
+            {!selectedFields.length && <Empty>Adicione campos pela coluna à esquerda.</Empty>}
+          </div>
+        </section>
+
+        <aside className="panel maker-filter-panel">
+          <div className="maker-panel-title"><div><span>3</span><strong>Filtros</strong></div><small>{activeFilterCount} ativos</small></div>
+          <label>Busca livre<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Nome, código ou descrição" /></label>
+          <label>Centro de Resultado<select value={filterCenter} onChange={event => setFilterCenter(event.target.value)}><option value="">Todos</option>{centers.map(center => <option key={center.id} value={center.code}>{center.code} — {center.name}</option>)}</select></label>
+          <label>UF<select value={filterState} onChange={event => setFilterState(event.target.value)}><option value="">Todas</option>{Array.from(new Set(employees.map(item => item.state).filter(Boolean))).map(state => <option key={state} value={state}>{state}</option>)}</select></label>
+          <label>Modalidade / tipo<select value={filterType} onChange={event => setFilterType(event.target.value)}><option value="">Todas</option>{types.map(type => <option key={type.id} value={type.name}>{type.name}</option>)}</select></label>
+          <label>Benefício<select value={filterBenefit} onChange={event => setFilterBenefit(event.target.value)}><option value="">Todos</option>{Array.from(new Set(benefits.map(item => item.benefit_name))).map(benefit => <option key={benefit} value={benefit}>{benefit}</option>)}</select></label>
+          <button className="ghost compact-button" type="button" onClick={() => { setFilterCenter(""); setFilterState(""); setFilterType(""); setFilterBenefit(""); setQuery(""); }}>Limpar filtros</button>
+        </aside>
+      </div>
+
+      <section className="panel maker-preview-panel">
+        <div className="maker-preview-head"><div><span className="eyebrow">Prévia em tempo real</span><h2>{activeTemplate?.name ?? templateName}</h2><p>{source} agrupado por {groupField.label}.</p></div><div className="actions"><span className="maker-result-count">{previewRows.length} linhas</span><button className="secondary compact-button" type="button" onClick={() => downloadReportCsv(previewRows, groupField, outputFields)} disabled={!previewRows.length}>Exportar CSV</button></div></div>
+        <div className="table-wrap report-maker-shell">
         {loading && <div className="inline-loading">Carregando dados do relatório...</div>}
         <table>
           <thead>
             <tr>
               <th>{groupField.label}</th>
-              {selectedFields.map(field => <th key={field.id}>{fieldLibrary.find(item => item.id === field.id)?.label ?? field.id}</th>)}
+              {outputFields.map(field => <th key={field.id}>{fieldLibrary.find(item => item.id === field.id)?.label ?? field.id}</th>)}
             </tr>
           </thead>
           <tbody>
             {previewRows.map((row, index) => (
               <tr key={`${String(row.__group ?? index)}-${index}`}>
                 <td><strong>{String(row.__group ?? "-")}</strong></td>
-                {selectedFields.map(field => {
+                {outputFields.map(field => {
                   const meta = fieldLibrary.find(item => item.id === field.id);
                   return <td key={field.id}>{formatPreviewValue(row[field.id], meta?.display ?? "text")}</td>;
                 })}
@@ -408,7 +425,8 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
           </tbody>
         </table>
         {!previewRows.length && !loading && <Empty>Nenhum dado disponível para a combinação escolhida.</Empty>}
-      </div>
+        </div>
+      </section>
 
       {templateModalOpen && (
         <div className="presentation-modal" role="dialog" aria-modal="true" onClick={() => setTemplateModalOpen(false)}>
@@ -459,6 +477,35 @@ function Summary({ label, value, strong }: { label: string; value: string | numb
 
 function defaultGroupField(source: SourceName) {
   return sourceDefaults[source][0] ?? "";
+}
+
+function defaultAggregator(meta?: FieldMeta): Aggregator {
+  return meta?.display === "currency" || meta?.display === "number" ? "sum" : "none";
+}
+
+function defaultSelectedFields(source: SourceName): SelectedField[] {
+  return sourceDefaults[source].map(id => ({
+    id,
+    aggregator: defaultAggregator(fieldLibrary.find(field => field.id === id))
+  }));
+}
+
+function aggregationOptions(meta?: FieldMeta) {
+  if (meta?.display === "currency" || meta?.display === "number") {
+    return [
+      { value: "none" as Aggregator, label: "Sem cálculo" },
+      { value: "sum" as Aggregator, label: "Somar" },
+      { value: "avg" as Aggregator, label: "Média" },
+      { value: "count" as Aggregator, label: "Contar" },
+      { value: "min" as Aggregator, label: "Mínimo" },
+      { value: "max" as Aggregator, label: "Máximo" },
+      { value: "multiply" as Aggregator, label: "Multiplicar" }
+    ];
+  }
+  return [
+    { value: "none" as Aggregator, label: "Primeiro valor" },
+    { value: "count" as Aggregator, label: "Contar registros" }
+  ];
 }
 
 function getSourceRows(source: SourceName, employees: DemoEmployee[], movements: DemoMovement[], benefits: DemoBenefitDistribution[], payroll: PayrollRow[], competency: string) {
@@ -563,7 +610,35 @@ function calculateReportTotal(source: SourceName, rows: any[]) {
       return rows.reduce((acc, row) => acc + Number(row.amount ?? 0), 0);
     case "Colaboradores":
       return rows.reduce((acc, row) => acc + Number(row.salary_base ?? 0), 0);
+    case "Movimentações":
+      return rows.reduce((acc, row) => acc + Number(row.hour_impact ?? 0), 0);
+    case "Afastamentos":
+      return rows.reduce((acc, row) => acc + Number(row.days ?? 0), 0);
     default:
       return 0;
   }
+}
+
+function formatReportTotal(source: SourceName, value: number) {
+  if (source === "Afastamentos") return `${plainNumber.format(value)} dias`;
+  if (source === "Movimentações") return `${plainNumber.format(value)} horas`;
+  return money.format(value);
+}
+
+function downloadReportCsv(rows: Record<string, any>[], groupField: FieldMeta, fields: SelectedField[]) {
+  const header = [groupField.label, ...fields.map(field => fieldLibrary.find(meta => meta.id === field.id)?.label ?? field.id)];
+  const body = rows.map(row => [row.__group, ...fields.map(field => row[field.id])]);
+  const csv = [header, ...body].map(columns => columns.map(csvCell).join(";")).join("\r\n");
+  const blob = new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `relatorio-maker-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: unknown) {
+  const valueAsText = String(value ?? "").replace(/"/g, '""');
+  return `"${valueAsText}"`;
 }

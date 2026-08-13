@@ -4,7 +4,7 @@ Este pacote deve ser instalado em apenas um computador Windows da empresa. Esse 
 
 ## Instalacao recomendada
 
-Use `Nexo-Servidor-Setup-1.0.1.exe` como Administrador. O instalador baixa e configura automaticamente Python e PostgreSQL quando estiverem ausentes.
+Use `Nexo-Servidor-Setup-1.0.2.exe` como Administrador. O instalador baixa e configura automaticamente Python e PostgreSQL quando estiverem ausentes.
 
 As instrucoes manuais abaixo sao mantidas como alternativa tecnica.
 
@@ -40,6 +40,16 @@ O instalador solicita a senha do usuario `postgres` e a senha inicial do adminis
 Quando o instalador detectar uma instalação anterior em `C:\Nexo`, ele aplica o fluxo de atualização e não recria o banco.
 
 ## Diagnostico
+
+Para verificar o servidor sem digitar comandos, clique duas vezes em:
+
+```text
+C:\Nexo\scripts\server-status.bat
+```
+
+O Windows solicitará permissão de Administrador e manterá o resultado aberto na tela. Essa verificação é necessária somente antes/depois de uma atualização ou quando algum cliente não conseguir conectar.
+
+Alternativa técnica pelo PowerShell:
 
 ```powershell
 C:\Nexo\scripts\server-status.ps1

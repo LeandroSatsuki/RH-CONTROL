@@ -24,7 +24,7 @@ export function payrollRows(
     const profitDistribution = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
     const costAid = Number(employee.cost_aid ?? 0);
     const transport = sumBenefit(benefitMap["vale transporte"] ?? []);
-    const meal = sumBenefit(benefitMap["alimentacao"] ?? []);
+    const meal = sumBenefit([...(benefitMap["alimentacao"] ?? []), ...(benefitMap["cesta basica"] ?? [])]);
     const lodging = employee.benefits.some(item => normalizeLabel(item) === "hospedagem") ? (employee.result_center.code === "DIR" ? 900 : 550) : 0;
     const insurance = sumBenefit(benefitMap["seguro de vida"] ?? []);
     const healthPlan = sumBenefit(benefitMap["plano de saude"] ?? []);

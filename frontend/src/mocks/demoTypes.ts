@@ -114,7 +114,8 @@ export interface DemoCostAllocation {
 }
 
 export interface DemoAlert {
-  id: number;
+  id: number | string;
+  target_id?: number;
   company_id: number;
   company_name: string;
   type: "Férias vencendo" | "Retorno de afastamento" | "Contrato próximo do vencimento" | "Contrato não assinado" | "Ajuste pendente";

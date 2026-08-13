@@ -11,7 +11,7 @@ class SystemSetting(Base):
     __tablename__ = "system_settings"
 
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), unique=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
     company_name: Mapped[str] = mapped_column(String(180))
     company_logo: Mapped[str] = mapped_column(String(4000), default="")
     backup_directory: Mapped[str] = mapped_column(String(500), default="")
