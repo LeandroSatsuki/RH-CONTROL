@@ -7,6 +7,19 @@ $EnvPath = Join-Path $Root ".env"
 $BackupDirectory = Join-Path $Root "backups"
 $hasCriticalFailure = $false
 
+function Test-PrivateIPv4([string]$Address) {
+    try {
+        $bytes = [Net.IPAddress]::Parse($Address).GetAddressBytes()
+        return (
+            $bytes[0] -eq 10 -or
+            ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
+            ($bytes[0] -eq 192 -and $bytes[1] -eq 168)
+        )
+    } catch {
+        return $false
+    }
+}
+
 Write-Host "Nexo - Diagnostico do servidor"
 Write-Host ""
 
@@ -82,7 +95,7 @@ Write-Host ".env: $(Test-Path $EnvPath)"
 Write-Host ""
 Write-Host "Enderecos para configurar nos clientes:"
 Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-    Where-Object { $_.IPAddress -notlike "127.*" -and $_.PrefixOrigin -ne "WellKnown" } |
+    Where-Object { (Test-PrivateIPv4 $_.IPAddress) -and $_.PrefixOrigin -ne "WellKnown" } |
     Sort-Object InterfaceAlias, IPAddress |
     ForEach-Object { Write-Host "http://$($_.IPAddress):8000" }
 

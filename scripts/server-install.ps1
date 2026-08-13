@@ -36,6 +36,19 @@ function Write-Step([string]$Message) {
     Write-Host "[Nexo Servidor] $Message" -ForegroundColor Cyan
 }
 
+function Test-PrivateIPv4([string]$Address) {
+    try {
+        $bytes = [Net.IPAddress]::Parse($Address).GetAddressBytes()
+        return (
+            $bytes[0] -eq 10 -or
+            ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
+            ($bytes[0] -eq 192 -and $bytes[1] -eq 168)
+        )
+    } catch {
+        return $false
+    }
+}
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -360,7 +373,7 @@ Write-Host "Servidor Nexo instalado com sucesso." -ForegroundColor Green
 Write-Host "Usuario inicial: admin"
 Write-Host "Configure os aplicativos clientes com um dos enderecos abaixo:"
 Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-    Where-Object { $_.IPAddress -notlike "127.*" -and $_.PrefixOrigin -ne "WellKnown" } |
+    Where-Object { (Test-PrivateIPv4 $_.IPAddress) -and $_.PrefixOrigin -ne "WellKnown" } |
     Sort-Object InterfaceAlias, IPAddress |
     ForEach-Object { Write-Host "http://$($_.IPAddress):8000" -ForegroundColor Yellow }
 
