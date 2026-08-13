@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.dependencies import AdminUser, CurrentUser, DbSession
 from app.models.company import Company
 from app.models.result_center import ResultCenter
-from app.schemas.catalog import ResultCenterCreate, ResultCenterRead
+from app.schemas.catalog import ResultCenterCreate, ResultCenterRead, ResultCenterUpdate
 
 router = APIRouter()
 
@@ -24,6 +24,28 @@ def create_result_center(payload: ResultCenterCreate, db: DbSession, _: AdminUse
         raise HTTPException(status_code=404, detail="Empresa não encontrada")
     item = ResultCenter(**payload.model_dump())
     db.add(item)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Código de Centro de Resultado já existe para esta empresa") from None
+    db.refresh(item)
+    return item
+
+
+@router.patch("/{item_id}", response_model=ResultCenterRead)
+def update_result_center(
+    item_id: int,
+    payload: ResultCenterUpdate,
+    db: DbSession,
+    _: AdminUser,
+    company_id: int = 1,
+) -> ResultCenter:
+    item = db.get(ResultCenter, item_id)
+    if not item or (company_id != 0 and item.company_id != company_id):
+        raise HTTPException(status_code=404, detail="Centro de Resultado não encontrado")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(item, field, value)
     try:
         db.commit()
     except IntegrityError:

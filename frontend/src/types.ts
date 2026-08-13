@@ -12,6 +12,7 @@ export interface User {
 
 export interface ResultCenter {
   id: number;
+  company_id?: number;
   code: string;
   name: string;
   color: string;
@@ -20,6 +21,7 @@ export interface ResultCenter {
 
 export interface EmploymentType {
   id: number;
+  company_id?: number;
   name: string;
   has_charges: boolean;
   active: boolean;
@@ -28,11 +30,20 @@ export interface EmploymentType {
 export interface Company {
   id: number;
   code: string;
+  cnpj: string | null;
   name: string;
+  trade_name?: string;
   kind: CompanyKind;
   group_name: string;
   parent_company_id: number | null;
   active: boolean;
+  is_primary: boolean;
+  registration_status?: string;
+  opening_date?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
 }
 
 export interface Employment {
@@ -46,6 +57,7 @@ export interface Employment {
   status: "ACTIVE" | "INACTIVE" | "ON_LEAVE";
   daily_hours: string;
   salary_base: number;
+  cost_aid: number;
   notes: string;
   supervisor_name: string;
   street: string;
@@ -63,7 +75,7 @@ export interface Employment {
   pix_key_type: PixKeyType;
   pix_key: string;
   benefits: string[];
-  salary_history?: { date: string; amount: number; family_allowance: number; reason: string }[];
+  salary_history?: { date: string; effective_date?: string; amount: number; family_allowance: number; reason: string }[];
   employee: { id: number; cpf: string; full_name: string };
   employment_type: EmploymentType;
   result_center: ResultCenter;

@@ -1,322 +1,201 @@
 # Nexo
 
-Primeiro marco funcional para substituir a planilha-base atual de custos e pessoas. A solução usa um servidor local com PostgreSQL e FastAPI; os demais computadores acessam o frontend pela rede interna.
+Sistema de controle de custos e pessoas com operação multiempresa, histórico por competência e acesso em rede local.
 
-## Arquitetura revisada
+## Versão de produção
 
-- **Servidor local:** PostgreSQL, API FastAPI e, futuramente, o build estático do React como serviços Windows.
-- **Clientes da rede:** navegador apontando para o endereço do servidor. Nenhum banco é compartilhado por pasta.
-- **Modelo relacional:** CPF identifica a pessoa; cada contratação é um vínculo separado, preservando histórico e permitindo recontratação futura.
-- **Permissões:** Administrador altera dados; Consultor acessa consultas e dashboard.
-- **Instalação futura:** estrutura alvo documentada em `deploy/README.md`, com pasta padrão `C:\Nexo`.
+A versão `1.0.0` utiliza uma arquitetura cliente-servidor:
 
-## O que já funciona
+- **Servidor principal:** FastAPI, PostgreSQL, migrations, backup e API compartilhada.
+- **Estações clientes:** aplicativo Windows Electron com frontend React.
+- **Rede:** os clientes acessam o servidor pela porta TCP `8000` na rede privada.
+- **Persistência:** os dados oficiais ficam somente no PostgreSQL do servidor.
+- **Modo local/demo:** desativado na build de produção para impedir bases divergentes entre computadores.
 
-- Assistente de configuração inicial.
-- Login com JWT, senha com hash Argon2 e perfis Administrador/Consultor.
-- Seed idempotente do administrador, modalidades e Centros de Resultado iniciais.
-- Cadastro e consulta de Centros de Resultado, modalidades e colaboradores.
-- Validação de CPF/CNPJ e bloqueio de documento/matrícula duplicados.
-- Dashboard mensal por Centro de Resultado, com admissões, desligamentos, efetivo e turnover.
-- Configurações por empresa com logo, cargos/funções e percentuais de cálculo.
-- Lançamento oficial de benefícios com distribuição por colaborador.
-- Custo/Folha oficial calculando subtotal, encargos e provisões com benefícios integrados.
-- Estrutura isolada para indicadores, tratamento de erros Excel e divisão por zero.
-- Backup manual inicial com `pg_dump` e retenção de 90 dias.
-- Tema claro/escuro.
-- Migration Alembic inicial.
+O computador principal deve permanecer ligado durante o uso e ter IP fixo ou reserva de IP no roteador. A API não deve ser exposta diretamente à internet.
 
-## Virada do Demo para MVP Oficial
+## Funcionalidades
 
-O modo demo continua disponível para apresentação, mas os módulos abaixo já possuem base oficial no PostgreSQL:
+- autenticação por usuário e senha, com perfis Administrador e Consultor;
+- multiempresas, empresa principal, ativação/inativação e consulta pública de CNPJ;
+- colaboradores por empresa, CPF/CNPJ validado, matrícula automática, endereço, contato, PIX e dados bancários;
+- cargos/funções, modalidades e Centros de Resultado configuráveis;
+- histórico salarial e movimentações auditáveis;
+- contratos MEI, assinatura, anexo, vigência e alertas;
+- benefícios mensais, distribuição individual ou em lote e dependentes de plano de saúde;
+- custo/folha por competência, CR e modalidade, com encargos e provisões configuráveis;
+- fechamento mensal e bloqueios de pendências;
+- indicadores alimentados por competências fechadas;
+- relatórios operacionais e financeiros;
+- Relatório Maker com modelos persistidos e filtros por competência;
+- auditoria, alertas e configurações administrativas;
+- backup integral agendado, validação, download e restauração;
+- atualização do cliente pelo GitHub Releases e atualização segura do servidor com backup obrigatório.
 
-- Cadastro de colaboradores com CPF/CNPJ, CEP, complemento, banco, PIX e benefícios.
-- Ajustes do sistema com cargos/funções e percentuais por empresa.
-- Catálogo de benefícios.
-- Lançamento de benefícios.
-- Custo/Folha com cálculo usando lançamentos reais de benefícios.
+## Instalação Windows
 
-Depois de atualizar o projeto, aplique a migration:
+Os artefatos finais ficam em `entregas/`:
+
+- `Nexo-Servidor-Setup-1.0.1.exe`
+- `Nexo-Cliente-Setup-1.0.0.exe`
+
+### Computador principal
+
+1. Execute `Nexo-Servidor-Setup-1.0.1.exe` como Administrador.
+2. Informe uma senha para o PostgreSQL e uma senha inicial para o usuário `admin`.
+3. Aguarde a confirmação de que banco, migrations, seed, API, firewall e backup foram configurados.
+4. Execute também `Nexo-Cliente-Setup-1.0.0.exe` para usar o Nexo no computador principal.
+5. Rode o diagnóstico em PowerShell aberto como Administrador:
 
 ```powershell
-Set-Location backend
-.\.venv\Scripts\python.exe -m alembic upgrade head
+powershell -ExecutionPolicy Bypass -File C:\Nexo\scripts\server-status.ps1
 ```
 
-Em seguida, rode o backend e o frontend sem `VITE_DEMO_MODE=true` para testar o fluxo oficial com API e banco reais.
+O resultado deve mostrar `PostgreSQL 5432: True`, `API 8000: True` e `Saude da API: ok`.
 
-## Pré-requisitos
+### Outros computadores
 
-- Python 3.12 ou superior.
-- Node.js 20 ou superior.
-- Docker Desktop recomendado para desenvolvimento local.
-- PostgreSQL 16 ou superior, incluindo `pg_dump` no `PATH`, quando não usar Docker.
+1. Instale somente `Nexo-Cliente-Setup-1.0.0.exe`.
+2. Na primeira abertura, informe o endereço privado mostrado pelo diagnóstico, por exemplo `http://192.168.0.10:8000`.
+3. Entre com o usuário criado pelo Administrador.
 
-## Execução rápida no Windows
+`127.0.0.1` funciona apenas no próprio computador do servidor.
 
-Na raiz do projeto:
+## Credencial inicial
+
+- Usuário: `admin`
+- Senha: definida durante a instalação do servidor
+
+Troque e proteja essa senha após o primeiro acesso. A opção de lembrar senha usa a criptografia segura do Windows no aplicativo desktop; no navegador, apenas o nome do usuário é lembrado.
+
+## Backup e recuperação
+
+O instalador registra a tarefa `Nexo Backup Diario`, executada às `02:00`. Os arquivos ficam, por padrão, em `C:\Nexo\backups` e são gerados no formato customizado do PostgreSQL.
+
+Criar um backup imediato:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\Nexo\scripts\server-backup.ps1
+```
+
+Restaurar um backup, com o PowerShell aberto como Administrador:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\Nexo\scripts\server-restore.ps1 -BackupFile "C:\Nexo\backups\nexo_AAAAMMDD_HHMMSS.dump"
+```
+
+O processo valida o arquivo e cria um backup de segurança antes da restauração. O backup contém todas as empresas e seus vínculos, usuários, colaboradores, históricos, benefícios, contratos, movimentos, competências, configurações, auditoria, faturamento e modelos de relatório.
+
+Boas práticas:
+
+1. Copie periodicamente os `.dump` para mídia externa ou armazenamento corporativo protegido.
+2. Mantenha ao menos uma cópia fora do computador principal.
+3. Teste a restauração trimestralmente em ambiente controlado.
+4. Não renomeie arquivos `.partial`; eles representam backups incompletos.
+
+## Atualizações
+
+O cliente Electron consulta versões publicadas em GitHub Releases. A atualização do servidor é aplicada pelo instalador novo ou pelo pacote correspondente.
+
+Antes de qualquer migration, `server-update.ps1` cria e valida um backup integral. Se isso falhar, a atualização é interrompida antes de modificar o banco.
+
+Nunca desinstale PostgreSQL nem apague `C:\Nexo` para atualizar. Instale a nova versão por cima da existente.
+
+## Diagnóstico
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\Nexo\scripts\server-status.ps1
+```
+
+O diagnóstico informa:
+
+- estado da tarefa da API;
+- porta e processo da API;
+- conexão PostgreSQL;
+- resposta dos endpoints de saúde e setup;
+- tarefa e último arquivo de backup;
+- endereços privados para configurar os clientes;
+- logs recentes em `C:\Nexo\logs`.
+
+## Desenvolvimento
+
+Pré-requisitos: Python 3.12+, Node.js 20+ e PostgreSQL 16+ ou Docker Desktop.
 
 ```powershell
 .\scripts\dev-start.ps1
 ```
 
-Se o Windows bloquear scripts PowerShell, libere apenas a sessão atual e rode novamente:
+Comandos separados:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\scripts\dev-start.ps1
+.\scripts\dev-db.ps1
+.\scripts\dev-seed.ps1
+
+cd backend
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check .
+
+cd ..\frontend
+npm.cmd test -- --run
+npm.cmd run build
 ```
-
-Esse comando:
-
-- cria `.env` a partir de `.env.example`, se necessário;
-- verifica Python, Node.js e npm;
-- usa Docker Compose para subir PostgreSQL quando Docker estiver disponível;
-- instala dependências do backend e frontend quando necessário;
-- aplica migrations;
-- executa o seed inicial;
-- inicia API e frontend.
 
 URLs locais:
 
 - Frontend: `http://127.0.0.1:5173`
-- Backend: `http://127.0.0.1:8000`
-- API docs: `http://127.0.0.1:8000/docs`
+- API: `http://127.0.0.1:8000`
 - Saúde: `http://127.0.0.1:8000/health`
+- OpenAPI: `http://127.0.0.1:8000/docs`
 
-Usuário inicial criado pelo seed:
-
-- Usuário: `admin`
-- Senha: `Admin@123`
-
-Em uso real, altere `INITIAL_ADMIN_PASSWORD`, `POSTGRES_PASSWORD` e `SECRET_KEY` no `.env`.
-
-### Quando Docker Não Estiver Instalado
-
-O projeto continua usando PostgreSQL como banco padrão. Sem Docker, o script valida se existe PostgreSQL local em `127.0.0.1:5432`. Se não houver, ele para com instruções claras.
-
-Opções:
-
-1. Instale e abra o Docker Desktop, depois rode:
+## Empacotamento
 
 ```powershell
-.\scripts\dev-start.ps1
-```
-
-2. Ou instale PostgreSQL 16+, crie o banco/usuário conforme `.env` e rode:
-
-```powershell
-.\scripts\dev-db.ps1
-.\scripts\dev-seed.ps1
-.\scripts\dev-start.ps1
-```
-
-## Scripts de Desenvolvimento
-
-Preparar apenas o banco:
-
-```powershell
-.\scripts\dev-db.ps1
-```
-
-Aplicar migrations e seed:
-
-```powershell
-.\scripts\dev-seed.ps1
-```
-
-Iniciar ambiente completo:
-
-```powershell
-.\scripts\dev-start.ps1
-```
-
-Os logs ficam em `logs/backend.log` e `logs/frontend.log`.
-
-## Configuração Manual
-
-Na raiz do projeto:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Troque `POSTGRES_PASSWORD`, `DATABASE_URL`, `SECRET_KEY` e `INITIAL_ADMIN_PASSWORD`.
-
-### Banco com Docker
-
-```powershell
-docker compose up -d postgres
-```
-
-### Backend
-
-```powershell
-Set-Location backend
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m alembic upgrade head
-.\.venv\Scripts\python.exe -m scripts.seed
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-### Frontend
-
-Em outro terminal:
-
-```powershell
-Set-Location frontend
-npm.cmd install
-npm.cmd run dev
-```
-
-Acesse `http://localhost:5173`. O frontend de desenvolvimento encaminha `/api` para `localhost:8000`.
-
-Para testar a partir de outro computador, defina `VITE_API_URL=http://IP_DO_SERVIDOR:8000/api` antes do build e inclua a origem do frontend em `ALLOWED_ORIGINS`.
-
-```powershell
-$env:VITE_API_URL="http://192.168.0.10:8000/api"
-npm.cmd run build
-```
-
-## Testes e qualidade
-
-```powershell
-Set-Location backend
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m ruff check .
-
-Set-Location ..\frontend
-npm.cmd run build
-```
-
-## Backup
-
-O endpoint administrativo `POST /api/backups` executa `pg_dump`, salva um arquivo `.dump` e remove backups com mais de 90 dias. O executável `pg_dump` precisa estar no `PATH` do serviço da API. A pergunta automática ao abrir será ligada ao frontend em marco posterior.
-
-## Segurança para uso real
-
-- Use uma `SECRET_KEY` longa e aleatória e senhas diferentes das amostras.
-- Restrinja a porta PostgreSQL ao servidor.
-- Libere no firewall somente as portas da API/frontend necessárias à rede local.
-- Para produção, execute API e frontend como serviços Windows e use HTTPS local quando possível.
-
-Consulte [TODO.md](TODO.md) para o escopo ainda não implementado.
-
-## Protótipo Demo para Cliente
-
-O modo demo roda somente no frontend, com dados fictícios em memória. Ele não chama API real, não exige backend, PostgreSQL, migrations ou seed.
-
-Credenciais demo:
-
-- Administrador: `admin` / `admin`
-- Consultor: `consultor` / `consultor`
-
-### Rodar o Protótipo Localmente
-
-```powershell
-Set-Location frontend
-npm.cmd install
-npm.cmd run demo
-```
-
-Acesse `http://127.0.0.1:5173` ou a URL mostrada pelo Vite. A interface exibe uma indicação discreta de que os dados são fictícios.
-
-Também é possível usar variável de ambiente manual:
-
-```powershell
-Set-Location frontend
-$env:VITE_DEMO_MODE="true"
-npm.cmd run dev
-```
-
-### Gerar Build Web Demo
-
-```powershell
-Set-Location frontend
-npm.cmd run build:demo
-```
-
-O build final fica em:
-
-```text
-frontend/dist
-```
-
-Para validar localmente antes de enviar:
-
-```powershell
-Set-Location frontend
-npx.cmd vite preview --host 127.0.0.1 --port 4173
-```
-
-### Publicar no Netlify
-
-Use a pasta `frontend` como base do projeto.
-
-- Build command: `npm run build:demo`
-- Publish directory: `dist`
-- Environment variable: `VITE_DEMO_MODE=true`
-
-Se o deploy estiver configurado pela raiz do repositório, use:
-
-- Base directory: `frontend`
-- Publish directory: `frontend/dist`
-
-### Publicar na Vercel
-
-Use `frontend` como diretório do projeto.
-
-- Framework preset: Vite
-- Build command: `npm run build:demo`
-- Output directory: `dist`
-- Environment variable: `VITE_DEMO_MODE=true`
-
-### Aplicativo Windows Demo
-
-O desktop demo usa Electron e carrega a build estática local, sem backend.
-
-Rodar em desenvolvimento:
-
-```powershell
-Set-Location frontend
-npm.cmd run desktop:dev
-```
-
-Gerar versão portable para Windows:
-
-```powershell
-Set-Location frontend
+cd frontend
 npm.cmd run desktop:build
+
+cd ..
+.\scripts\build-server-package.ps1 -Version 1.0.0
+.\scripts\build-separated-installers.ps1 -Version 1.0.0
 ```
 
-Arquivo final:
+Antes da entrega, valide hashes e tamanhos:
+
+```powershell
+Get-FileHash .\entregas\Nexo-Servidor-Setup-1.0.0.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Cliente-Setup-1.0.0.exe -Algorithm SHA256
+```
+
+## Estrutura
 
 ```text
-frontend/release/Nexo-Demo-0.1.0-Portable.exe
+backend/        FastAPI, SQLAlchemy, Alembic, serviços e testes
+frontend/       React, Vite, Electron e testes do modo de dados
+installer/      definição NSIS do instalador do servidor
+scripts/        desenvolvimento, instalação, atualização e recuperação
+deploy/         instruções operacionais do servidor
+entregas/       artefatos gerados, não versionados como fonte
 ```
 
-Também fica disponível uma pasta descompactada para teste:
+## Segurança
 
-```text
-frontend/release/win-unpacked/Nexo - Demo.exe
-```
+- senhas são armazenadas por hash Argon2 no servidor;
+- tokens JWT expiram conforme a configuração da API;
+- rotas administrativas exigem perfil Administrador;
+- segredos ficam em `.env`, que não deve ser versionado;
+- senha lembrada no desktop é protegida pelo cofre criptográfico do Windows;
+- CORS é restrito às origens configuradas;
+- a porta `8000` é liberada apenas nos perfis de rede Domain/Private;
+- backups contêm dados pessoais e devem ter acesso restrito;
+- para acesso externo, use VPN ou proxy HTTPS administrado. Não publique a porta `8000` na internet.
 
-Observação: se o ambiente tiver `ELECTRON_RUN_AS_NODE=1`, o script `desktop:dev` remove essa variável no launcher local. Para abrir manualmente o Electron, remova a variável antes.
+## Estado de validação 1.0.0
 
-## Roteiro de Apresentação ao Cliente
+- testes automatizados do backend e frontend aprovados;
+- lint e build de produção aprovados;
+- migrations aplicadas em PostgreSQL 16;
+- backup real criado e validado com `pg_restore --list`;
+- restauração real executada com contagens de todas as tabelas preservadas;
+- ausência da API não ativa armazenamento local silenciosamente na produção;
+- atualização do servidor protegida por backup obrigatório.
 
-1. Login demo: entrar como `admin/admin` para mostrar o perfil Administrador; depois, se útil, entrar como `consultor/consultor` para demonstrar permissões de consulta.
-2. Dashboard geral: apresentar o painel consolidado e os cards por Centro de Resultado.
-3. Colaboradores: demonstrar busca, filtros por CR/modalidade/status, CPF/CNPJ, matrícula automática, supervisor, cargo/função, CEP, dados bancários, PIX obrigatório e ficha lateral.
-4. Multimodalidade: mostrar CLT, MEI, pró-labore, freelancer e outros nas telas de colaboradores e custo/folha.
-5. Custo / Folha: abrir a tela, usar filtros por competência, CR e modalidade, entrar em modo edição e demonstrar subtotais, encargos, provisões e total geral.
-6. Benefícios: selecionar competência, benefício, modalidade e filtros; travar o filtro, distribuir em lote, ajustar valores individuais, adicionar/remover colaboradores e confirmar exportação.
-7. Fechamento mensal: mostrar que benefícios marcados e não distribuídos geram alerta e exigem justificativa para seguir.
-8. Relatórios: abrir relatórios financeiros, afastamentos e benefícios, usando filtros básicos no topo.
-9. Relatório Maker: montar um relatório personalizado, salvar múltiplos modelos e reabrir respeitando o período filtrado.
-10. Indicadores: abrir a tela de indicadores e comparar custo, turnover, absenteísmo e CRs com gráficos e planilhas no estilo da planilha do cliente.
-11. Contratos MEI: cadastrar contrato, mostrar alerta de não assinado, anexar contrato e conferir mudança para ativo.
-12. Ajustes do sistema: demonstrar multiempresas, configurações por empresa, usuários, cargos/funções, Centros de Resultado, modalidades, importação, backup e logo para relatórios.
-13. Alertas e auditoria: mostrar lembretes operacionais, severidade por cor e registro das ações feitas pelos usuários.
-14. Build: explicar que a demo pode ser entregue como site estático (`frontend/dist`) ou portable Windows (`frontend/release/Nexo-Demo-0.1.0-Portable.exe`).
+Consulte [deploy/SERVIDOR.md](deploy/SERVIDOR.md) para a operação técnica do computador principal.

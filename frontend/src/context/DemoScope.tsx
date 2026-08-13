@@ -8,12 +8,21 @@ const ALL_COMPANIES_ID = 0;
 export interface ScopedCompany {
   id: number;
   code: string;
+  cnpj?: string | null;
   name: string;
+  trade_name?: string;
   kind: CompanyKind;
   group: string;
   group_name?: string;
   parent_company_id: number | null;
   active: boolean;
+  is_primary?: boolean;
+  registration_status?: string;
+  opening_date?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
   settings?: DemoSettings;
   backups?: DemoBackup[];
   closing?: DemoClosing;
@@ -22,11 +31,20 @@ export interface ScopedCompany {
 const allCompaniesScope: ScopedCompany = {
   id: ALL_COMPANIES_ID,
   code: "TODAS",
+  cnpj: null,
   name: "Todas as empresas",
+  trade_name: "",
   kind: "OUTRA",
   group: "Todas as empresas",
   parent_company_id: null,
-  active: true
+  active: true,
+  is_primary: false,
+  registration_status: "",
+  opening_date: "",
+  address: "",
+  city: "",
+  state: "",
+  zip_code: ""
 };
 
 interface CompanyScopeValue {

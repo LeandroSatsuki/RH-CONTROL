@@ -21,6 +21,8 @@ class SystemSetting(Base):
     default_daily_hours: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("8.80"))
     payroll_rates: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     job_titles: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    report_templates: Mapped[list[dict]] = mapped_column(JSON, default=list, nullable=False)
+    indicator_revenue: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     configured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     company = relationship("Company", back_populates="settings")

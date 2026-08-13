@@ -4,6 +4,7 @@ import { ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { useDemoScope } from "../context/DemoScope";
 import { DashboardResponseDemo, IndicatorSummary } from "../mocks/demoTypes";
 import { ResultCenter } from "../types";
+import { currentCompetency } from "../competencies";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
@@ -134,11 +135,15 @@ function recalculateFinanceRow(row: FinanceRow) {
   };
 }
 
+function financeScopeKey(companyId: number, year: number, centerCode: string) {
+  return `${companyId}:${year}:${centerCode}`;
+}
+
 type PresentationTarget = "all" | "cost" | "operational" | "finance" | "turnover" | "absenteeism";
 
 export function IndicatorsPage({ token }: { token: string }) {
   const { selectedCompany } = useDemoScope();
-  const [competency, setCompetency] = useState("2026-06");
+  const [competency, setCompetency] = useState(currentCompetency());
   const [selectedCenter, setSelectedCenter] = useState<CenterCode>("");
   const [dashboard, setDashboard] = useState<DashboardResponseDemo | null>(null);
   const [summary, setSummary] = useState<IndicatorSummary | null>(null);
@@ -149,6 +154,7 @@ export function IndicatorsPage({ token }: { token: string }) {
   const [presentationTarget, setPresentationTarget] = useState<PresentationTarget | null>(null);
   const [financeEditMode, setFinanceEditMode] = useState(false);
   const [financeDrafts, setFinanceDrafts] = useState<Partial<Record<CenterCode, FinanceRow[]>>>({});
+  const [storedRevenue, setStoredRevenue] = useState<Record<string, Record<string, number>>>({});
   const selectedYear = Number(competency.split("-")[0]) || new Date().getFullYear();
   const competencies = useMemo(() => buildCompetencies(selectedYear), [selectedYear]);
 
@@ -162,10 +168,11 @@ export function IndicatorsPage({ token }: { token: string }) {
       setLoading(true);
       setError("");
       try {
-        const [dashboardResponse, indicatorResponse, sheetResponse] = await Promise.all([
+        const [dashboardResponse, indicatorResponse, sheetResponse, revenueResponse] = await Promise.all([
           api<DashboardResponseDemo>(`/dashboard?competency=${competency}`, {}, token),
           api<IndicatorSummary>(`/demo/indicators?competency=${competency}`, {}, token),
-          api<IndicatorSheetsResponse>(`/demo/indicators/sheets?competency=${competency}`, {}, token)
+          api<IndicatorSheetsResponse>(`/demo/indicators/sheets?competency=${competency}`, {}, token),
+          api<Record<string, Record<string, number>>>("/demo/indicator-revenue", {}, token)
         ]);
         if (!active) return;
         const nextCenters = sheetResponse.centers.length
@@ -175,6 +182,7 @@ export function IndicatorsPage({ token }: { token: string }) {
         setSummary(indicatorResponse);
         setCenters(nextCenters);
         setSheets(sheetResponse.sheets);
+        setStoredRevenue(revenueResponse);
         setSelectedCenter(current => {
           if (current && sheetResponse.sheets[current]) return current;
           return nextCenters[0]?.code ?? "";
@@ -208,18 +216,30 @@ export function IndicatorsPage({ token }: { token: string }) {
   useEffect(() => {
     setFinanceDrafts(previous => {
       if (previous[selectedCenter]) return previous;
-      return { ...previous, [selectedCenter]: cloneFinanceRows(sheet.financeRows) };
+      const scope = financeScopeKey(selectedCompany.id, selectedYear, selectedCenter);
+      const scopedRevenue = storedRevenue[scope] ?? {};
+      const rows = cloneFinanceRows(sheet.financeRows).map(row => recalculateFinanceRow({
+        ...row,
+        faturamento: scopedRevenue[row.month] ?? row.faturamento
+      }));
+      return { ...previous, [selectedCenter]: rows };
     });
-  }, [selectedCenter, sheet.financeRows]);
+  }, [selectedCenter, selectedCompany.id, selectedYear, sheet.financeRows, storedRevenue]);
 
-  function updateFinanceRow(month: string, field: "faturamento" | "custo", rawValue: number) {
+  function updateFinanceRow(month: string, rawValue: number) {
     setFinanceDrafts(previous => {
       const baseRows = previous[selectedCenter] ?? cloneFinanceRows(sheet.financeRows);
       const nextRows = baseRows.map(row => {
         if (row.month !== month) return row;
-        const updated = field === "faturamento" ? { ...row, faturamento: rawValue } : { ...row, custo: rawValue };
-        return recalculateFinanceRow(updated);
+        return recalculateFinanceRow({ ...row, faturamento: rawValue });
       });
+      const scope = financeScopeKey(selectedCompany.id, selectedYear, selectedCenter);
+      const values = Object.fromEntries(nextRows.map(row => [row.month, row.faturamento]));
+      setStoredRevenue(current => ({ ...current, [scope]: values }));
+      void api("/demo/indicator-revenue", {
+        method: "PATCH",
+        body: JSON.stringify({ scope, values })
+      }, token).catch(err => setError(err instanceof Error ? err.message : "Não foi possível salvar o faturamento."));
       return { ...previous, [selectedCenter]: nextRows };
     });
   }
@@ -337,7 +357,7 @@ export function IndicatorsPage({ token }: { token: string }) {
           </div>
         </div>
         <div className="indicator-section-note">
-          {financeEditMode && !presentation ? "Edição local de faturamento e custo ativada." : "Dados consolidados por competência e centro de resultado."}
+          {financeEditMode && !presentation ? "Edição de faturamento ativada. Os custos permanecem vinculados aos fechamentos." : "Dados consolidados por competência e centro de resultado."}
         </div>
         <div className="indicator-topic-stack">
           <div className="indicator-table-shell indicator-finance-table-shell">
@@ -361,21 +381,12 @@ export function IndicatorsPage({ token }: { token: string }) {
                           min="0"
                           step="0.01"
                           value={Number.isFinite(row.faturamento) ? row.faturamento : 0}
-                          onChange={event => updateFinanceRow(row.month, "faturamento", Number(event.target.value || 0))}
+                          onChange={event => updateFinanceRow(row.month, Number(event.target.value || 0))}
                         />
                       ) : money.format(row.faturamento)}
                     </td>
                     <td>
-                      {financeEditMode && !presentation ? (
-                        <input
-                          className="indicator-inline-input"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={Number.isFinite(row.custo) ? row.custo : 0}
-                          onChange={event => updateFinanceRow(row.month, "custo", Number(event.target.value || 0))}
-                        />
-                      ) : money.format(row.custo)}
+                      {money.format(row.custo)}
                     </td>
                     <td>{percent.format(row.percent)}</td>
                     <td>{percent.format(row.meta)}</td>
@@ -523,6 +534,9 @@ export function IndicatorsPage({ token }: { token: string }) {
     <PageShell title="Indicadores" subtitle={`Leitura da competência por Centro de Resultado na empresa ${selectedCompany.name}.`} error={error}>
       <div className="panel indicator-topbar">
         <div className="indicator-topbar-head">
+          <select aria-label="Ano dos indicadores" value={selectedYear} onChange={event => setCompetency(`${event.target.value}-01`)}>
+            {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map(year => <option key={year} value={year}>{year}</option>)}
+          </select>
           <div className="indicator-tabs">
             {competencies.map(item => (
               <button key={item.id} className={competency === item.id ? "active" : ""} onClick={() => setCompetency(item.id)}>{item.label}</button>

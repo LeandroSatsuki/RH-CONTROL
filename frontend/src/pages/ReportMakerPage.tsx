@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, IS_DEMO_MODE } from "../api";
+import { api } from "../api";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { DemoBenefitDistribution, DemoEmployee, DemoMovement, PayrollRow } from "../mocks/demoTypes";
-import { demoCompetencies } from "../mocks/demoData";
+import { currentCompetency, operationalCompetencies } from "../competencies";
 import { EmploymentType, ResultCenter, User } from "../types";
-import { payrollRows } from "../mocks/demoCalculations";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const plainNumber = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
@@ -35,8 +34,6 @@ interface ReportTemplate {
   fields: SelectedField[];
   filters: Record<string, string>;
 }
-
-const STORAGE_KEY = "indicadores-report-maker-templates-v1";
 
 function normalizeText(value: string) {
   return value.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -116,13 +113,13 @@ const hiddenFieldIds = new Set([
 ]);
 
 export function ReportMakerPage({ token, user }: { token: string; user: User }) {
-  if (!IS_DEMO_MODE) return <DemoOnly />;
   const { selectedCompany } = useDemoScope();
   const [source, setSource] = useState<SourceName>("Custo / Folha");
-  const [competency, setCompetency] = useState("2026-06");
+  const [competency, setCompetency] = useState(currentCompetency());
   const [employees, setEmployees] = useState<DemoEmployee[]>([]);
   const [movements, setMovements] = useState<DemoMovement[]>([]);
   const [benefits, setBenefits] = useState<DemoBenefitDistribution[]>([]);
+  const [payroll, setPayroll] = useState<PayrollRow[]>([]);
   const [centers, setCenters] = useState<ResultCenter[]>([]);
   const [types, setTypes] = useState<EmploymentType[]>([]);
   const [selectedFields, setSelectedFields] = useState<SelectedField[]>(sourceDefaults["Custo / Folha"].map(id => ({ id, aggregator: fieldLibrary.find(field => field.id === id)?.display !== "text" ? "sum" : "none" })));
@@ -133,7 +130,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
   const [filterBenefit, setFilterBenefit] = useState("");
   const [query, setQuery] = useState("");
   const [templateName, setTemplateName] = useState("Relatório customizado");
-  const [templates, setTemplates] = useState<ReportTemplate[]>(loadTemplates());
+  const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [activeTemplateId, setActiveTemplateId] = useState<number | null>(null);
   const [templateSearch, setTemplateSearch] = useState("");
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
@@ -146,18 +143,22 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
     setLoading(true);
     setError("");
     try {
-      const [employeeList, movementList, benefitList, resultCenters, employmentTypes] = await Promise.all([
+      const [employeeList, movementList, benefitList, payrollList, resultCenters, employmentTypes, savedTemplates] = await Promise.all([
         api<DemoEmployee[]>("/employees", {}, token),
         api<DemoMovement[]>(`/demo/movements?competency=${competency}`, {}, token),
         api<DemoBenefitDistribution[]>(`/demo/benefit-distributions?competency=${competency}`, {}, token),
+        api<PayrollRow[]>(`/demo/payroll?competency=${competency}`, {}, token),
         api<ResultCenter[]>("/result-centers", {}, token),
-        api<EmploymentType[]>("/employment-types", {}, token)
+        api<EmploymentType[]>("/employment-types", {}, token),
+        api<ReportTemplate[]>("/demo/report-templates", {}, token)
       ]);
       setEmployees(employeeList);
       setMovements(movementList);
       setBenefits(benefitList);
+      setPayroll(payrollList);
       setCenters(resultCenters);
       setTypes(employmentTypes);
+      setTemplates(savedTemplates);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar relatório maker");
     } finally {
@@ -177,7 +178,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
     setGroupBy(defaultGroupField(source));
   }, [source]);
 
-  const sourceRows = useMemo(() => getSourceRows(source, employees, movements, benefits, competency), [benefits, competency, employees, movements, source]);
+  const sourceRows = useMemo(() => getSourceRows(source, employees, movements, benefits, payroll, competency), [benefits, competency, employees, movements, payroll, source]);
   const filteredRows = useMemo(() => sourceRows.filter(row => applyFilters(row, { filterCenter, filterState, filterType, filterBenefit, query })), [filterBenefit, filterCenter, filterState, filterType, query, sourceRows]);
   const previewRows = useMemo(() => buildPreviewRows(filteredRows, groupBy, selectedFields), [filteredRows, groupBy, selectedFields]);
   const reportTotal = useMemo(() => calculateReportTotal(source, filteredRows), [filteredRows, source]);
@@ -195,9 +196,12 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
     setSelectedFields(current => current.filter(item => item.id !== id));
   }
 
-  function saveTemplates(next: ReportTemplate[]) {
-    setTemplates(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  async function saveTemplates(next: ReportTemplate[]) {
+    const saved = await api<ReportTemplate[]>("/demo/report-templates", {
+      method: "PUT",
+      body: JSON.stringify(next)
+    }, token);
+    setTemplates(saved);
   }
 
   function saveTemplate() {
@@ -208,7 +212,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
     setTemplateModalOpen(true);
   }
 
-  function confirmSaveTemplate() {
+  async function confirmSaveTemplate() {
     if (user.role !== "ADMIN") {
       setError("Seu perfil possui acesso somente para consulta.");
       return;
@@ -223,17 +227,20 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
       filters: { center: filterCenter, state: filterState, type: filterType, benefit: filterBenefit, query }
     };
     const next = [item, ...templates];
-    saveTemplates(next);
-    setActiveTemplateId(item.id);
-    setSuccess("Template salvo para uso futuro.");
-    setTemplateModalOpen(false);
+    try {
+      await saveTemplates(next);
+      setActiveTemplateId(item.id);
+      setSuccess("Template salvo no servidor para uso futuro.");
+      setTemplateModalOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível salvar o template.");
+    }
   }
 
   function loadTemplate(template: ReportTemplate) {
     applyingTemplate.current = true;
     setActiveTemplateId(template.id);
     setTemplateName(template.name);
-    setCompetency(template.competency ?? competency);
     setSource(template.source);
     setGroupBy(template.groupBy);
     setSelectedFields(template.fields);
@@ -244,9 +251,13 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
     setQuery(template.filters.query ?? "");
   }
 
-  function deleteTemplate(id: number) {
-    saveTemplates(templates.filter(item => item.id !== id));
-    if (activeTemplateId === id) setActiveTemplateId(null);
+  async function deleteTemplate(id: number) {
+    try {
+      await saveTemplates(templates.filter(item => item.id !== id));
+      if (activeTemplateId === id) setActiveTemplateId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível excluir o template.");
+    }
   }
 
   const filteredTemplates = useMemo(() => templates.filter(template => matchesTemplateQuery(template, templateSearch)), [templateSearch, templates]);
@@ -293,7 +304,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
       </div>
 
       <div className="panel filters-panel report-maker-filters">
-        <select value={competency} onChange={event => setCompetency(event.target.value)}>{demoCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
+        <select value={competency} onChange={event => setCompetency(event.target.value)}>{operationalCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
         <select value={source} onChange={event => setSource(event.target.value as SourceName)}>
           <option value="Colaboradores">Colaboradores</option>
           <option value="Movimentações">Movimentações</option>
@@ -367,7 +378,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
               <option value="">Selecione um relatório salvo</option>
               {filteredTemplates.map(template => (
                 <option key={template.id} value={template.id}>
-                  {template.name} | {demoCompetencies.find(item => item.id === template.competency)?.label ?? template.competency ?? competency} | {template.source}
+                  {template.name} | {operationalCompetencies.find(item => item.id === template.competency)?.label ?? template.competency ?? competency} | {template.source}
                 </option>
               ))}
             </select>
@@ -421,18 +432,18 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
                   <div className={`report-template-item ${template.id === activeTemplateId ? "active" : ""}`} key={template.id}>
                     <div>
                       <strong>{template.name}</strong>
-                      <span>{demoCompetencies.find(item => item.id === template.competency)?.label ?? template.competency ?? competency} • {template.source} • {fieldLibrary.find(field => field.id === template.groupBy)?.label ?? template.groupBy}</span>
+                      <span>{operationalCompetencies.find(item => item.id === template.competency)?.label ?? template.competency ?? competency} • {template.source} • {fieldLibrary.find(field => field.id === template.groupBy)?.label ?? template.groupBy}</span>
                     </div>
                     <div className="actions">
                       <button className="secondary" type="button" onClick={() => loadTemplate(template)}>Abrir</button>
-                      <button className="secondary" type="button" onClick={() => deleteTemplate(template.id)}>Excluir</button>
+                      <button className="secondary" type="button" onClick={() => void deleteTemplate(template.id)}>Excluir</button>
                     </div>
                   </div>
                 )) : <Empty>Nenhum template salvo ainda.</Empty>}
               </div>
               <div className="actions report-template-modal-actions">
                 <button className="secondary" type="button" onClick={() => setTemplateModalOpen(false)}>Cancelar</button>
-                <button className="primary" type="button" onClick={confirmSaveTemplate}>Confirmar salvamento</button>
+                <button className="primary" type="button" onClick={() => void confirmSaveTemplate()}>Confirmar salvamento</button>
               </div>
             </div>
           </div>
@@ -442,27 +453,15 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
   );
 }
 
-function DemoOnly() {
-  return <div className="panel"><span className="eyebrow">Módulo demo</span><h2>Disponível na versão de apresentação</h2><p>Este módulo usa dados fictícios locais quando `VITE_DEMO_MODE=true`.</p></div>;
-}
-
 function Summary({ label, value, strong }: { label: string; value: string | number; strong?: boolean }) {
   return <div className={`summary-card ${strong ? "strong" : ""}`}><span>{label}</span><strong>{value}</strong></div>;
-}
-
-function loadTemplates(): ReportTemplate[] {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as ReportTemplate[];
-  } catch {
-    return [];
-  }
 }
 
 function defaultGroupField(source: SourceName) {
   return sourceDefaults[source][0] ?? "";
 }
 
-function getSourceRows(source: SourceName, employees: DemoEmployee[], movements: DemoMovement[], benefits: DemoBenefitDistribution[], competency: string) {
+function getSourceRows(source: SourceName, employees: DemoEmployee[], movements: DemoMovement[], benefits: DemoBenefitDistribution[], payroll: PayrollRow[], competency: string) {
   switch (source) {
     case "Colaboradores":
       return employees.filter(employee => employee.status !== "INACTIVE").map(employee => ({
@@ -484,7 +483,7 @@ function getSourceRows(source: SourceName, employees: DemoEmployee[], movements:
         center: item.result_center.code
       }));
     case "Custo / Folha":
-      return payrollRows(employees, competency, benefits).map(item => ({
+      return payroll.map(item => ({
         ...item,
         center: item.result_center.code
       }));

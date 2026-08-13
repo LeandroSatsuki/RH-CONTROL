@@ -35,9 +35,12 @@ def seed() -> None:
                 kind=CompanyKind.MATRIZ,
                 group_name="Empresa Principal",
                 active=True,
+                is_primary=True,
             )
             db.add(company)
             db.flush()
+        elif not db.scalar(select(Company).where(Company.is_primary.is_(True))):
+            company.is_primary = True
         if not db.scalar(select(SystemSetting).where(SystemSetting.company_id == company.id)):
             db.add(
                 SystemSetting(

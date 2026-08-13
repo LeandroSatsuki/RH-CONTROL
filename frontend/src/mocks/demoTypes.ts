@@ -22,6 +22,7 @@ export interface Competency {
 export interface DemoEmployee extends Employment {
   company_id: number;
   salary_base: number;
+  cost_aid: number;
   bank_name: string;
   bank_agency: string;
   bank_account: string;
@@ -31,7 +32,7 @@ export interface DemoEmployee extends Employment {
   benefits: string[];
   email: string;
   phone: string;
-  salary_history: { date: string; amount: number; family_allowance: number; reason: string }[];
+  salary_history: { date: string; effective_date?: string; amount: number; family_allowance: number; reason: string }[];
   movement_history: { date: string; description: string }[];
   vacations: { period: string; status: string }[];
   leaves: { period: string; reason: string; days: number }[];
@@ -235,7 +236,7 @@ export interface DemoBackup {
   date: string;
   file: string;
   size: string;
-  status: "Concluído" | "Validado";
+  status: "Concluído" | "Validado" | "Disponível";
 }
 
 export interface DemoClosing {
@@ -293,11 +294,20 @@ export type DemoCompanyKind = "MATRIZ" | "FILIAL" | "OUTRA";
 export interface DemoCompany {
   id: number;
   code: string;
+  cnpj?: string | null;
   name: string;
+  trade_name?: string;
   kind: DemoCompanyKind;
   group: string;
   parent_company_id: number | null;
   active: boolean;
+  is_primary: boolean;
+  registration_status?: string;
+  opening_date?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
   settings: DemoSettings;
   backups: DemoBackup[];
   closing: DemoClosing;

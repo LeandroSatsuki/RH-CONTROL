@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
-import { API_URL, IS_DEMO_MODE, api } from "./api";
+import { FormEvent, useEffect, useState } from "react";
+import { ALLOW_LOCAL_MODE, API_URL, api, enableLocalDataMode, isLocalDataMode, saveApiUrl, stripApiSuffix } from "./api";
 import { AppError } from "./components/Feedback";
 import { Layout, Page } from "./components/Layout";
 import { DashboardPage } from "./pages/DashboardPage";
-import { AlertsPage, AuditPage, BackupPage, ClosingPage, ImportPage, MeiContractsPage, MovementsPage, PayrollPage, ReportsPage, SettingsPage } from "./pages/DemoPages";
+import { AlertsPage, AuditPage, BackupPage, ClosingPage, CompaniesPage, ImportPage, MeiContractsPage, MovementsPage, PayrollPage, ReportsPage, SettingsPage } from "./pages/DemoPages";
 import { IndicatorsPage } from "./pages/IndicatorsPage";
 import { BenefitsPage } from "./pages/BenefitsPage";
 import { EmployeesPage } from "./pages/EmployeesPage";
@@ -12,7 +12,6 @@ import { SetupPage } from "./pages/SetupPage";
 import { ReportMakerPage } from "./pages/ReportMakerPage";
 import { DemoScopeProvider, ScopedCompany } from "./context/DemoScope";
 import { Company, User } from "./types";
-import { demoCompanies } from "./mocks/demoData";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -37,9 +36,23 @@ export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [setupRetry, setSetupRetry] = useState(0);
   const [companiesRetry, setCompaniesRetry] = useState(0);
-  const [companies, setCompanies] = useState<ScopedCompany[]>(IS_DEMO_MODE ? demoCompanies : []);
-  const [companiesState, setCompaniesState] = useState<LoadState>(IS_DEMO_MODE ? "ready" : "loading");
+  const [localMode, setLocalMode] = useState(isLocalDataMode);
+  const [companies, setCompanies] = useState<ScopedCompany[]>([]);
+  const [companiesState, setCompaniesState] = useState<LoadState>("loading");
   const [companiesError, setCompaniesError] = useState("");
+  const [updateStatus, setUpdateStatus] = useState<NexoUpdateStatus | null>(null);
+  const [serverAddress, setServerAddress] = useState(() => {
+    const stripped = stripApiSuffix(API_URL);
+    return stripped && stripped !== "/api" ? stripped : window.location.origin;
+  });
+  const [serverAddressError, setServerAddressError] = useState("");
+
+  useEffect(() => {
+    if (!window.nexoUpdater) return;
+    return window.nexoUpdater.onStatus(status => {
+      setUpdateStatus(status.state === "idle" ? null : status);
+    });
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -63,12 +76,22 @@ export default function App() {
         });
       } catch (error) {
         if (!active) return;
-        setConfigured(null);
-        setSetupError(errorMessage(error));
-        setSetupState("error");
+        if (ALLOW_LOCAL_MODE) {
+          enableLocalDataMode();
+          setLocalMode(true);
+          setConfigured(true);
+          setCompanies([]);
+          setCompaniesState("loading");
+          setSetupError("");
+          setSetupState("ready");
+        } else {
+          setSetupError(errorMessage(error));
+          setSetupState("error");
+        }
         devLog("setup-check-error", {
           route: window.location.pathname,
-          error: errorMessage(error)
+          error: errorMessage(error),
+          localMode: ALLOW_LOCAL_MODE
         });
       }
     }
@@ -82,11 +105,6 @@ export default function App() {
   useEffect(() => {
     if (setupState !== "ready" || !token || !user) return;
     const currentUser = user;
-    if (IS_DEMO_MODE) {
-      setCompanies(demoCompanies);
-      setCompaniesState("ready");
-      return;
-    }
 
     let active = true;
     async function loadCompanies() {
@@ -103,14 +121,23 @@ export default function App() {
         const mapped = response.map(company => ({
           id: company.id,
           code: company.code,
+          cnpj: company.cnpj ?? null,
           name: company.name,
+          trade_name: company.trade_name ?? "",
           kind: company.kind,
           group: company.group_name,
           group_name: company.group_name,
           parent_company_id: company.parent_company_id,
-          active: company.active
+          active: company.active,
+          is_primary: company.is_primary,
+          registration_status: company.registration_status ?? "",
+          opening_date: company.opening_date ?? "",
+          address: company.address ?? "",
+          city: company.city ?? "",
+          state: company.state ?? "",
+          zip_code: company.zip_code ?? ""
         }));
-        setCompanies(mapped);
+        setCompanies(mapped.sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || a.code.localeCompare(b.code)));
         setCompaniesState("ready");
         devLog("companies-load-ok", {
           route: window.location.pathname,
@@ -132,7 +159,15 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [companiesRetry, setupState, token, user?.username]);
+  }, [companiesRetry, localMode, setupState, token, user?.username]);
+
+  useEffect(() => {
+    function refreshCompanies() {
+      setCompaniesRetry(value => value + 1);
+    }
+    window.addEventListener("nexo:companies-changed", refreshCompanies);
+    return () => window.removeEventListener("nexo:companies-changed", refreshCompanies);
+  }, []);
 
   useEffect(() => {
     if (companiesState !== "ready" || !companies.length) return;
@@ -201,8 +236,19 @@ export default function App() {
     localStorage.removeItem("token");
     setToken(null);
     setUser(null);
-    setCompanies(IS_DEMO_MODE ? demoCompanies : []);
-    setCompaniesState(IS_DEMO_MODE ? "ready" : "loading");
+    setCompanies([]);
+    setCompaniesState("loading");
+  }
+
+  function configureServer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setServerAddressError("");
+    try {
+      saveApiUrl(serverAddress);
+      window.location.reload();
+    } catch (error) {
+      setServerAddressError(errorMessage(error));
+    }
   }
 
   devLog("render-state", {
@@ -217,16 +263,34 @@ export default function App() {
   if (setupState === "loading") return <div className="loading">Carregando sistema...</div>;
   if (setupState === "error") {
     return (
-      <AppError
-        title="Não foi possível iniciar o sistema"
-        message={setupError || "Verifique se o backend e o banco de dados estão disponíveis."}
-        onRetry={() => setSetupRetry(value => value + 1)}
-      />
+      <main className="app-error">
+        <section>
+          <span className="eyebrow">Servidor indisponível</span>
+          <h1>Não foi possível conectar ao Nexo</h1>
+          <p>{setupError || "A API e o banco de dados precisam estar ativos no computador servidor."}</p>
+          <form className="server-config-form" onSubmit={configureServer}>
+            <label>Endereço do servidor
+              <input
+                value={serverAddress}
+                onChange={event => setServerAddress(event.target.value)}
+                placeholder="http://192.168.0.10:8000"
+                required
+              />
+            </label>
+            <small>Use 127.0.0.1 somente quando a API estiver instalada neste computador.</small>
+            {serverAddressError && <div className="feedback error">{serverAddressError}</div>}
+            <div className="actions server-config-actions">
+              <button type="button" className="secondary" onClick={() => setSetupRetry(value => value + 1)}>Tentar novamente</button>
+              <button type="submit" className="primary">Salvar e conectar</button>
+            </div>
+          </form>
+        </section>
+      </main>
     );
   }
   if (!configured) return <SetupPage onComplete={() => setConfigured(true)} />;
   if (token && !user && authState === "checking") return <div className="loading">Validando sessão...</div>;
-  if (!token || !user) return <LoginPage onLogin={login} initialError={authError} />;
+  if (!token || !user) return <LoginPage onLogin={login} initialError={authError} localMode={localMode} />;
   if (companiesState === "loading") return <div className="loading">Carregando empresas...</div>;
   if (companiesState === "error") {
     return (
@@ -240,7 +304,17 @@ export default function App() {
 
   return (
     <DemoScopeProvider companies={companies}>
-      <Layout user={user} page={page} onPage={setPage} onLogout={logout}>
+      <Layout user={user} page={page} onPage={setPage} onLogout={logout} localMode={localMode}>
+        {updateStatus && (
+          <div className={`update-banner update-${updateStatus.state}`}>
+            <span>{updateStatus.message}</span>
+            {updateStatus.state === "ready" && (
+              <button className="secondary" onClick={() => window.nexoUpdater?.restart()}>
+                Reiniciar
+              </button>
+            )}
+          </div>
+        )}
         {page === "dashboard" && <DashboardPage token={token} />}
         {page === "alerts" && <AlertsPage token={token} user={user} />}
         {page === "audit" && <AuditPage token={token} user={user} />}
@@ -255,6 +329,7 @@ export default function App() {
         {page === "import" && <ImportPage token={token} user={user} />}
         {page === "backup" && <BackupPage token={token} user={user} />}
         {page === "closing" && <ClosingPage token={token} user={user} />}
+        {page === "companies" && <CompaniesPage token={token} user={user} />}
         {page === "settings" && <SettingsPage token={token} user={user} />}
       </Layout>
     </DemoScopeProvider>

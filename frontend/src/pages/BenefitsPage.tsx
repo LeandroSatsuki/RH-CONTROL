@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import { api } from "../api";
+import { downloadExcel } from "../excel";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
-import { demoBenefitDefinitions, demoCompetencies } from "../mocks/demoData";
-import { DemoBenefitDefinition, DemoEmployee } from "../mocks/demoTypes";
+import { demoBenefitDefinitions } from "../mocks/demoData";
+import { currentCompetency, operationalCompetencies } from "../competencies";
+import { DemoBenefitDefinition, DemoBenefitDistribution, DemoClosing, DemoEmployee } from "../mocks/demoTypes";
 import { EmploymentType, ResultCenter, User } from "../types";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -56,7 +57,7 @@ function normalizeText(value: string) {
 
 function defaultFilter(): BenefitFilter {
   return {
-    competency: "2026-06",
+    competency: currentCompetency(),
     benefitCode: "VT",
     source: "Lote",
     center: "",
@@ -90,6 +91,7 @@ function defaultBatchValues(benefit: DemoBenefitDefinition | undefined) {
 export function BenefitsPage({ token, user }: { token: string; user: User }) {
   const { selectedCompany } = useDemoScope();
   const [benefits, setBenefits] = useState<DemoBenefitDefinition[]>([]);
+  const [distributions, setDistributions] = useState<DemoBenefitDistribution[]>([]);
   const [employees, setEmployees] = useState<DemoEmployee[]>([]);
   const [centers, setCenters] = useState<ResultCenter[]>([]);
   const [types, setTypes] = useState<EmploymentType[]>([]);
@@ -112,22 +114,29 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [competencyClosed, setCompetencyClosed] = useState(false);
 
   const load = async () => {
     setLoading(true);
     setError("");
     try {
-      const [benefitCatalog, employeeList, resultCenters, employmentTypes] = await Promise.all([
+      const [benefitCatalog, distributionList, employeeList, resultCenters, employmentTypes, closing] = await Promise.all([
         api<DemoBenefitDefinition[]>("/demo/benefits/catalog", {}, token),
+        api<DemoBenefitDistribution[]>(`/demo/benefit-distributions?competency=${draft.competency}`, {}, token),
         api<DemoEmployee[]>("/employees", {}, token),
         api<ResultCenter[]>("/result-centers", {}, token),
-        api<EmploymentType[]>("/employment-types", {}, token)
+        api<EmploymentType[]>("/employment-types", {}, token),
+        selectedCompany.id === 0
+          ? Promise.resolve({ status: "OPEN" } as DemoClosing)
+          : api<DemoClosing>(`/demo/closing?competency=${draft.competency}`, {}, token)
       ]);
       const catalog = benefitCatalog.length ? benefitCatalog : demoBenefitDefinitions;
       setBenefits(catalog);
+      setDistributions(distributionList);
       setEmployees(employeeList);
       setCenters(resultCenters);
       setTypes(employmentTypes);
+      setCompetencyClosed(closing.status === "CLOSED");
       setDraft(current => {
         const codes = new Set(catalog.map(item => item.code));
         const fallback = catalog.find(item => item.active)?.code ?? catalog[0]?.code ?? "VT";
@@ -189,6 +198,9 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
     : isHealthPlan
       ? "selected-grid-health"
       : "selected-grid-monthly";
+  const visibleDistributions = useMemo(() => distributions
+    .filter(item => !activeBenefit || item.benefit_code === activeBenefit.code)
+    .sort((a, b) => b.id - a.id), [activeBenefit, distributions]);
 
   useEffect(() => {
     if (!activeBenefit) return;
@@ -375,6 +387,53 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
     });
   }
 
+  function patchDistribution(id: number, patch: Partial<DemoBenefitDistribution>) {
+    setDistributions(current => current.map(item => {
+      if (item.id !== id) return item;
+      const next = { ...item, ...patch };
+      return { ...next, amount: distributionAmount(next) };
+    }));
+  }
+
+  async function saveDistribution(item: DemoBenefitDistribution) {
+    if (user.role !== "ADMIN") {
+      setError("Seu perfil possui acesso somente para consulta.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await api<DemoBenefitDistribution>(`/demo/benefit-distributions/${item.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(item)
+      }, token);
+      setDistributions(current => current.map(distribution => distribution.id === updated.id ? updated : distribution));
+      setSuccess("Lançamento de benefício atualizado.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao atualizar benefício");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeDistribution(item: DemoBenefitDistribution) {
+    if (user.role !== "ADMIN") {
+      setError("Seu perfil possui acesso somente para consulta.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api(`/demo/benefit-distributions/${item.id}`, { method: "DELETE" }, token);
+      setDistributions(current => current.filter(distribution => distribution.id !== item.id));
+      setSuccess("Lançamento de benefício removido.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao remover benefício");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function confirmDistribution() {
     if (user.role !== "ADMIN") {
       setError("Seu perfil possui acesso somente para consulta.");
@@ -474,7 +533,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
             <p>Lote confirmado para {lastExportBatch.competency}. Baixe agora a planilha ou o PDF.</p>
           </div>
           <div className="actions">
-            <button className="secondary" type="button" onClick={() => exportBenefitExcel(lastExportBatch)}>Baixar Excel</button>
+            <button className="secondary" type="button" onClick={() => void exportBenefitExcel(lastExportBatch)}>Baixar Excel</button>
             <button className="secondary" type="button" onClick={() => exportBenefitPdf(lastExportBatch)}>Baixar PDF</button>
           </div>
         </div>
@@ -490,7 +549,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
       <div className="panel benefits-filter-shell">
         <div className="filters-panel benefits-filters">
           <select value={draft.competency} onChange={event => setDraft(current => ({ ...current, competency: event.target.value }))} disabled={Boolean(appliedFilter)}>
-            {demoCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+            {operationalCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select>
           <select value={draft.benefitCode} onChange={event => setDraft(current => ({ ...current, benefitCode: event.target.value }))} disabled={Boolean(appliedFilter)}>
             {benefits.map(item => <option key={item.code} value={item.code}>{item.name}</option>)}
@@ -521,11 +580,22 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
         </div>
         {appliedFilter && (
           <p className="note">
-            Filtro travado para {activeBenefit?.name ?? "-"} em {demoCompetencies.find(item => item.id === appliedFilter.competency)?.label ?? appliedFilter.competency}.
+            Filtro travado para {activeBenefit?.name ?? "-"} em {operationalCompetencies.find(item => item.id === appliedFilter.competency)?.label ?? appliedFilter.competency}.
             Agora você pode marcar e desmarcar colaboradores antes de confirmar.
           </p>
         )}
       </div>
+
+      {competencyClosed && <div className="panel"><p className="note"><strong>Competência fechada.</strong> Os lançamentos permanecem disponíveis para consulta. Reabra o mês em Fechamento para alterar ou remover.</p></div>}
+
+      {!appliedFilter && <GeneratedBenefitRecords
+        items={visibleDistributions}
+        saving={saving}
+        readOnly={competencyClosed || user.role !== "ADMIN"}
+        onPatch={patchDistribution}
+        onSave={item => void saveDistribution(item)}
+        onRemove={item => void removeDistribution(item)}
+      />}
 
       {!appliedFilter ? (
         <div className="panel"><p>Escolha os filtros acima e clique em <strong>OK</strong> para listar os colaboradores.</p></div>
@@ -541,7 +611,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
                 <button className="secondary" type="button" onClick={cancelOperation}>Cancelar operação</button>
                 <button className="secondary" type="button" onClick={selectAll}>Selecionar todos</button>
                 <button className="secondary" type="button" onClick={clearSelection}>Limpar seleção</button>
-                <button className="primary" type="button" onClick={() => setConfirmOpen(true)} disabled={!selectedEmployeeRows.length || !activeBenefit}>Confirmar distribuição</button>
+                <button className="primary" type="button" onClick={() => setConfirmOpen(true)} disabled={competencyClosed || !selectedEmployeeRows.length || !activeBenefit}>Confirmar distribuição</button>
               </div>
             </div>
 
@@ -726,6 +796,51 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
               )) : <Empty>Nenhum colaborador selecionado.</Empty>}
             </div>
           </div>
+
+          <div className="panel selected-panel">
+            <div className="selected-panel-head">
+              <h2>Lançamentos já gerados</h2>
+              <span>{visibleDistributions.length} registro(s) em {appliedFilter.competency}</span>
+            </div>
+            <div className="table-wrap compact-benefits-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Colaborador</th>
+                    <th>CR</th>
+                    <th>Dias</th>
+                    <th>Valor/dia</th>
+                    <th>Valor mensal</th>
+                    <th>Depend.</th>
+                    <th>Valor dep.</th>
+                    <th>Descrição</th>
+                    <th>Total</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleDistributions.map(item => (
+                    <tr key={item.id}>
+                      <td>{item.employee_name}<small>{item.created_at}</small></td>
+                      <td>{item.result_center.code}</td>
+                      <td><input disabled={competencyClosed} type="number" min="0" value={item.days_worked} onChange={event => patchDistribution(item.id, { days_worked: Number(event.target.value) })} /></td>
+                      <td><input disabled={competencyClosed} type="number" min="0" step="0.01" value={item.value_per_day} onChange={event => patchDistribution(item.id, { value_per_day: Number(event.target.value) })} /></td>
+                      <td><input disabled={competencyClosed} type="number" min="0" step="0.01" value={item.monthly_value} onChange={event => patchDistribution(item.id, { monthly_value: Number(event.target.value) })} /></td>
+                      <td><input disabled={competencyClosed} type="number" min="0" value={item.dependents_count ?? 0} onChange={event => patchDistribution(item.id, { dependents_count: Number(event.target.value) })} /></td>
+                      <td><input disabled={competencyClosed} type="number" min="0" step="0.01" value={item.dependent_value ?? 0} onChange={event => patchDistribution(item.id, { dependent_value: Number(event.target.value) })} /></td>
+                      <td><input disabled={competencyClosed} value={item.description} onChange={event => patchDistribution(item.id, { description: event.target.value })} /></td>
+                      <td><strong>{money.format(item.amount)}</strong></td>
+                      <td className="actions">
+                        <button className="secondary" type="button" onClick={() => void saveDistribution(item)} disabled={saving || competencyClosed}>Salvar</button>
+                        <button className="secondary danger" type="button" onClick={() => void removeDistribution(item)} disabled={saving || competencyClosed}>Remover</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!visibleDistributions.length && <Empty>Nenhum lançamento gerado para este benefício na competência.</Empty>}
+            </div>
+          </div>
         </>
       )}
 
@@ -760,6 +875,39 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
       )}
     </div>
   );
+}
+
+function GeneratedBenefitRecords({
+  items,
+  saving,
+  readOnly,
+  onPatch,
+  onSave,
+  onRemove
+}: {
+  items: DemoBenefitDistribution[];
+  saving: boolean;
+  readOnly: boolean;
+  onPatch: (id: number, patch: Partial<DemoBenefitDistribution>) => void;
+  onSave: (item: DemoBenefitDistribution) => void;
+  onRemove: (item: DemoBenefitDistribution) => void;
+}) {
+  return <div className="panel selected-panel">
+    <div className="selected-panel-head"><div><span className="eyebrow">Histórico da competência</span><h2>Lançamentos já gerados</h2></div><span>{items.length} registro(s)</span></div>
+    <div className="table-wrap compact-benefits-table"><table><thead><tr><th>Colaborador</th><th>CR</th><th>Dias</th><th>Valor/dia</th><th>Valor mensal</th><th>Depend.</th><th>Valor dep.</th><th>Descrição</th><th>Total</th><th>Ações</th></tr></thead><tbody>
+      {items.map(item => <tr key={item.id}>
+        <td>{item.employee_name}<small>{item.created_at}</small></td><td>{item.result_center.code}</td>
+        <td><input disabled={readOnly} type="number" min="0" value={item.days_worked} onChange={event => onPatch(item.id, { days_worked: Number(event.target.value) })} /></td>
+        <td><input disabled={readOnly} type="number" min="0" step="0.01" value={item.value_per_day} onChange={event => onPatch(item.id, { value_per_day: Number(event.target.value) })} /></td>
+        <td><input disabled={readOnly} type="number" min="0" step="0.01" value={item.monthly_value} onChange={event => onPatch(item.id, { monthly_value: Number(event.target.value) })} /></td>
+        <td><input disabled={readOnly} type="number" min="0" value={item.dependents_count ?? 0} onChange={event => onPatch(item.id, { dependents_count: Number(event.target.value) })} /></td>
+        <td><input disabled={readOnly} type="number" min="0" step="0.01" value={item.dependent_value ?? 0} onChange={event => onPatch(item.id, { dependent_value: Number(event.target.value) })} /></td>
+        <td><input disabled={readOnly} value={item.description} onChange={event => onPatch(item.id, { description: event.target.value })} /></td>
+        <td><strong>{money.format(item.amount)}</strong></td>
+        <td className="actions"><button className="secondary" type="button" disabled={readOnly || saving} onClick={() => onSave(item)}>Salvar</button><button className="secondary danger" type="button" disabled={readOnly || saving} onClick={() => onRemove(item)}>Remover</button></td>
+      </tr>)}
+    </tbody></table>{!items.length && <Empty>Nenhum lançamento gerado para este benefício na competência.</Empty>}</div>
+  </div>;
 }
 
 function benefitMatches(rawBenefit: string, benefit: DemoBenefitDefinition) {
@@ -842,8 +990,14 @@ function buildOverridesForSelection(
   }, {});
 }
 
-function exportBenefitExcel(batch: ExportBatch) {
-  const workbook = XLSX.utils.book_new();
+function distributionAmount(item: DemoBenefitDistribution) {
+  if (Number(item.days_worked ?? 0) > 0 || Number(item.value_per_day ?? 0) > 0) {
+    return Number(item.days_worked ?? 0) * Number(item.value_per_day ?? 0);
+  }
+  return Number(item.monthly_value ?? 0) + Number(item.dependents_count ?? 0) * Number(item.dependent_value ?? 0);
+}
+
+async function exportBenefitExcel(batch: ExportBatch) {
   const rows = batch.rows.map(row => ({
     Beneficio: batch.benefitName,
     Competencia: batch.competency,
@@ -858,9 +1012,7 @@ function exportBenefitExcel(batch: ExportBatch) {
     "Valor por dependente": row.dependentValue,
     Total: row.amount
   }));
-  const sheet = XLSX.utils.json_to_sheet(rows);
-  XLSX.utils.book_append_sheet(workbook, sheet, "Beneficios");
-  XLSX.writeFile(workbook, `beneficios-${batch.competency}-${batch.benefitName.replace(/\s+/g, "-").toLowerCase()}.xlsx`);
+  await downloadExcel(rows, "Beneficios", `beneficios-${batch.competency}-${batch.benefitName.replace(/\s+/g, "-").toLowerCase()}.xlsx`);
 }
 
 function exportBenefitPdf(batch: ExportBatch) {

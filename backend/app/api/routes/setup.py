@@ -41,6 +41,7 @@ def initial_setup(payload: InitialSetup, db: DbSession) -> dict[str, str]:
         group_name=payload.company_name.strip(),
         kind=CompanyKind.MATRIZ,
         active=True,
+        is_primary=True,
     )
     db.add(company)
     db.flush()

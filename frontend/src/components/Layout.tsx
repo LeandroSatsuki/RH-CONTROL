@@ -13,6 +13,7 @@ export type Page =
   | "mei-contracts"
   | "benefits"
   | "payroll"
+  | "companies"
   | "indicators"
   | "report-maker"
   | "reports"
@@ -29,11 +30,13 @@ interface Props {
   onPage: (page: Page) => void;
   onLogout: () => void;
   children: ReactNode;
+  localMode?: boolean;
 }
 
 const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] = [
   { page: "dashboard", label: "Dashboard", icon: "▦" },
   { page: "employees", label: "Colaboradores", icon: "ID" },
+  { page: "companies", label: "Empresas", icon: "EM", adminOnly: true },
   { page: "movements", label: "Movimentações", icon: "MV" },
   { page: "mei-contracts", label: "Contratos MEI", icon: "ME" },
   { page: "benefits", label: "Benefícios", icon: "BF" },
@@ -47,7 +50,7 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "settings", label: "Ajustes do sistema", icon: "⚙", adminOnly: true }
 ];
 
-export function Layout({ user, page, onPage, onLogout, children }: Props) {
+export function Layout({ user, page, onPage, onLogout, children, localMode = IS_DEMO_MODE }: Props) {
   const [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
   const { companies, selectedCompany, selectedCompanyId, setSelectedCompanyId } = useDemoScope();
 
@@ -81,7 +84,7 @@ export function Layout({ user, page, onPage, onLogout, children }: Props) {
       </aside>
       <main className="main">
         <header>
-          {IS_DEMO_MODE && <span className="demo-pill">Demo com dados fictícios</span>}
+          {localMode && <span className="demo-pill">Modo local sem servidor</span>}
           <select
             className="company-switch"
             value={selectedCompanyId}
@@ -90,13 +93,13 @@ export function Layout({ user, page, onPage, onLogout, children }: Props) {
           >
             {companies.map(company => (
               <option key={company.id} value={company.id}>
-                {company.id === 0 ? "Todas as empresas" : `${company.code} - ${company.name}`}
+                {company.id === 0 ? "Todas as empresas" : `${company.code} - ${company.name}${company.is_primary ? " (principal)" : ""}${company.active ? "" : " (inativa)"}`}
               </option>
             ))}
           </select>
           <span className="competency-pill">Competência atual: Jun/2026</span>
           <div>
-            <span className="eyebrow">{IS_DEMO_MODE ? "Versão de apresentação" : "Sistema local"}</span>
+            <span className="eyebrow">{localMode ? "Operação local" : "Sistema conectado"}</span>
             <strong>{user.full_name}</strong>
             <small>{selectedCompany.id === 0 ? "Todas as empresas" : `${selectedCompany.code} - ${selectedCompany.kind.toLowerCase()} • ${selectedCompany.group}`}</small>
           </div>

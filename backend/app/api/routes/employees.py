@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -7,8 +9,9 @@ from app.api.dependencies import AdminUser, CurrentUser, DbSession
 from app.models.company import Company
 from app.models.employment import Employee, Employment, SalaryHistory
 from app.models.employment_type import EmploymentType
+from app.models.movement import Movement
 from app.models.result_center import ResultCenter
-from app.schemas.employee import EmployeeCreate, EmploymentRead, SalaryHistoryCreate
+from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmploymentRead, SalaryHistoryCreate
 
 router = APIRouter()
 
@@ -41,10 +44,11 @@ def list_employees(
 def create_employee(payload: EmployeeCreate, db: DbSession, _: AdminUser) -> Employment:
     if not db.get(Company, payload.company_id):
         raise HTTPException(status_code=404, detail="Empresa não encontrada")
-    if db.scalar(select(Employee).where(Employee.cpf == payload.cpf)):
+    duplicate = db.scalar(select(Employee).where(Employee.cpf == payload.cpf))
+    if duplicate:
         raise HTTPException(
             status_code=409,
-            detail="CPF já cadastrado. Novos vínculos devem ser criados no histórico da pessoa.",
+            detail=f"CPF/CNPJ já cadastrado para {duplicate.full_name}. Reative ou transfira o cadastro existente.",
         )
     employment_type = db.get(EmploymentType, payload.employment_type_id)
     if not employment_type:
@@ -79,6 +83,98 @@ def create_employee(payload: EmployeeCreate, db: DbSession, _: AdminUser) -> Emp
     )
 
 
+@router.patch("/{employment_id}", response_model=EmploymentRead)
+def update_employee(
+    employment_id: int,
+    payload: EmployeeUpdate,
+    db: DbSession,
+    _: AdminUser,
+    company_id: int = 1,
+) -> Employment:
+    query = employment_query().where(Employment.id == employment_id)
+    if company_id != 0:
+        query = query.where(Employment.company_id == company_id)
+    employment = db.scalar(query)
+    if not employment:
+        raise HTTPException(status_code=404, detail="Vínculo não encontrado")
+
+    data = payload.model_dump(exclude_unset=True)
+    full_name = data.pop("full_name", None)
+    salary_mode = data.pop("salary_mode", None)
+    target_company_id = data.pop("company_id", employment.company_id)
+    employment_type_id = data.pop("employment_type_id", None)
+    result_center_id = data.pop("result_center_id", None)
+
+    target_company = db.get(Company, target_company_id)
+    if not target_company:
+        raise HTTPException(status_code=404, detail="Empresa de destino não encontrada")
+    previous_company_id = employment.company_id
+
+    if employment_type_id is not None:
+        employment_type = db.get(EmploymentType, employment_type_id)
+        if not employment_type or employment_type.company_id != target_company_id:
+            raise HTTPException(status_code=409, detail="Modalidade não pertence à empresa de destino")
+        employment.employment_type = employment_type
+    if result_center_id is not None:
+        result_center = db.get(ResultCenter, result_center_id)
+        if not result_center or result_center.company_id != target_company_id:
+            raise HTTPException(status_code=409, detail="Centro de Resultado não pertence à empresa de destino")
+        employment.result_center = result_center
+    if target_company_id != previous_company_id:
+        if employment.result_center.company_id != target_company_id:
+            raise HTTPException(status_code=409, detail="Selecione um Centro de Resultado da empresa de destino")
+        if employment.employment_type.company_id != target_company_id:
+            raise HTTPException(status_code=409, detail="Selecione uma modalidade da empresa de destino")
+        prefix = employment.result_center.code
+        codes = db.scalars(
+            select(Employment.employee_code).where(
+                Employment.company_id == target_company_id,
+                Employment.id != employment.id,
+                Employment.employee_code.like(f"{prefix}-%"),
+            )
+        )
+        last_number = max(
+            (
+                int(code.rsplit("-", 1)[-1])
+                for code in codes
+                if code.rsplit("-", 1)[-1].isdigit()
+            ),
+            default=0,
+        )
+        employment.company_id = target_company_id
+        employment.employee.company_id = target_company_id
+        employment.employee_code = f"{prefix}-{last_number + 1:03d}"
+        db.add(
+            Movement(
+                company_id=target_company_id,
+                competency=date.today().strftime("%Y-%m"),
+                employee_id=employment.id,
+                type="transferência entre empresas",
+                start_date=date.today(),
+                end_date=None,
+                days=0,
+                hour_impact=0,
+                observation=f"TRANSFERÊNCIA ENTRE EMPRESAS: {previous_company_id} PARA {target_company_id}",
+                status="Aplicada",
+            )
+        )
+    if full_name is not None:
+        employment.employee.full_name = full_name.strip().upper()
+
+    next_salary = data.pop("salary_base", None)
+    for field, value in data.items():
+        setattr(employment, field, value)
+    if next_salary is not None:
+        employment.salary_base = next_salary
+        if salary_mode == "correction" and employment.salary_history:
+            latest = max(employment.salary_history, key=lambda item: item.effective_date)
+            latest.amount = next_salary
+            latest.reason = "CORREÇÃO CADASTRAL"
+
+    db.commit()
+    return db.scalar(employment_query().where(Employment.id == employment.id))
+
+
 @router.post("/{employment_id}/salary-history", response_model=EmploymentRead, status_code=201)
 def add_salary_history(
     employment_id: int,
@@ -103,6 +199,20 @@ def add_salary_history(
     )
     employment.salary_base = payload.amount
     db.add(history)
+    db.add(
+        Movement(
+            company_id=employment.company_id,
+            competency=payload.effective_date.strftime("%Y-%m"),
+            employee_id=employment.id,
+            type="alteração salarial",
+            start_date=payload.effective_date,
+            end_date=None,
+            days=0,
+            hour_impact=0,
+            observation=f"AJUSTE SALARIAL: {payload.reason} | NOVO SALÁRIO {payload.amount}",
+            status="Aplicada",
+        )
+    )
     try:
         db.commit()
     except IntegrityError:

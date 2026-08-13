@@ -1,13 +1,17 @@
 import { EmploymentType, ResultCenter, User } from "./types";
-import { consolidatedIndicators, dashboardCards, payrollRows } from "./mocks/demoCalculations";
+import { consolidatedIndicators, dashboardCards, payrollRows, recalculatePayrollRow } from "./mocks/demoCalculations";
 import { createDemoBenefitDistributions, createDemoCostAllocations, createDemoEmployees, createDemoMeiContracts, createDemoMovements, demoBenefitDefinitions, demoCompanies, demoCompetencies, demoEmploymentTypes, demoResultCenters } from "./mocks/demoData";
 import { DemoAlert, DemoAppUser, DemoAuditEntry, DemoBackup, DemoBenefitDefinition, DemoBenefitDistribution, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings } from "./mocks/demoTypes";
 
-const STORAGE_KEY = "indicadores-demo-state-v6";
+const DEMO_STORAGE_KEY = "indicadores-demo-state-v6";
+const LOCAL_STORAGE_KEY = "nexo-local-state-v1";
+const LOCAL_MODE_STORAGE_KEY = "nexo-local-mode";
+const PRESENTATION_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 const ALL_COMPANIES_ID = 0;
 
 interface DemoState {
   companies: DemoCompany[];
+  closings: Record<string, DemoClosing>;
   resultCenters: ResultCenter[];
   employmentTypes: EmploymentType[];
   employees: DemoEmployee[];
@@ -18,12 +22,102 @@ interface DemoState {
   benefitDefinitions: DemoBenefitDefinition[];
   benefitDistributions: DemoBenefitDistribution[];
   auditLogs: DemoAuditEntry[];
+  reportTemplates: Record<string, unknown[]>;
+  indicatorRevenue: Record<string, Record<string, number>>;
+  payrollOverrides: Record<string, Partial<Record<string, number>>>;
 }
 
-function defaultState(): DemoState {
+function isOperationalLocalMode() {
+  return !PRESENTATION_DEMO_MODE && localStorage.getItem(LOCAL_MODE_STORAGE_KEY) === "true";
+}
+
+function storageKey() {
+  return isOperationalLocalMode() ? LOCAL_STORAGE_KEY : DEMO_STORAGE_KEY;
+}
+
+function localCompany(): DemoCompany {
+  const settings = JSON.parse(JSON.stringify(demoCompanies[0].settings)) as DemoSettings;
+  return {
+    id: 1,
+    code: "EMPRESA",
+    cnpj: null,
+    name: "Empresa Principal",
+    trade_name: "Empresa Principal",
+    kind: "MATRIZ",
+    group: "Empresa Principal",
+    parent_company_id: null,
+    active: true,
+    is_primary: true,
+    registration_status: "",
+    opening_date: "",
+    address: "",
+    city: "",
+    state: "",
+    zip_code: "",
+    settings: {
+      ...settings,
+      company_name: "Empresa Principal",
+      cnpj: "",
+      company_logo: "",
+      initial_month: "2026-06",
+      backup_directory: "C:\\Nexo\\backups"
+    },
+    backups: [],
+    closing: {
+      competency: "2026-06",
+      status: "OPEN",
+      checklist: {
+        "Colaboradores conferidos": false,
+        "Movimentações conferidas": false,
+        "Folha importada": false,
+        "Indicadores calculados": false,
+        "Relatório mensal gerado": false,
+        "Backup realizado": false
+      }
+    }
+  };
+}
+
+function localDefaultState(): DemoState {
+  return {
+    companies: [localCompany()],
+    closings: {},
+    resultCenters: demoResultCenters.map(item => ({ ...item, company_id: 1 })),
+    employmentTypes: demoEmploymentTypes.map(item => ({ ...item, company_id: 1 })),
+    employees: [],
+    users: [
+      { id: 1, username: "admin", full_name: "Administrador", role: "ADMIN", active: true, password: "admin", token: "local-admin" },
+      { id: 2, username: "consultor", full_name: "Consultor", role: "CONSULTANT", active: true, password: "consultor", token: "local-consultor" }
+    ],
+    meiContracts: [],
+    movements: [],
+    allocations: [],
+    benefitDefinitions: JSON.parse(JSON.stringify(demoBenefitDefinitions)) as DemoBenefitDefinition[],
+    benefitDistributions: [],
+    reportTemplates: {},
+    indicatorRevenue: {},
+    payrollOverrides: {},
+    auditLogs: [
+      {
+        id: 1,
+        company_id: 0,
+        company_name: "Todas as empresas",
+        module: "Sistema",
+        action: "Carga inicial",
+        performed_by: "Sistema",
+        performed_role: "ADMIN",
+        created_at: new Date().toLocaleString("pt-BR"),
+        details: "Base local criada para uso operacional sem servidor."
+      }
+    ]
+  };
+}
+
+function presentationDemoDefaultState(): DemoState {
   const employees = createDemoEmployees();
   return {
     companies: JSON.parse(JSON.stringify(demoCompanies)) as DemoCompany[],
+    closings: {},
     resultCenters: demoResultCenters,
     employmentTypes: demoEmploymentTypes,
     employees,
@@ -36,6 +130,9 @@ function defaultState(): DemoState {
     allocations: createDemoCostAllocations(),
     benefitDefinitions: JSON.parse(JSON.stringify(demoBenefitDefinitions)) as DemoBenefitDefinition[],
     benefitDistributions: createDemoBenefitDistributions(employees),
+    reportTemplates: {},
+    indicatorRevenue: {},
+    payrollOverrides: {},
     auditLogs: [
       {
         id: 1,
@@ -52,12 +149,20 @@ function defaultState(): DemoState {
   };
 }
 
+function defaultState(): DemoState {
+  return isOperationalLocalMode() ? localDefaultState() : presentationDemoDefaultState();
+}
+
 function loadState(): DemoState {
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = localStorage.getItem(storageKey());
   if (!stored) return defaultState();
   try {
     const defaults = defaultState();
     const parsed = { ...defaults, ...JSON.parse(stored) } as DemoState;
+    parsed.closings = parsed.closings ?? {};
+    parsed.reportTemplates = parsed.reportTemplates ?? {};
+    parsed.indicatorRevenue = parsed.indicatorRevenue ?? {};
+    parsed.payrollOverrides = parsed.payrollOverrides ?? {};
     const fallbackRates = demoCompanies[0].settings.payroll_rates;
     parsed.companies = parsed.companies.map(company => ({
       ...company,
@@ -76,19 +181,19 @@ function loadState(): DemoState {
       token: user.token ?? `demo-${user.username.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`
     }));
     parsed.employees = parsed.employees.map((employee, index) => {
-      const fallback = defaults.employees[index % defaults.employees.length];
+      const fallback = defaults.employees.length ? defaults.employees[index % defaults.employees.length] : undefined;
       return {
         ...employee,
-        supervisor_name: employee.supervisor_name ?? fallback.supervisor_name ?? "",
-        street: employee.street ?? fallback.street ?? "",
-        address_number: employee.address_number ?? fallback.address_number ?? "",
-        address_complement: employee.address_complement ?? fallback.address_complement ?? "",
-        neighborhood: employee.neighborhood ?? fallback.neighborhood ?? "",
-        city: employee.city ?? fallback.city ?? "",
-        state: employee.state ?? fallback.state ?? "",
-        cep: employee.cep ?? fallback.cep ?? "",
-        bank_code: employee.bank_code ?? fallback.bank_code ?? "",
-        benefits: Array.isArray(employee.benefits) && employee.benefits.length ? employee.benefits : fallback.benefits ?? []
+        supervisor_name: employee.supervisor_name ?? fallback?.supervisor_name ?? "",
+        street: employee.street ?? fallback?.street ?? "",
+        address_number: employee.address_number ?? fallback?.address_number ?? "",
+        address_complement: employee.address_complement ?? fallback?.address_complement ?? "",
+        neighborhood: employee.neighborhood ?? fallback?.neighborhood ?? "",
+        city: employee.city ?? fallback?.city ?? "",
+        state: employee.state ?? fallback?.state ?? "",
+        cep: employee.cep ?? fallback?.cep ?? "",
+        bank_code: employee.bank_code ?? fallback?.bank_code ?? "",
+        benefits: Array.isArray(employee.benefits) && employee.benefits.length ? employee.benefits : fallback?.benefits ?? []
       };
     });
     parsed.meiContracts = (parsed.meiContracts ?? createDemoMeiContracts(parsed.employees as DemoEmployee[])).map(item => ({
@@ -121,23 +226,60 @@ function loadState(): DemoState {
       days_worked: Number(item.days_worked ?? 0),
       amount: Number(item.amount ?? 0)
     }));
+    normalizeCompanyCatalogs(parsed);
+    saveState(parsed);
     return parsed;
   } catch {
     return defaultState();
   }
 }
 
+function normalizeCompanyCatalogs(state: DemoState) {
+  const sharedCenters = state.resultCenters.filter(item => !item.company_id);
+  const sharedTypes = state.employmentTypes.filter(item => !item.company_id);
+  let centerId = Math.max(0, ...state.resultCenters.map(item => item.id));
+  let typeId = Math.max(0, ...state.employmentTypes.map(item => item.id));
+
+  for (const company of state.companies) {
+    for (const template of sharedCenters) {
+      if (!state.resultCenters.some(item => item.company_id === company.id && item.code === template.code)) {
+        state.resultCenters.push({ ...template, id: ++centerId, company_id: company.id });
+      }
+    }
+    for (const template of sharedTypes) {
+      if (!state.employmentTypes.some(item => item.company_id === company.id && normalizeText(item.name) === normalizeText(template.name))) {
+        state.employmentTypes.push({ ...template, id: ++typeId, company_id: company.id });
+      }
+    }
+  }
+
+  state.resultCenters = state.resultCenters.filter(item => Boolean(item.company_id));
+  state.employmentTypes = state.employmentTypes.filter(item => Boolean(item.company_id));
+  const centerFor = (companyId: number, current: ResultCenter) => state.resultCenters.find(item => item.company_id === companyId && item.code === current.code) ?? current;
+  const typeFor = (companyId: number, current: EmploymentType) => state.employmentTypes.find(item => item.company_id === companyId && normalizeText(item.name) === normalizeText(current.name)) ?? current;
+  state.employees.forEach(item => {
+    item.result_center = centerFor(item.company_id, item.result_center);
+    item.employment_type = typeFor(item.company_id, item.employment_type);
+  });
+  state.movements.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
+  state.allocations.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
+  state.meiContracts.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
+  state.benefitDistributions.forEach(item => { item.result_center = centerFor(item.company_id, item.result_center); });
+}
+
 function saveState(state: DemoState) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(storageKey(), JSON.stringify(state));
 }
 
 function getCompanyId(params: URLSearchParams, state: DemoState): number {
-  const raw = Number(params.get("company_id"));
+  const requested = params.get("company_id");
+  if (requested === null || requested === "") return state.companies[0]?.id ?? 1;
+  const raw = Number(requested);
   if (raw === ALL_COMPANIES_ID) return ALL_COMPANIES_ID;
   if (Number.isFinite(raw) && state.companies.some(company => company.id === raw)) {
     return raw;
   }
-  return state.companies[0]?.id ?? 1;
+  throw new Error("Empresa não encontrada.");
 }
 
 function getCompany(state: DemoState, companyId: number) {
@@ -150,9 +292,10 @@ function getCompany(state: DemoState, companyId: number) {
       group: "Todas as empresas",
       parent_company_id: null,
       active: true,
-      settings: demoCompanies[0]?.settings,
+      is_primary: false,
+      settings: state.companies[0]?.settings ?? demoCompanies[0]?.settings,
       backups: [],
-      closing: demoCompanies[0]?.closing
+      closing: state.companies[0]?.closing ?? demoCompanies[0]?.closing
     } satisfies DemoCompany;
   }
   return state.companies.find(company => company.id === companyId) ?? state.companies[0];
@@ -161,6 +304,16 @@ function getCompany(state: DemoState, companyId: number) {
 function scopeEmployees(state: DemoState, companyId: number) {
   if (companyId === ALL_COMPANIES_ID) return state.employees;
   return state.employees.filter(employee => employee.company_id === companyId);
+}
+
+function scopeResultCenters(state: DemoState, companyId: number) {
+  if (companyId === ALL_COMPANIES_ID) return state.resultCenters;
+  return state.resultCenters.filter(item => !item.company_id || item.company_id === companyId);
+}
+
+function scopeEmploymentTypes(state: DemoState, companyId: number) {
+  if (companyId === ALL_COMPANIES_ID) return state.employmentTypes;
+  return state.employmentTypes.filter(item => !item.company_id || item.company_id === companyId);
 }
 
 function scopeMovements(state: DemoState, companyId: number) {
@@ -191,6 +344,10 @@ function scopeMeiContracts(state: DemoState, companyId: number) {
 function companyNameFor(state: DemoState, companyId: number) {
   if (companyId === ALL_COMPANIES_ID) return "Todas as empresas";
   return state.companies.find(company => company.id === companyId)?.name ?? "Sem empresa";
+}
+
+function settingsByCompany(state: DemoState) {
+  return Object.fromEntries(state.companies.map(company => [company.id, company.settings])) as Record<number, DemoSettings>;
 }
 
 function normalizeBenefitCode(value: string) {
@@ -244,6 +401,48 @@ function benefitLabelFor(code: string) {
 
 function companyBenefitDistributionsFor(state: DemoState, companyId: number, competency: string) {
   return scopeBenefitDistributions(state, companyId).filter(item => item.competency === competency);
+}
+
+function closingKey(companyId: number, competency: string) {
+  return `${companyId}:${competency}`;
+}
+
+function baseClosing(company: DemoCompany | undefined, competency: string): DemoClosing {
+  const checklist = company?.closing?.checklist ?? demoCompanies[0].closing.checklist;
+  return {
+    competency,
+    status: company?.closing?.competency === competency ? company.closing.status : "OPEN",
+    checklist: { ...checklist }
+  };
+}
+
+function getClosingFor(state: DemoState, companyId: number, competency: string) {
+  const company = getCompany(state, companyId);
+  return state.closings[closingKey(companyId, competency)] ?? baseClosing(company, competency);
+}
+
+function setClosingFor(state: DemoState, companyId: number, closing: DemoClosing) {
+  state.closings = {
+    ...state.closings,
+    [closingKey(companyId, closing.competency)]: {
+      ...closing,
+      checklist: { ...closing.checklist }
+    }
+  };
+  if (companyId !== ALL_COMPANIES_ID) {
+    updateCompany(state, companyId, current => ({ ...current, closing }));
+  }
+}
+
+function isCompetencyClosed(state: DemoState, companyId: number, competency: string) {
+  return getClosingFor(state, companyId, competency).status === "CLOSED";
+}
+
+function closedCompanyIds(state: DemoState, companyId: number, competency: string) {
+  const candidates = companyId === ALL_COMPANIES_ID
+    ? state.companies.map(company => company.id)
+    : [companyId];
+  return candidates.filter(id => isCompetencyClosed(state, id, competency));
 }
 
 function daysUntil(value: string) {
@@ -440,6 +639,27 @@ function updateCompany(state: DemoState, companyId: number, update: (company: De
   state.companies = state.companies.map(company => (company.id === companyId ? update(company) : company));
 }
 
+function cleanCompany(company: DemoCompany) {
+  return {
+    id: company.id,
+    code: company.code,
+    cnpj: company.cnpj ?? null,
+    name: company.name,
+    trade_name: company.trade_name ?? "",
+    kind: company.kind,
+    group_name: company.group,
+    parent_company_id: company.parent_company_id,
+    active: company.active,
+    is_primary: company.is_primary,
+    registration_status: company.registration_status ?? "",
+    opening_date: company.opening_date ?? "",
+    address: company.address ?? "",
+    city: company.city ?? "",
+    state: company.state ?? "",
+    zip_code: company.zip_code ?? ""
+  };
+}
+
 function cleanUser(user: User & { password: string; token: string }): User {
   return { id: user.id, username: user.username, full_name: user.full_name, role: user.role, active: user.active };
 }
@@ -467,6 +687,198 @@ function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+function formatCnpj(digits: string) {
+  return digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+}
+
+function formatCep(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits.length === 8 ? digits.replace(/^(\d{5})(\d{3})$/, "$1-$2") : String(value ?? "");
+}
+
+function kindFromBrasilApi(value: unknown): DemoCompany["kind"] {
+  const description = String(value ?? "").toUpperCase();
+  if (description.includes("FILIAL")) return "FILIAL";
+  if (description.includes("MATRIZ")) return "MATRIZ";
+  return "OUTRA";
+}
+
+async function lookupBrasilApiCompany(digits: string) {
+  const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${digits}`);
+  if (!response.ok) throw new Error("Consulta de CNPJ indisponível no momento. Tente novamente ou preencha a empresa manualmente.");
+  const data = await response.json() as Record<string, unknown>;
+  const logradouro = [data.descricao_tipo_de_logradouro, data.logradouro].filter(Boolean).join(" ").trim();
+  const address = [logradouro, data.numero, data.complemento, data.bairro].filter(Boolean).join(", ");
+  const name = String(data.razao_social ?? "").trim() || `Empresa ${digits.slice(8, 12)}`;
+  const tradeName = String(data.nome_fantasia ?? "").trim() || name;
+  return {
+    cnpj: formatCnpj(digits),
+    code: `EMPRESA-${digits.slice(8, 12)}`,
+    name,
+    trade_name: tradeName,
+    kind: kindFromBrasilApi(data.descricao_identificador_matriz_filial),
+    group_name: tradeName,
+    parent_company_id: null,
+    active: String(data.descricao_situacao_cadastral ?? "").toUpperCase() !== "BAIXADA",
+    status: String(data.descricao_situacao_cadastral ?? "ATIVA"),
+    opening_date: String(data.data_inicio_atividade ?? ""),
+    address,
+    city: String(data.municipio ?? ""),
+    state: String(data.uf ?? ""),
+    zip_code: formatCep(data.cep),
+    source: "BrasilAPI"
+  };
+}
+
+const indicatorMonthLabels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+function monthCompetency(year: number, monthIndex: number) {
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+}
+
+function sumRows(rows: ReturnType<typeof payrollRows>, key: keyof ReturnType<typeof payrollRows>[number]) {
+  return rows.reduce((acc, row) => acc + Number(row[key] ?? 0), 0);
+}
+
+function average(values: number[]) {
+  const filled = values.filter(value => Number.isFinite(value));
+  return filled.length ? filled.reduce((acc, value) => acc + value, 0) / filled.length : 0;
+}
+
+function buildIndicatorSheets(state: DemoState, companyId: number, competency: string) {
+  const year = Number(competency.slice(0, 4)) || new Date().getFullYear();
+  const centers = scopeResultCenters(state, companyId)
+    .filter(center => center.active !== false)
+    .filter((center, index, items) => items.findIndex(candidate => candidate.code === center.code) === index);
+  const scopedEmployees = scopeEmployees(state, companyId);
+  const scopedMovements = scopeMovements(state, companyId);
+
+  const sheets = centers.reduce<Record<string, any>>((acc, center) => {
+    const monthly = indicatorMonthLabels.map((monthLabel, monthIndex) => {
+      const monthCompetence = monthCompetency(year, monthIndex);
+      const closedIds = closedCompanyIds(state, companyId, monthCompetence);
+      if (!closedIds.length) {
+        return {
+          monthLabel,
+          rows: [],
+          card: null,
+          closed: false,
+          salary: 0,
+          proLabore: 0,
+          profit: 0,
+          benefit: 0,
+          patronal: 0,
+          fgts: 0,
+          provision: 0,
+          total: 0,
+          plannedHours: 0,
+          nonProductiveHours: 0
+        };
+      }
+
+      const employees = scopedEmployees.filter(employee => closedIds.includes(employee.company_id) && employee.result_center.code === center.code);
+      const monthMovements = scopedMovements.filter(item => closedIds.includes(item.company_id));
+      const benefitDistributions = companyBenefitDistributionsFor(state, companyId, monthCompetence).filter(item => closedIds.includes(item.company_id) && item.result_center.code === center.code);
+      const rows = payrollRows(employees, monthCompetence, benefitDistributions, settingsByCompany(state));
+      const cards = dashboardCards(employees, monthMovements, monthCompetence, benefitDistributions, settingsByCompany(state), centers);
+      const card = cards.find(item => item.code === center.code) ?? null;
+      const plannedHours = Math.max(card?.active_employees ?? 0, 0) * 22 * 8;
+      const nonProductiveHours = plannedHours * (card?.absenteeism ?? 0);
+      const benefit = sumRows(rows, "transport") + sumRows(rows, "meal") + sumRows(rows, "lodging") + sumRows(rows, "insurance") + sumRows(rows, "health_plan");
+
+      return {
+        monthLabel,
+        rows,
+        card,
+        closed: true,
+        salary: sumRows(rows, "salary"),
+        proLabore: sumRows(rows, "pro_labore"),
+        profit: sumRows(rows, "profit_distribution"),
+        benefit,
+        patronal: sumRows(rows, "employer_contribution"),
+        fgts: sumRows(rows, "fgts"),
+        provision: sumRows(rows, "total_provisions"),
+        total: sumRows(rows, "grand_total"),
+        plannedHours,
+        nonProductiveHours
+      };
+    });
+
+    const costValues = (key: keyof typeof monthly[number]) => monthly.map(item => Number(item[key] ?? 0));
+    const costRows = [
+      { label: "Salário", values: costValues("salary"), total: costValues("salary").reduce((a, b) => a + b, 0) },
+      { label: "Prolabore", values: costValues("proLabore"), total: costValues("proLabore").reduce((a, b) => a + b, 0) },
+      { label: "Dist. Lucro", values: costValues("profit"), total: costValues("profit").reduce((a, b) => a + b, 0) },
+      { label: "Benefício", values: costValues("benefit"), total: costValues("benefit").reduce((a, b) => a + b, 0) },
+      { label: "Patronal", values: costValues("patronal"), total: costValues("patronal").reduce((a, b) => a + b, 0) },
+      { label: "FGTS", values: costValues("fgts"), total: costValues("fgts").reduce((a, b) => a + b, 0) },
+      { label: "Provisão", values: costValues("provision"), total: costValues("provision").reduce((a, b) => a + b, 0) },
+      { label: "Total", values: costValues("total"), total: costValues("total").reduce((a, b) => a + b, 0) }
+    ];
+
+    const admissions = monthly.map(item => item.card?.admissions ?? 0);
+    const terminations = monthly.map(item => item.card?.terminations ?? 0);
+    const finalHeadcount = monthly.map(item => item.card?.active_employees ?? 0);
+    const initialHeadcount = monthly.map(item => Math.max((item.card?.previous_active_employees ?? item.card?.active_employees ?? 0), 0));
+    const averageHeadcount = monthly.map((item, index) => (initialHeadcount[index] + finalHeadcount[index]) / 2);
+    const plannedHours = monthly.map(item => item.plannedHours);
+    const nonProductiveHours = monthly.map(item => item.nonProductiveHours);
+    const turnoverValues = monthly.map(item => item.card?.turnover ?? 0);
+    const absenteeismValues = monthly.map(item => item.card?.absenteeism ?? 0);
+
+    acc[center.code] = {
+      title: `${center.code} ${year}`,
+      subtitle: center.name,
+      costRows,
+      operationalRows: [
+        { label: "Efetivo Inicial (Un)", values: initialHeadcount, total: initialHeadcount.at(-1) ?? 0 },
+        { label: "Afastamentos", values: nonProductiveHours.map(value => value > 0 ? 1 : 0), total: nonProductiveHours.filter(value => value > 0).length },
+        { label: "Novas Contratações (Un)", values: admissions, total: admissions.reduce((a, b) => a + b, 0) },
+        { label: "Desligamentos (Un)", values: terminations, total: terminations.reduce((a, b) => a + b, 0) },
+        { label: "Horas Programadas", values: plannedHours, total: plannedHours.reduce((a, b) => a + b, 0) },
+        { label: "Horas não Produtivas", values: nonProductiveHours, total: nonProductiveHours.reduce((a, b) => a + b, 0) },
+        { label: "Efetivo Médio", values: averageHeadcount, total: average(averageHeadcount) },
+        { label: "Efetivo Final", values: finalHeadcount, total: finalHeadcount.at(-1) ?? 0 }
+      ],
+      financeRows: monthly.map((item, index) => ({
+        month: indicatorMonthLabels[index],
+        faturamento: 0,
+        custo: item.total,
+        percent: 0,
+        meta: 0.09,
+        metric: finalHeadcount[index],
+        metricLabel: "Colab",
+        costPerMetric: finalHeadcount[index] ? item.total / finalHeadcount[index] : 0
+      })),
+      turnoverRows: monthly.map((item, index) => ({
+        month: indicatorMonthLabels[index],
+        admissions: admissions[index],
+        terminations: terminations[index],
+        employees: finalHeadcount[index],
+        turnover: turnoverValues[index],
+        average: average(turnoverValues.slice(0, index + 1)),
+        meta: 0.05
+      })),
+      absenteeismRows: monthly.map((item, index) => ({
+        month: indicatorMonthLabels[index],
+        planned: plannedHours[index],
+        unproductive: nonProductiveHours[index],
+        absenteeism: absenteeismValues[index],
+        average: average(absenteeismValues.slice(0, index + 1)),
+        meta: 0.04
+      })),
+      financeMetricLabel: "Colab",
+      financeMetricUnit: "colaboradores",
+      turnoverMeta: 0.05,
+      absenteeismMeta: 0.04,
+      costMeta: 0.09
+    };
+    return acc;
+  }, {});
+
+  return { year, centers, sheets };
+}
+
 export async function demoApi<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   await new Promise(resolve => window.setTimeout(resolve, 160));
   const method = options.method ?? "GET";
@@ -490,12 +902,12 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
 
   if (route === "/auth/me" && method === "GET") {
     const user = getTokenUser(token);
-    if (!user) throw new Error("Sessão demo expirada. Entre novamente.");
+    if (!user) throw new Error("Sessão expirada. Entre novamente.");
     return user as T;
   }
 
   const currentUser = getTokenUser(token);
-  if (!currentUser) throw new Error("Entre para acessar o modo demo.");
+  if (!currentUser) throw new Error("Entre para acessar o sistema.");
 
   if (route === "/demo/competencies" && method === "GET") return demoCompetencies as T;
 
@@ -504,7 +916,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const scopedEmployees = scopeEmployees(state, companyId);
     const scopedMovements = scopeMovements(state, companyId);
     const benefitDistributions = companyBenefitDistributionsFor(state, companyId, competency);
-    const cards = dashboardCards(scopedEmployees, scopedMovements, competency, benefitDistributions);
+    const cards = dashboardCards(scopedEmployees, scopedMovements, competency, benefitDistributions, settingsByCompany(state), scopeResultCenters(state, companyId).filter(item => item.active));
     return {
       company: { id: company.id, code: company.code, name: company.name, kind: company.kind, group: company.group, group_name: company.group },
       month: Number(competency.slice(5, 7)),
@@ -525,10 +937,118 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     } as T;
   }
 
+  if (route === "/companies" && method === "GET") return [...state.companies].sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || a.code.localeCompare(b.code)).map(cleanCompany) as T;
+  if (route === "/companies/lookup" && method === "GET") {
+    const digits = String(params.get("cnpj") ?? "").replace(/\D/g, "");
+    if (digits.length !== 14) throw new Error("CNPJ deve ter 14 dígitos.");
+    const company = state.companies.find(item => item.cnpj?.replace(/\D/g, "") === digits);
+    if (isOperationalLocalMode()) {
+      const lookup = await lookupBrasilApiCompany(digits);
+      return {
+        ...lookup,
+        code: company?.code ?? `EMPRESA-${digits.slice(8, 12)}`,
+        parent_company_id: company?.parent_company_id ?? null,
+        active: company?.active ?? lookup.active
+      } as T;
+    }
+    return {
+      cnpj: formatCnpj(digits),
+      code: company?.code ?? `EMP-${digits.slice(8, 12)}`,
+      name: company?.name ?? `Empresa ${digits.slice(0, 8)}`,
+      trade_name: company?.group ?? company?.name ?? "Empresa Demo",
+      kind: company?.kind ?? "OUTRA",
+      group_name: company?.group ?? company?.name ?? "Grupo Demo",
+      parent_company_id: company?.parent_company_id ?? null,
+      active: company?.active ?? true,
+      status: "ATIVA",
+      opening_date: "2026-01-01",
+      address: "Rua Demo, 100",
+      city: "São Paulo",
+      state: "SP",
+      zip_code: "01000-000",
+      source: "Modo demo"
+    } as T;
+  }
+  if (route === "/companies" && method === "POST") {
+    assertAdmin(token);
+    const payload = body<{ code?: string; cnpj?: string; name?: string; trade_name?: string; kind?: DemoCompany["kind"]; group_name?: string; parent_company_id?: number | null; active?: boolean; is_primary?: boolean; registration_status?: string; opening_date?: string; address?: string; city?: string; state?: string; zip_code?: string }>(options);
+    const item: DemoCompany = {
+      id: nextId(state.companies),
+      code: String(payload.code ?? `EMP-${nextId(state.companies)}`).trim().toUpperCase(),
+      cnpj: payload.cnpj ? String(payload.cnpj) : null,
+      name: String(payload.name ?? "Nova empresa").trim(),
+      trade_name: String(payload.trade_name ?? payload.name ?? "").trim(),
+      kind: (payload.kind as DemoCompany["kind"]) ?? "OUTRA",
+      group: String(payload.group_name ?? payload.name ?? "Grupo").trim(),
+      parent_company_id: payload.parent_company_id ?? null,
+      active: typeof payload.active === "boolean" ? payload.active : true,
+      is_primary: Boolean(payload.is_primary) || state.companies.length === 0,
+      registration_status: String(payload.registration_status ?? "").trim(),
+      opening_date: String(payload.opening_date ?? "").trim(),
+      address: String(payload.address ?? "").trim(),
+      city: String(payload.city ?? "").trim(),
+      state: String(payload.state ?? "").trim().toUpperCase(),
+      zip_code: String(payload.zip_code ?? "").trim(),
+      settings: {
+        ...(JSON.parse(JSON.stringify(demoCompanies[0].settings)) as DemoSettings),
+        company_name: String(payload.name ?? "Nova empresa").trim(),
+        cnpj: payload.cnpj ? String(payload.cnpj) : ""
+      },
+      backups: [],
+      closing: JSON.parse(JSON.stringify(demoCompanies[0].closing)) as DemoClosing
+    };
+    if (item.is_primary) state.companies = state.companies.map(company => ({ ...company, is_primary: false }));
+    state.companies = [...state.companies, item];
+    const sourceCompanyId = state.companies.find(company => company.id !== item.id)?.id;
+    const sourceCenters = state.resultCenters.filter(center => center.company_id === sourceCompanyId);
+    const sourceTypes = state.employmentTypes.filter(type => type.company_id === sourceCompanyId);
+    let nextCenterId = nextId(state.resultCenters);
+    let nextTypeId = nextId(state.employmentTypes);
+    state.resultCenters = [...state.resultCenters, ...sourceCenters.map(center => ({ ...center, id: nextCenterId++, company_id: item.id }))];
+    state.employmentTypes = [...state.employmentTypes, ...sourceTypes.map(type => ({ ...type, id: nextTypeId++, company_id: item.id }))];
+    saveState(state);
+    return cleanCompany(item) as T;
+  }
+  if (route.startsWith("/companies/") && method === "PATCH") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[2]);
+    const payload = body<Partial<DemoCompany> & { group_name?: string }>(options);
+    const current = state.companies.find(item => item.id === id);
+    if (!current) throw new Error("Empresa não encontrada.");
+    if (payload.is_primary) {
+      state.companies = state.companies.map(company => ({ ...company, is_primary: company.id === id }));
+    }
+    state.companies = state.companies.map(company => company.id === id ? {
+      ...company,
+      code: payload.code ? String(payload.code).toUpperCase() : company.code,
+      cnpj: payload.cnpj === undefined ? company.cnpj : String(payload.cnpj || ""),
+      name: payload.name ? String(payload.name) : company.name,
+      trade_name: payload.trade_name === undefined ? company.trade_name : String(payload.trade_name || ""),
+      kind: payload.kind ?? company.kind,
+      group: payload.group_name ? String(payload.group_name) : company.group,
+      parent_company_id: payload.parent_company_id === undefined ? company.parent_company_id : payload.parent_company_id ?? null,
+      active: payload.active === undefined ? company.active : Boolean(payload.active),
+      is_primary: payload.is_primary === undefined ? company.is_primary : Boolean(payload.is_primary),
+      registration_status: payload.registration_status === undefined ? company.registration_status : String(payload.registration_status || ""),
+      opening_date: payload.opening_date === undefined ? company.opening_date : String(payload.opening_date || ""),
+      address: payload.address === undefined ? company.address : String(payload.address || ""),
+      city: payload.city === undefined ? company.city : String(payload.city || ""),
+      state: payload.state === undefined ? company.state : String(payload.state || "").toUpperCase(),
+      zip_code: payload.zip_code === undefined ? company.zip_code : String(payload.zip_code || ""),
+      settings: {
+        ...company.settings,
+        company_name: payload.name ? String(payload.name) : company.settings.company_name,
+        cnpj: payload.cnpj === undefined ? company.settings.cnpj : String(payload.cnpj || "")
+      }
+    } : company);
+    saveState(state);
+    return cleanCompany(state.companies.find(item => item.id === id) ?? current) as T;
+  }
+
   if (route === "/demo/alerts" && method === "GET") return buildAlerts(state, companyId) as T;
   if (route === "/demo/audit-logs" && method === "GET") return scopeAuditLogs(state, companyId) as T;
-  if (route === "/result-centers" && method === "GET") return state.resultCenters as T;
-  if (route === "/employment-types" && method === "GET") return state.employmentTypes as T;
+  if (route === "/result-centers" && method === "GET") return scopeResultCenters(state, companyId) as T;
+  if (route === "/employment-types" && method === "GET") return scopeEmploymentTypes(state, companyId) as T;
   if (route === "/employees" && method === "GET") return scopeEmployees(state, companyId) as T;
   if (route === "/demo/benefits/catalog" && method === "GET") return state.benefitDefinitions as T;
   if (route === "/demo/benefit-distributions" && method === "GET") {
@@ -625,8 +1145,13 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
 
   if (route === "/result-centers" && method === "POST") {
     assertAdmin(token);
+    if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para cadastrar o Centro de Resultado.");
     const payload = body<Partial<ResultCenter>>(options);
-    const item = { id: nextId(state.resultCenters), code: String(payload.code ?? "").trim().toUpperCase(), name: String(payload.name ?? "").trim(), color: payload.color ?? "#2563eb", active: true };
+    const code = String(payload.code ?? "").trim().toUpperCase();
+    const name = String(payload.name ?? "").trim().toUpperCase();
+    if (!code || !name) throw new Error("Informe código e nome do Centro de Resultado.");
+    if (scopeResultCenters(state, companyId).some(item => item.code.toUpperCase() === code)) throw new Error("Código de Centro de Resultado já cadastrado para esta empresa.");
+    const item = { id: nextId(state.resultCenters), company_id: companyId, code, name, color: payload.color ?? "#2563eb", active: true };
     state.resultCenters = [...state.resultCenters, item];
     saveState(state);
     return item as T;
@@ -634,9 +1159,52 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
 
   if (route === "/employment-types" && method === "POST") {
     assertAdmin(token);
+    if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para cadastrar a modalidade.");
     const payload = body<Partial<EmploymentType>>(options);
-    const item = { id: nextId(state.employmentTypes), name: String(payload.name ?? "").trim(), has_charges: Boolean(payload.has_charges), active: true };
+    const name = String(payload.name ?? "").trim().toUpperCase();
+    if (!name) throw new Error("Informe o nome da modalidade.");
+    if (scopeEmploymentTypes(state, companyId).some(item => normalizeText(item.name) === normalizeText(name))) throw new Error("Modalidade já cadastrada para esta empresa.");
+    const item = { id: nextId(state.employmentTypes), company_id: companyId, name, has_charges: Boolean(payload.has_charges), active: true };
     state.employmentTypes = [...state.employmentTypes, item];
+    saveState(state);
+    return item as T;
+  }
+
+  if (route.startsWith("/result-centers/") && method === "PATCH") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[2]);
+    const item = state.resultCenters.find(center => center.id === id && (companyId === ALL_COMPANIES_ID || center.company_id === companyId));
+    if (!item) throw new Error("Centro de Resultado não encontrado.");
+    const payload = body<Partial<ResultCenter>>(options);
+    const nextCode = String(payload.code ?? item.code).trim().toUpperCase();
+    if (state.resultCenters.some(center => center.id !== id && center.company_id === item.company_id && center.code === nextCode)) {
+      throw new Error("Código de Centro de Resultado já cadastrado para esta empresa.");
+    }
+    Object.assign(item, {
+      code: nextCode,
+      name: String(payload.name ?? item.name).trim().toUpperCase(),
+      color: payload.color ?? item.color,
+      active: payload.active ?? item.active
+    });
+    saveState(state);
+    return item as T;
+  }
+
+  if (route.startsWith("/employment-types/") && method === "PATCH") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[2]);
+    const item = state.employmentTypes.find(type => type.id === id && (companyId === ALL_COMPANIES_ID || type.company_id === companyId));
+    if (!item) throw new Error("Modalidade não encontrada.");
+    const payload = body<Partial<EmploymentType>>(options);
+    const nextName = String(payload.name ?? item.name).trim().toUpperCase();
+    if (state.employmentTypes.some(type => type.id !== id && type.company_id === item.company_id && normalizeText(type.name) === normalizeText(nextName))) {
+      throw new Error("Modalidade já cadastrada para esta empresa.");
+    }
+    Object.assign(item, {
+      name: nextName,
+      has_charges: payload.has_charges ?? item.has_charges,
+      active: payload.active ?? item.active
+    });
     saveState(state);
     return item as T;
   }
@@ -683,6 +1251,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       dependent_value?: number;
     }>(options);
     const competency = payload.competency ?? "2026-06";
+    if (isCompetencyClosed(state, companyId, competency)) throw new Error("Competência fechada. Reabra o mês para alterar benefícios.");
     const benefitCode = normalizeBenefitCode(String(payload.benefit_code ?? ""));
     const benefit = state.benefitDefinitions.find(item => normalizeBenefitCode(item.code) === benefitCode);
     if (!benefit || !benefit.active) throw new Error("Selecione um benefício ativo.");
@@ -751,59 +1320,114 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     return { created: created.length, items: created } as T;
   }
 
+  if (route.startsWith("/demo/benefit-distributions/") && method === "PATCH") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[3]);
+    const payload = body<Partial<DemoBenefitDistribution>>(options);
+    const item = state.benefitDistributions.find(distribution => distribution.id === id);
+    if (!item) throw new Error("Distribuição de benefício não encontrada.");
+    if (isCompetencyClosed(state, item.company_id, item.competency)) throw new Error("Competência fechada. Reabra o mês para alterar benefícios.");
+    item.days_worked = Number(payload.days_worked ?? item.days_worked ?? 0);
+    item.value_per_day = Number(payload.value_per_day ?? item.value_per_day ?? 0);
+    item.monthly_value = Number(payload.monthly_value ?? item.monthly_value ?? 0);
+    item.dependents_count = Number(payload.dependents_count ?? item.dependents_count ?? 0);
+    item.dependent_value = Number(payload.dependent_value ?? item.dependent_value ?? 0);
+    item.description = String(payload.description ?? item.description ?? "").trim();
+    item.amount = item.days_worked > 0
+      ? roundMoney(item.days_worked * item.value_per_day)
+      : roundMoney(item.monthly_value + Number(item.dependents_count ?? 0) * Number(item.dependent_value ?? 0));
+    appendAudit(state, {
+      company_id: item.company_id,
+      module: "Benefícios",
+      action: "Distribuição alterada",
+      employee_name: item.employee_name,
+      result_center: item.result_center,
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${item.benefit_name} | ${item.competency} | ${item.description}`
+    });
+    saveState(state);
+    return item as T;
+  }
+
+  if (route.startsWith("/demo/benefit-distributions/") && method === "DELETE") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[3]);
+    const item = state.benefitDistributions.find(distribution => distribution.id === id);
+    if (!item) throw new Error("Distribuição de benefício não encontrada.");
+    if (isCompetencyClosed(state, item.company_id, item.competency)) throw new Error("Competência fechada. Reabra o mês para alterar benefícios.");
+    state.benefitDistributions = state.benefitDistributions.filter(distribution => distribution.id !== id);
+    appendAudit(state, {
+      company_id: item.company_id,
+      module: "Benefícios",
+      action: "Distribuição removida",
+      employee_name: item.employee_name,
+      result_center: item.result_center,
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${item.benefit_name} | ${item.competency} | ${item.description}`
+    });
+    saveState(state);
+    return { ok: true } as T;
+  }
+
   if (route === "/employees" && method === "POST") {
     assertAdmin(token);
     if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para cadastrar colaboradores.");
     const payload = body<Record<string, any>>(options);
     const cpf = String(payload.cpf ?? "").replace(/\D/g, "");
     if (!isValidCpfCnpj(cpf)) throw new Error("CPF/CNPJ inválido.");
-    if (state.employees.some(item => item.employee.cpf === cpf)) throw new Error("CPF/CNPJ já cadastrado no modo demo.");
-    const type = state.employmentTypes.find(item => item.id === Number(payload.employment_type_id)) ?? state.employmentTypes[0];
-    const center = state.resultCenters.find(item => item.id === Number(payload.result_center_id)) ?? state.resultCenters[0];
+    const duplicate = state.employees.find(item => String(item.employee.cpf ?? "").replace(/\D/g, "") === cpf);
+    if (duplicate) throw new Error(`CPF/CNPJ já cadastrado para ${duplicate.employee.full_name}. Reative ou transfira o cadastro existente.`);
+    const type = state.employmentTypes.find(item => item.id === Number(payload.employment_type_id) && item.company_id === companyId);
+    const center = state.resultCenters.find(item => item.id === Number(payload.result_center_id) && item.company_id === companyId);
+    if (!type) throw new Error("Modalidade não pertence à empresa selecionada.");
+    if (!center) throw new Error("Centro de Resultado não pertence à empresa selecionada.");
     const id = nextId(state.employees);
-    const salary = Number(payload.salary_base || 4500);
+    const salary = Number(payload.salary_base || 0);
     const item: DemoEmployee = {
       id,
       company_id: companyId,
       employee_code: String(payload.employee_code ?? "").trim().toUpperCase(),
-      job_title: String(payload.job_title ?? ""),
-      department: String(payload.department ?? center.name),
+      job_title: String(payload.job_title ?? "").trim().toUpperCase(),
+      department: String(payload.department ?? center.name).trim().toUpperCase(),
       admission_date: String(payload.admission_date ?? new Date().toISOString().slice(0, 10)),
       termination_date: null,
       status: "ACTIVE",
       daily_hours: String(payload.daily_hours ?? "8.80"),
-      notes: String(payload.notes ?? ""),
-      supervisor_name: String(payload.supervisor_name ?? ""),
-      street: String(payload.street ?? ""),
+      notes: String(payload.notes ?? "").trim().toUpperCase(),
+      supervisor_name: String(payload.supervisor_name ?? "").trim().toUpperCase(),
+      street: String(payload.street ?? "").trim().toUpperCase(),
       cep: String(payload.cep ?? ""),
       address_number: String(payload.address_number ?? ""),
-      address_complement: String(payload.address_complement ?? ""),
-      neighborhood: String(payload.neighborhood ?? ""),
-      city: String(payload.city ?? ""),
-      state: String(payload.state ?? ""),
+      address_complement: String(payload.address_complement ?? "").trim().toUpperCase(),
+      neighborhood: String(payload.neighborhood ?? "").trim().toUpperCase(),
+      city: String(payload.city ?? "").trim().toUpperCase(),
+      state: String(payload.state ?? "").trim().toUpperCase(),
       bank_code: String(payload.bank_code ?? ""),
-      bank_name: String(payload.bank_name ?? "Banco Demo"),
-      bank_agency: String(payload.bank_agency ?? "0001"),
-      bank_account: String(payload.bank_account ?? "12345"),
-      bank_account_digit: String(payload.bank_account_digit ?? "0"),
+      bank_name: String(payload.bank_name ?? "").trim().toUpperCase(),
+      bank_agency: String(payload.bank_agency ?? ""),
+      bank_account: String(payload.bank_account ?? ""),
+      bank_account_digit: String(payload.bank_account_digit ?? ""),
       pix_key_type: (payload.pix_key_type as DemoEmployee["pix_key_type"]) ?? "CPF",
       pix_key: String(payload.pix_key ?? cpf),
-      benefits: Array.isArray(payload.benefits) ? payload.benefits.map(String) : [],
-      employee: { id, cpf, full_name: String(payload.full_name ?? "") },
+      benefits: Array.isArray(payload.benefits) ? payload.benefits.map(value => String(value).trim()) : [],
+      employee: { id, cpf, full_name: String(payload.full_name ?? "").trim().toUpperCase() },
       employment_type: type,
       result_center: center,
       salary_base: salary,
-      email: "novo.colaborador@empresa-demo.com.br",
-      phone: "(11) 90000-0000",
-      salary_history: [{ date: "2026-06-01", amount: salary, family_allowance: 0, reason: "Cadastro inicial" }],
-      movement_history: [{ date: "2026-06-01", description: "Admissão simulada no modo demo" }],
+      cost_aid: payload.benefits?.includes("Ajuda de custo") ? Number(payload.cost_aid || 0) : 0,
+      email: String(payload.email ?? ""),
+      phone: String(payload.phone ?? ""),
+      salary_history: [{ date: new Date().toISOString().slice(0, 10), amount: salary, family_allowance: 0, reason: "Cadastro inicial" }],
+      movement_history: [{ date: new Date().toISOString().slice(0, 10), description: "Admissão cadastrada no sistema" }],
       vacations: [{ period: "A definir", status: "Pendente" }],
       leaves: []
     };
     state.employees = [...state.employees, item];
     saveState(state);
     appendAudit(state, {
-      company_id: companyId,
+      company_id: item.company_id,
       module: "Colaboradores",
       action: "Cadastro de colaborador",
       employee_name: item.employee.full_name,
@@ -843,6 +1467,21 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     };
     item.salary_base = amount;
     item.salary_history = [historyEntry, ...item.salary_history];
+    state.movements = [{
+      id: nextId(state.movements),
+      company_id: item.company_id,
+      competency: effectiveDate.slice(0, 7),
+      employee_id: item.id,
+      employee_name: item.employee.full_name,
+      type: "alteração salarial",
+      start_date: effectiveDate,
+      end_date: null,
+      days: 0,
+      hour_impact: 0,
+      result_center: item.result_center,
+      observation: `AJUSTE SALARIAL: ${historyEntry.reason} | NOVO SALÁRIO ${amount}`,
+      status: "Aplicada"
+    }, ...state.movements];
     appendAudit(state, {
       company_id: companyId,
       module: "Colaboradores",
@@ -852,6 +1491,94 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       performed_by: currentUser.full_name,
       performed_role: currentUser.role,
       details: `Novo salário ${amount} e salário-família ${familyAllowance} em ${effectiveDate}`
+    });
+    saveState(state);
+    return item as T;
+  }
+
+  if (route.startsWith("/employees/") && method === "PATCH") {
+    assertAdmin(token);
+    const employmentId = Number(route.split("/")[2]);
+    const payload = body<Record<string, any>>(options);
+    const item = companyId === ALL_COMPANIES_ID
+      ? state.employees.find(employee => employee.id === employmentId)
+      : state.employees.find(employee => employee.id === employmentId && employee.company_id === companyId);
+    if (!item) throw new Error("Vínculo não encontrado");
+    const previousCompanyId = item.company_id;
+    const targetCompanyId = Number(payload.company_id ?? item.company_id);
+    if (!state.companies.some(company => company.id === targetCompanyId)) throw new Error("Empresa de destino não encontrada.");
+    const type = payload.employment_type_id ? state.employmentTypes.find(typeItem => typeItem.id === Number(payload.employment_type_id) && typeItem.company_id === targetCompanyId) : item.employment_type;
+    const center = payload.result_center_id ? state.resultCenters.find(centerItem => centerItem.id === Number(payload.result_center_id) && centerItem.company_id === targetCompanyId) : item.result_center;
+    if (!type) throw new Error("Modalidade não encontrada.");
+    if (!center) throw new Error("Centro de Resultado não encontrado.");
+    if (targetCompanyId !== previousCompanyId) {
+      const lastNumber = state.employees
+        .filter(employee => employee.id !== item.id && employee.company_id === targetCompanyId && employee.employee_code.startsWith(`${center.code}-`))
+        .map(employee => Number(employee.employee_code.split("-").at(-1) ?? 0))
+        .filter(Number.isFinite)
+        .reduce((max, value) => Math.max(max, value), 0);
+      item.company_id = targetCompanyId;
+      item.employee_code = `${center.code}-${String(lastNumber + 1).padStart(3, "0")}`;
+      state.movements = [{
+        id: nextId(state.movements),
+        company_id: targetCompanyId,
+        competency: new Date().toISOString().slice(0, 7),
+        employee_id: item.id,
+        employee_name: item.employee.full_name,
+        type: "transferência de Centro de Resultado",
+        start_date: new Date().toISOString().slice(0, 10),
+        end_date: null,
+        days: 0,
+        hour_impact: 0,
+        result_center: center,
+        observation: `TRANSFERÊNCIA ENTRE EMPRESAS: ${companyNameFor(state, previousCompanyId)} PARA ${companyNameFor(state, targetCompanyId)}`,
+        status: "Aplicada"
+      }, ...state.movements];
+    }
+    const nextSalary = payload.salary_base === undefined ? item.salary_base : Number(payload.salary_base || 0);
+    item.employee.full_name = String(payload.full_name ?? item.employee.full_name).trim().toUpperCase();
+    item.job_title = String(payload.job_title ?? item.job_title).trim().toUpperCase();
+    item.supervisor_name = String(payload.supervisor_name ?? item.supervisor_name).trim().toUpperCase();
+    item.employment_type = type;
+    item.result_center = center;
+    item.admission_date = String(payload.admission_date ?? item.admission_date);
+    item.status = (payload.status as DemoEmployee["status"]) ?? item.status;
+    item.salary_base = nextSalary;
+    item.cost_aid = Array.isArray(payload.benefits) && payload.benefits.includes("Ajuda de custo")
+      ? Number(payload.cost_aid ?? item.cost_aid ?? 0)
+      : 0;
+    item.cep = String(payload.cep ?? item.cep);
+    item.street = String(payload.street ?? item.street).trim().toUpperCase();
+    item.address_number = String(payload.address_number ?? item.address_number);
+    item.address_complement = String(payload.address_complement ?? item.address_complement).trim().toUpperCase();
+    item.neighborhood = String(payload.neighborhood ?? item.neighborhood).trim().toUpperCase();
+    item.city = String(payload.city ?? item.city).trim().toUpperCase();
+    item.state = String(payload.state ?? item.state).trim().toUpperCase();
+    item.email = String(payload.email ?? item.email).trim();
+    item.phone = String(payload.phone ?? item.phone).replace(/\D/g, "");
+    item.bank_code = String(payload.bank_code ?? item.bank_code);
+    item.bank_name = String(payload.bank_name ?? item.bank_name).trim().toUpperCase();
+    item.bank_agency = String(payload.bank_agency ?? item.bank_agency);
+    item.bank_account = String(payload.bank_account ?? item.bank_account);
+    item.bank_account_digit = String(payload.bank_account_digit ?? item.bank_account_digit);
+    item.pix_key_type = (payload.pix_key_type as DemoEmployee["pix_key_type"]) ?? item.pix_key_type;
+    item.pix_key = String(payload.pix_key ?? item.pix_key);
+    item.notes = String(payload.notes ?? item.notes).trim().toUpperCase();
+    item.benefits = Array.isArray(payload.benefits) ? payload.benefits.map(String) : item.benefits;
+    if (payload.salary_mode === "correction" && item.salary_history.length) {
+      const latest = [...item.salary_history].sort((a, b) => b.date.localeCompare(a.date))[0];
+      latest.amount = nextSalary;
+      latest.reason = "CORREÇÃO CADASTRAL";
+    }
+    appendAudit(state, {
+      company_id: targetCompanyId,
+      module: "Colaboradores",
+      action: payload.salary_mode === "correction" ? "Correção cadastral" : "Edição cadastral",
+      employee_name: item.employee.full_name,
+      result_center: item.result_center,
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `Cadastro atualizado | matrícula ${item.employee_code}`
     });
     saveState(state);
     return item as T;
@@ -876,7 +1603,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       days: payload.days ?? 1,
       hour_impact: payload.hour_impact ?? 8.8,
       result_center: employee.result_center,
-      observation: payload.observation ?? "Movimentação criada em modo demonstração.",
+      observation: payload.observation ?? "Movimentação criada no sistema.",
       status: "Pendente"
     };
     state.movements = [item, ...state.movements];
@@ -979,12 +1706,68 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     return item as T;
   }
 
-  if (route === "/demo/payroll" && method === "GET") return payrollRows(scopeEmployees(state, companyId), params.get("competency") ?? "2026-06", companyBenefitDistributionsFor(state, companyId, params.get("competency") ?? "2026-06")) as T;
-  if (route === "/demo/indicators" && method === "GET") return consolidatedIndicators(scopeEmployees(state, companyId), scopeMovements(state, companyId), params.get("competency") ?? "2026-06", companyBenefitDistributionsFor(state, companyId, params.get("competency") ?? "2026-06")) as T;
+  if (route === "/demo/payroll" && method === "GET") {
+    const competency = params.get("competency") ?? "2026-06";
+    const rows = payrollRows(scopeEmployees(state, companyId), competency, companyBenefitDistributionsFor(state, companyId, competency), settingsByCompany(state));
+    return rows.map(row => {
+      const override = state.payrollOverrides[`${row.result_center.company_id ?? companyId}:${competency}:${row.employee_id}`] ?? state.payrollOverrides[`${companyId}:${competency}:${row.employee_id}`];
+      const employee = state.employees.find(item => item.id === row.employee_id);
+      const rates = employee ? settingsByCompany(state)[employee.company_id]?.payroll_rates : undefined;
+      return override && rates ? recalculatePayrollRow({ ...row, ...override }, rates) : row;
+    }) as T;
+  }
+  if (route.startsWith("/demo/payroll/") && method === "PATCH") {
+    assertAdmin(token);
+    const employmentId = Number(route.split("/").at(-1));
+    const competency = params.get("competency") ?? "2026-06";
+    if (isCompetencyClosed(state, companyId, competency)) throw new Error("Competência fechada. Reabra o mês para editar o custo.");
+    state.payrollOverrides[`${companyId}:${competency}:${employmentId}`] = body<Record<string, number>>(options);
+    saveState(state);
+    return { saved: true, employment_id: employmentId, competency } as T;
+  }
+  if (route === "/demo/indicators" && method === "GET") {
+    const competency = params.get("competency") ?? "2026-06";
+    const closedIds = closedCompanyIds(state, companyId, competency);
+    const employees = scopeEmployees(state, companyId).filter(item => closedIds.includes(item.company_id));
+    const movements = scopeMovements(state, companyId).filter(item => closedIds.includes(item.company_id));
+    const benefits = companyBenefitDistributionsFor(state, companyId, competency).filter(item => closedIds.includes(item.company_id));
+    return consolidatedIndicators(employees, movements, competency, benefits, settingsByCompany(state)) as T;
+  }
+  if (route === "/demo/indicators/sheets" && method === "GET") return buildIndicatorSheets(state, companyId, params.get("competency") ?? "2026-06") as T;
   if (route === "/demo/settings" && method === "GET") return company.settings as T;
+  if (route === "/demo/report-templates" && method === "GET") {
+    return (state.reportTemplates[String(companyId)] ?? []) as T;
+  }
+  if (route === "/demo/report-templates" && method === "PUT") {
+    assertAdmin(token);
+    const payload = body<unknown[]>(options);
+    state.reportTemplates[String(companyId)] = Array.isArray(payload) ? payload : [];
+    saveState(state);
+    return state.reportTemplates[String(companyId)] as T;
+  }
+  if (route === "/demo/indicator-revenue" && method === "GET") {
+    return state.indicatorRevenue as T;
+  }
+  if (route === "/demo/indicator-revenue" && method === "PATCH") {
+    assertAdmin(token);
+    const payload = body<{ scope?: string; values?: Record<string, number> }>(options);
+    if (!payload.scope || !payload.values) throw new Error("Escopo e valores de faturamento são obrigatórios.");
+    state.indicatorRevenue[payload.scope] = payload.values;
+    saveState(state);
+    return state.indicatorRevenue as T;
+  }
   if (route === "/demo/settings" && method === "POST") {
     assertAdmin(token);
-    updateCompany(state, companyId, current => ({ ...current, settings: { ...current.settings, ...body<Partial<DemoSettings>>(options) } }));
+    const payload = body<Partial<DemoSettings>>(options);
+    const normalizedPayload: Partial<DemoSettings> = { ...payload };
+    if (Array.isArray(payload.job_titles)) {
+      normalizedPayload.job_titles = [...new Set(payload.job_titles.map(item => String(item).trim().toUpperCase()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    }
+    if (companyId === ALL_COMPANIES_ID) {
+      state.companies = state.companies.map(current => ({ ...current, settings: { ...current.settings, ...normalizedPayload } }));
+    } else {
+      updateCompany(state, companyId, current => ({ ...current, settings: { ...current.settings, ...normalizedPayload } }));
+    }
     appendAudit(state, {
       company_id: companyId,
       module: "Configurações",
@@ -996,10 +1779,10 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     saveState(state);
     return getCompany(state, companyId).settings as T;
   }
-  if (route === "/demo/users" && method === "GET") {
+  if (route === "/users" && method === "GET") {
     return state.users.map(cleanUser) as T;
   }
-  if (route === "/demo/users" && method === "POST") {
+  if (route === "/users" && method === "POST") {
     assertAdmin(token);
     const payload = body<{ username?: string; full_name?: string; role?: User["role"]; password?: string }>(options);
     const username = String(payload.username ?? "").trim().toLowerCase();
@@ -1029,10 +1812,10 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     saveState(state);
     return cleanUser(item) as T;
   }
-  if (route === "/demo/users" && method === "PATCH") {
+  if (route.startsWith("/users/") && method === "PATCH") {
     assertAdmin(token);
     const payload = body<{ id?: number; active?: boolean; password?: string }>(options);
-    const item = state.users.find(user => user.id === Number(payload.id));
+    const item = state.users.find(user => user.id === Number(route.split("/").at(-1)));
     if (!item) throw new Error("Usuário não encontrado.");
     if (typeof payload.active === "boolean") item.active = payload.active;
     if (payload.password) item.password = String(payload.password);
@@ -1047,8 +1830,8 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     saveState(state);
     return cleanUser(item) as T;
   }
-  if (route === "/demo/backups" && method === "GET") return company.backups as T;
-  if (route === "/demo/backups" && method === "POST") {
+  if ((route === "/demo/backups" || route === "/backups") && method === "GET") return company.backups as T;
+  if ((route === "/demo/backups" || route === "/backups") && method === "POST") {
     assertAdmin(token);
     const item: DemoBackup = { id: nextId(company.backups), date: new Date().toLocaleString("pt-BR"), file: `${company.code.toLowerCase()}_${Date.now()}.dump`, size: "43 MB", status: "Concluído" };
     updateCompany(state, companyId, current => ({ ...current, backups: [item, ...current.backups] }));
@@ -1061,34 +1844,38 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       details: item.file
     });
     saveState(state);
-    return { message: "Backup gerado com sucesso em modo demonstração.", backup: item } as T;
+    return { message: "Backup registrado com sucesso.", path: item.file, backup: item } as T;
   }
   if (route === "/demo/closing" && method === "GET") {
-    const competency = company.closing.competency ?? "2026-06";
-    return { ...company.closing, warnings: missingBenefitDistributions(state, companyId, competency).map(item => `${item.employee_name} - ${item.benefit}`) } as T;
+    const competency = params.get("competency") ?? company.closing.competency ?? "2026-06";
+    const closing = getClosingFor(state, companyId, competency);
+    return { ...closing, warnings: missingBenefitDistributions(state, companyId, competency).map(item => `${item.employee_name} - ${item.benefit}`) } as T;
   }
   if (route === "/demo/closing" && method === "POST") {
     assertAdmin(token);
-    const payload = body<{ status: "OPEN" | "CLOSED"; justification?: string }>(options);
-    const missing = missingBenefitDistributions(state, companyId, company.closing.competency ?? "2026-06");
+    const payload = body<{ competency?: string; status: "OPEN" | "CLOSED"; justification?: string }>(options);
+    const competency = payload.competency ?? company.closing.competency ?? "2026-06";
+    const currentClosing = getClosingFor(state, companyId, competency);
+    const missing = missingBenefitDistributions(state, companyId, competency);
     if (payload.status === "CLOSED" && missing.length && !String(payload.justification ?? "").trim()) {
       throw new Error(`Há benefícios pendentes para fechamento: ${missing.map(item => `${item.employee_name} (${item.benefit})`).join(", ")}. Informe a justificativa para registrar a pendência.`);
     }
-    updateCompany(state, companyId, current => ({ ...current, closing: { ...current.closing, status: payload.status } }));
+    const updatedClosing: DemoClosing = { ...currentClosing, competency, status: payload.status };
+    setClosingFor(state, companyId, updatedClosing);
     appendAudit(state, {
       company_id: companyId,
       module: "Fechamento",
       action: payload.status === "CLOSED" ? "Competência fechada" : "Competência reaberta",
       performed_by: currentUser.full_name,
       performed_role: currentUser.role,
-      details: payload.status === "CLOSED" ? `Status alterado para ${payload.status}${payload.justification ? ` | Justificativa: ${payload.justification}` : ""}` : `Status alterado para ${payload.status}`
+      details: payload.status === "CLOSED" ? `${competency} | Status alterado para ${payload.status}${payload.justification ? ` | Justificativa: ${payload.justification}` : ""}` : `${competency} | Status alterado para ${payload.status}`
     });
     if (payload.status === "CLOSED" && payload.justification) {
       state.movements = [
         {
           id: nextId(state.movements),
           company_id: companyId,
-          competency: company.closing.competency ?? "2026-06",
+          competency,
           employee_id: 0,
           employee_name: "Sistema",
           type: "afastamento",
@@ -1104,13 +1891,13 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       ];
     }
     saveState(state);
-    return { ...getCompany(state, companyId).closing, warnings: missingBenefitDistributions(state, companyId, company.closing.competency ?? "2026-06").map(item => `${item.employee_name} - ${item.benefit}`) } as T;
+    return { ...getClosingFor(state, companyId, competency), warnings: missingBenefitDistributions(state, companyId, competency).map(item => `${item.employee_name} - ${item.benefit}`) } as T;
   }
   if (route === "/demo/report-preview" && method === "GET") {
     const scopedEmployees = scopeEmployees(state, companyId);
     const scopedMovements = scopeMovements(state, companyId);
     const competency = params.get("competency") ?? "2026-06";
-    return { company: company.settings.company_name, company_logo: company.settings.company_logo ?? "", competency, cards: dashboardCards(scopedEmployees, scopedMovements, competency, companyBenefitDistributionsFor(state, companyId, competency)) } as T;
+    return { company: company.settings.company_name, company_logo: company.settings.company_logo ?? "", competency, cards: dashboardCards(scopedEmployees, scopedMovements, competency, companyBenefitDistributionsFor(state, companyId, competency), settingsByCompany(state), scopeResultCenters(state, companyId).filter(item => item.active)) } as T;
   }
   if (route === "/demo/import-preview" && method === "POST") {
     assertAdmin(token);
@@ -1118,7 +1905,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       rows: 18,
       valid: 14,
       errors: ["CPF duplicado na linha 4", "Centro de Resultado inválido na linha 7", "Campo obrigatório ausente na linha 11", "Valor numérico inválido na linha 16"],
-      message: "Prévia gerada em modo demonstração."
+      message: "Prévia gerada com sucesso."
     } as T;
   }
 

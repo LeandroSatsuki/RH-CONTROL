@@ -1,12 +1,17 @@
 import { DashboardCard, ResultCenter } from "../types";
-import { demoCompanies, demoEmploymentTypes, demoResultCenters } from "./demoData";
+import { demoCompanies, demoResultCenters } from "./demoData";
 import { DemoBenefitDistribution, DemoEmployee, DemoMovement, IndicatorSummary, PayrollRow, DemoSettings } from "./demoTypes";
 
-export function payrollRows(employees: DemoEmployee[], competency = "2026-06", benefitDistributions: DemoBenefitDistribution[] = []): PayrollRow[] {
+export function payrollRows(
+  employees: DemoEmployee[],
+  competency = "2026-06",
+  benefitDistributions: DemoBenefitDistribution[] = [],
+  settingsByCompany: Record<number, DemoSettings> = {}
+): PayrollRow[] {
   const [year, month] = competency.split("-").map(Number);
   return employees.filter(item => item.status !== "INACTIVE").map(employee => {
     const company = demoCompanies.find(item => item.id === employee.company_id) ?? demoCompanies[0];
-    const rates = company.settings.payroll_rates;
+    const rates = settingsByCompany[employee.company_id]?.payroll_rates ?? company.settings.payroll_rates;
     const benefitMap = benefitDistributions
       .filter(item => item.employee_id === employee.id && item.competency === competency)
       .reduce<Record<string, DemoBenefitDistribution[]>>((acc, item) => {
@@ -17,7 +22,7 @@ export function payrollRows(employees: DemoEmployee[], competency = "2026-06", b
     const salary = employee.employment_type.name === "CLT" ? employee.salary_base : 0;
     const proLabore = employee.employment_type.name === "Pró-labore" ? employee.salary_base : 0;
     const profitDistribution = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
-    const costAid = employee.employment_type.name === "CLT" ? 320 : Math.round(employee.salary_base * 0.08);
+    const costAid = Number(employee.cost_aid ?? 0);
     const transport = sumBenefit(benefitMap["vale transporte"] ?? []);
     const meal = sumBenefit(benefitMap["alimentacao"] ?? []);
     const lodging = employee.benefits.some(item => normalizeLabel(item) === "hospedagem") ? (employee.result_center.code === "DIR" ? 900 : 550) : 0;
@@ -62,14 +67,16 @@ export function payrollRows(employees: DemoEmployee[], competency = "2026-06", b
 }
 
 export function recalculatePayrollRow(row: PayrollRow, rates: DemoSettings["payroll_rates"]): PayrollRow {
-  const subtotalEarnings = roundMoney(row.salary + row.pro_labore + row.profit_distribution + row.cost_aid + row.transport + row.meal + row.lodging + row.insurance + row.health_plan);
-  const inss = roundMoney(subtotalEarnings * (rates.inss / 100));
-  const rat = roundMoney(subtotalEarnings * (rates.rat / 100));
-  const terceiros = roundMoney(subtotalEarnings * (rates.terceiros / 100));
-  const fgts = roundMoney(subtotalEarnings * (rates.fgts / 100));
+  const subtotalEarnings = roundMoney(row.salary + row.pro_labore + row.profit_distribution + row.cost_aid);
+  const benefitTotal = roundMoney(row.transport + row.meal + row.lodging + row.insurance + row.health_plan);
+  const chargeBase = subtotalEarnings;
+  const inss = roundMoney(chargeBase * (rates.inss / 100));
+  const rat = roundMoney(chargeBase * (rates.rat / 100));
+  const terceiros = roundMoney(chargeBase * (rates.terceiros / 100));
+  const fgts = roundMoney(chargeBase * (rates.fgts / 100));
   const charges = roundMoney(inss + rat + terceiros + fgts);
 
-  const salaryBase = subtotalEarnings;
+  const salaryBase = chargeBase;
   const vacation = roundMoney(salaryBase / 12);
   const vacationThird = roundMoney(vacation / 3);
   const fgtsVacation = roundMoney((vacation + vacationThird) * (rates.fgts_vacation / 100));
@@ -80,9 +87,9 @@ export function recalculatePayrollRow(row: PayrollRow, rates: DemoSettings["payr
   const fgtsFine = roundMoney((fgts + fgtsVacation + fgtsThirteenthSalary + fgtsNotice) * (rates.multa_fgts / 100));
   const employerContribution = roundMoney((vacation + vacationThird + thirteenthSalary + noticeIndemnity) * (rates.patronal / 100));
   const totalProvisions = roundMoney(vacation + vacationThird + fgtsVacation + thirteenthSalary + fgtsThirteenthSalary + noticeIndemnity + fgtsNotice + fgtsFine + employerContribution);
-  const grossPayroll = subtotalEarnings;
+  const grossPayroll = roundMoney(subtotalEarnings + benefitTotal);
   const netPayroll = roundMoney(subtotalEarnings + charges);
-  const totalCost = roundMoney(subtotalEarnings + charges + totalProvisions);
+  const totalCost = roundMoney(subtotalEarnings + charges + totalProvisions + benefitTotal);
 
   return {
     ...row,
@@ -122,16 +129,26 @@ export function centerSummary(rows: PayrollRow[], centers: ResultCenter[] = demo
   });
 }
 
-export function dashboardCards(employees: DemoEmployee[], movements: DemoMovement[], competency = "2026-06", benefitDistributions: DemoBenefitDistribution[] = []): DashboardCard[] {
-  const rows = payrollRows(employees, competency, benefitDistributions);
+export function dashboardCards(
+  employees: DemoEmployee[],
+  movements: DemoMovement[],
+  competency = "2026-06",
+  benefitDistributions: DemoBenefitDistribution[] = [],
+  settingsByCompany: Record<number, DemoSettings> = {},
+  availableCenters: ResultCenter[] = demoResultCenters
+): DashboardCard[] {
+  const rows = payrollRows(employees, competency, benefitDistributions, settingsByCompany);
   const [year, month] = competency.split("-").map(Number);
-  return demoResultCenters.map(center => {
-    const centerEmployees = employees.filter(item => item.result_center.id === center.id && item.status !== "INACTIVE");
-    const centerRows = rows.filter(row => row.result_center.id === center.id);
-    const centerMovements = movements.filter(item => item.competency === competency && item.result_center.id === center.id);
-    const byType = demoEmploymentTypes.reduce<Record<string, number>>((acc, type) => {
-      const count = centerEmployees.filter(employee => employee.employment_type.id === type.id).length;
-      if (count) acc[type.name] = count;
+  const centers = availableCenters.filter((center, index) => availableCenters.findIndex(candidate => candidate.code === center.code) === index);
+  employees.forEach(employee => {
+    if (!centers.some(center => center.code === employee.result_center.code)) centers.push(employee.result_center);
+  });
+  return centers.map(center => {
+    const centerEmployees = employees.filter(item => item.result_center.code === center.code && item.status !== "INACTIVE");
+    const centerRows = rows.filter(row => row.result_center.code === center.code);
+    const centerMovements = movements.filter(item => item.competency === competency && item.result_center.code === center.code);
+    const byType = centerEmployees.reduce<Record<string, number>>((acc, employee) => {
+      acc[employee.employment_type.name] = (acc[employee.employment_type.name] ?? 0) + 1;
       return acc;
     }, {});
     const admissions = centerMovements.filter(item => item.type === "admissão").length;
@@ -158,8 +175,14 @@ export function dashboardCards(employees: DemoEmployee[], movements: DemoMovemen
   });
 }
 
-export function consolidatedIndicators(employees: DemoEmployee[], movements: DemoMovement[], competency = "2026-06", benefitDistributions: DemoBenefitDistribution[] = []): IndicatorSummary {
-  const rows = payrollRows(employees, competency, benefitDistributions);
+export function consolidatedIndicators(
+  employees: DemoEmployee[],
+  movements: DemoMovement[],
+  competency = "2026-06",
+  benefitDistributions: DemoBenefitDistribution[] = [],
+  settingsByCompany: Record<number, DemoSettings> = {}
+): IndicatorSummary {
+  const rows = payrollRows(employees, competency, benefitDistributions, settingsByCompany);
   const active = employees.filter(item => item.status !== "INACTIVE").length;
   const competencyMovements = movements.filter(item => item.competency === competency);
   const admissions = competencyMovements.filter(item => item.type === "admissão").length;

@@ -17,5 +17,9 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 consultas/~$*.xlsx
 logs/
+tmp/
+deploy/package/
+installer/payload/
+entregas/
 .idea/
 .vscode/

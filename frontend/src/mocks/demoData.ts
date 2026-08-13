@@ -22,7 +22,13 @@ export const demoCompetencies: Competency[] = [
   { id: "2026-03", label: "Mar/2026", status: "CLOSED" },
   { id: "2026-04", label: "Abr/2026", status: "CLOSED" },
   { id: "2026-05", label: "Mai/2026", status: "OPEN" },
-  { id: "2026-06", label: "Jun/2026", status: "OPEN" }
+  { id: "2026-06", label: "Jun/2026", status: "OPEN" },
+  { id: "2026-07", label: "Jul/2026", status: "OPEN" },
+  { id: "2026-08", label: "Ago/2026", status: "OPEN" },
+  { id: "2026-09", label: "Set/2026", status: "OPEN" },
+  { id: "2026-10", label: "Out/2026", status: "OPEN" },
+  { id: "2026-11", label: "Nov/2026", status: "OPEN" },
+  { id: "2026-12", label: "Dez/2026", status: "OPEN" }
 ];
 
 export const demoBenefitDefinitions: DemoBenefitDefinition[] = [
@@ -87,6 +93,7 @@ export const demoCompanies: DemoCompany[] = [
     group: "Grupo Alfa",
     parent_company_id: null,
     active: true,
+    is_primary: true,
     settings: buildSettings(
       "Alfa Matriz Ltda.",
       "12.345.678/0001-90",
@@ -122,6 +129,7 @@ export const demoCompanies: DemoCompany[] = [
     group: "Grupo Alfa",
     parent_company_id: 1,
     active: true,
+    is_primary: false,
     settings: buildSettings(
       "Alfa Filial Indústria",
       "12.345.678/0002-71",
@@ -157,6 +165,7 @@ export const demoCompanies: DemoCompany[] = [
     group: "Grupo Beta",
     parent_company_id: null,
     active: true,
+    is_primary: false,
     settings: buildSettings(
       "Beta Industrial S.A.",
       "45.987.321/0001-55",
@@ -191,6 +200,7 @@ export const demoCompanies: DemoCompany[] = [
     group: "Grupo Gamma",
     parent_company_id: null,
     active: true,
+    is_primary: false,
     settings: buildSettings(
       "Gamma Comércio Ltda.",
       "78.901.234/0001-11",
@@ -375,6 +385,7 @@ export function createDemoEmployees(): DemoEmployee[] {
       employment_type: type,
       result_center: center,
       salary_base: Math.round(salaryBase),
+      cost_aid: 0,
       email: `${name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ".")}@empresa-demo.com.br`,
       phone: `(11) 9${String(80000000 + index * 2317).slice(0, 8)}`,
       salary_history: [
