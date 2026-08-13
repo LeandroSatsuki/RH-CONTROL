@@ -19,12 +19,13 @@ try {
     # Uvicorn envia logs INFO para stderr. No PowerShell 5.1, com a preferencia
     # Stop, isso vira NativeCommandError e encerra uma API que iniciou normalmente.
     $ErrorActionPreference = "Continue"
-    & $Python -m uvicorn app.main:app --host 0.0.0.0 --port $Port 1>> $OutputLog 2>> $ErrorLog
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        "API encerrada com codigo $exitCode em $(Get-Date -Format s)." | Add-Content -LiteralPath $ErrorLog
+    while ($true) {
+        "Iniciando API em $(Get-Date -Format s)." | Add-Content -LiteralPath $OutputLog
+        & $Python -m uvicorn app.main:app --host 0.0.0.0 --port $Port 1>> $OutputLog 2>> $ErrorLog
+        $exitCode = $LASTEXITCODE
+        "API encerrada com codigo $exitCode em $(Get-Date -Format s). Reinicio em 5 segundos." | Add-Content -LiteralPath $ErrorLog
+        Start-Sleep -Seconds 5
     }
-    exit $exitCode
 } finally {
     Pop-Location
 }
