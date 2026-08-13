@@ -59,6 +59,16 @@ header { min-height: 72px; display: flex; flex-wrap: wrap; align-items: center; 
 header > div { display: grid; text-align: right; line-height: 1.2; }
 header small { color: var(--muted); font-size: 11px; font-weight: 600; }
 .company-switch { width: min(100%, 290px); }
+.notification-menu { position: relative; display: block; }
+.notification-button { position: relative; display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); font-size: 17px; }
+.notification-button b { position: absolute; top: -5px; right: -6px; min-width: 18px; border-radius: 99px; background: #c83b3b; color: #fff; padding: 2px 5px; font-size: 10px; line-height: 1.1; }
+.notification-popover { position: absolute; z-index: 20; top: calc(100% + 9px); right: 0; width: min(390px, calc(100vw - 36px)); display: grid; gap: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 16px 34px rgba(15, 23, 42, .2); text-align: left; }
+.notification-popover > strong { padding: 2px 4px 6px; font-size: 13px; }
+.notification-popover > p { margin: 2px 4px; color: var(--muted); font-size: 12px; }
+.notification-popover button:not(.notification-button) { display: flex; align-items: start; gap: 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text); padding: 8px 6px; text-align: left; font-size: 12px; }
+.notification-popover button:not(.notification-button):hover { background: var(--surface-2); }
+.notification-popover button span:last-child { flex: 1; line-height: 1.35; }
+.notification-popover .notification-more { justify-content: center; color: var(--primary); font-weight: 800; }
 .role, .status { width: fit-content; border-radius: 99px; background: #e7f2ed; color: #237051; font-size: 11px; font-weight: 700; padding: 5px 9px; }
 :root[data-theme="dark"] .role, :root[data-theme="dark"] .status { background: #1e4438; color: #92d3ba; }
 .status-pill, .severity-pill { width: fit-content; border-radius: 99px; font-size: 11px; font-weight: 700; padding: 5px 9px; }
@@ -87,6 +97,7 @@ button.primary { border: 0; border-radius: 8px; background: var(--primary); colo
 button.primary:hover { background: var(--primary-hover); }
 button.secondary, button.ghost { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 13px; font-weight: 700; font-size: 13px; }
 button.secondary:hover, button.ghost:hover { border-color: #9bb8d6; }
+button.danger { border: 1px solid #d15757; border-radius: 8px; background: #fff5f5; color: #a82a2a; padding: 10px 13px; font-weight: 700; font-size: 13px; }
 button.full { width: 100%; justify-content: center; margin-top: 14px; }
 button.right { float: right; }
 button:disabled { opacity: .6; cursor: wait; }

@@ -99,6 +99,10 @@ export function MovementsPage({ token, user }: { token: string; user: User }) {
     {selected && <MovementDrawer item={selected} token={token} user={user} onClose={() => setSelected(null)} onSaved={updated => {
       setSelected(updated);
       void load();
+    }} onDeleted={() => {
+      setSelected(null);
+      fb.notify("Movimentação excluída e registrada na auditoria.");
+      void load();
     }} />}
     {createOpen && (
       <MovementCreateModal
@@ -658,7 +662,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
   </PageShell>;
 }
 
-export function AlertsPage({ token }: { token: string; user: User }) {
+export function AlertsPage({ token, onPage }: { token: string; user: User; onPage: (page: "employees" | "mei-contracts") => void }) {
   const { selectedCompany } = useDemoScope();
   const [items, setItems] = useState<DemoAlert[]>([]);
   const [type, setType] = useState("");
@@ -691,7 +695,11 @@ export function AlertsPage({ token }: { token: string; user: User }) {
     return acc;
   }, {});
 
-  return <PageShell title="Alertas" subtitle="Lembretes práticos para férias, retornos e revisões pendentes." error={fb.error}>
+  function openCorrectiveAction(item: DemoAlert) {
+    onPage(item.type.includes("Contrato") ? "mei-contracts" : "employees");
+  }
+
+  return <PageShell title="Alertas" subtitle="Pendências abertas, atualizadas automaticamente após a ação corretiva." error={fb.error}>
     <div className="summary-grid">
       <Summary label="Alertas" value={String(filtered.length)} />
       <Summary label="Tipos" value={String(Object.keys(counts).length)} />
@@ -702,10 +710,10 @@ export function AlertsPage({ token }: { token: string; user: User }) {
       <select value={type} onChange={event => setType(event.target.value)}><option value="">Todos os tipos</option>{["Férias vencendo", "Retorno de afastamento", "Contrato próximo do vencimento", "Contrato não assinado", "Ajuste pendente"].map(item => <option key={item}>{item}</option>)}</select>
       <select value={severity} onChange={event => setSeverity(event.target.value)}><option value="">Todas as prioridades</option><option>Baixa</option><option>Média</option><option>Alta</option></select>
     </div>
-    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Os alertas servem para lembrar o usuário do que precisa de atenção.</p>
+    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Clique em um alerta para abrir a tela da ação corretiva; quando a pendência for resolvida, ele deixa de aparecer.</p>
     <DataTable loading={loading} empty="Nenhum alerta encontrado.">
       <table><thead><tr><th>Empresa</th><th>CR</th><th>Colaborador</th><th>Tipo</th><th>Vencimento</th><th>Prioridade</th><th>Mensagem</th></tr></thead>
-      <tbody>{filtered.map(item => <tr key={item.id}><td>{item.company_name}</td><td>{item.result_center.code}</td><td>{item.employee_name}</td><td>{item.type}</td><td>{item.due_date}</td><td><span className={severityClass(item.severity)}>{item.severity}</span></td><td>{item.message}</td></tr>)}</tbody></table>
+      <tbody>{filtered.map(item => <tr key={item.id} className="clickable" onClick={() => openCorrectiveAction(item)}><td>{item.company_name}</td><td>{item.result_center.code}</td><td>{item.employee_name}</td><td>{item.type}</td><td>{item.due_date}</td><td><span className={severityClass(item.severity)}>{item.severity}</span></td><td>{item.message}</td></tr>)}</tbody></table>
     </DataTable>
   </PageShell>;
 }
@@ -715,48 +723,54 @@ export function AuditPage({ token, user }: { token: string; user: User }) {
   const [items, setItems] = useState<DemoAuditEntry[]>([]);
   const [module, setModule] = useState("");
   const [query, setQuery] = useState("");
+  const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const fb = useFeedback();
 
-  useEffect(() => {
-    let active = true;
-    async function load() {
-      setLoading(true);
-      fb.setError("");
-      try {
-        const response = await api<DemoAuditEntry[]>("/demo/audit-logs", {}, token);
-        if (active) setItems(response);
-      } catch (err) {
-        if (active) fb.fail(err instanceof Error ? err.message : "Erro ao carregar auditoria");
-      } finally {
-        if (active) setLoading(false);
-      }
-    }
-    void load();
-    return () => { active = false; };
-  }, [token, selectedCompany.id]);
+  useEffect(() => { setItems([]); setSearched(false); }, [selectedCompany.id]);
 
-  const filtered = items.filter(item => (!module || item.module === module) && (!query || `${item.action} ${item.details} ${item.employee_name ?? ""} ${item.performed_by}`.toLowerCase().includes(query.toLowerCase())));
+  async function search(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!module && !query.trim()) {
+      fb.fail("Informe um módulo ou um termo para consultar a auditoria.");
+      return;
+    }
+    setLoading(true);
+    fb.setError("");
+    try {
+      const params = new URLSearchParams({ limit: "100" });
+      if (module) params.set("module", module);
+      if (query.trim()) params.set("query", query.trim());
+      const response = await api<DemoAuditEntry[]>(`/demo/audit-logs?${params.toString()}`, {}, token);
+      setItems(response);
+      setSearched(true);
+    } catch (err) {
+      fb.fail(err instanceof Error ? err.message : "Erro ao consultar auditoria");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return <PageShell title="Auditoria" subtitle="Registro do que foi alterado e por quem, para rastrear histórico e decisões." error={fb.error}>
     <div className="summary-grid">
-      <Summary label="Registros" value={String(filtered.length)} />
-      <Summary label="Módulos" value={String(new Set(filtered.map(item => item.module)).size)} />
-      <Summary label="Usuários" value={String(new Set(filtered.map(item => item.performed_by)).size)} strong />
+      <Summary label="Registros" value={searched ? String(items.length) : "-"} />
+      <Summary label="Módulos" value={searched ? String(new Set(items.map(item => item.module)).size) : "-"} />
+      <Summary label="Usuários" value={searched ? String(new Set(items.map(item => item.performed_by)).size) : "-"} strong />
     </div>
-    <div className="panel filters-panel">
+    <form className="panel filters-panel" onSubmit={search}>
       <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por ação, detalhe ou usuário" />
       <select value={module} onChange={event => setModule(event.target.value)}><option value="">Todos os módulos</option>{["Colaboradores", "Movimentações", "Contratos MEI", "Custos", "Configurações", "Backup", "Fechamento"].map(item => <option key={item}>{item}</option>)}</select>
-    </div>
-    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Usuário logado: <strong>{user.full_name}</strong>.</p>
-    <DataTable loading={loading} empty="Nenhum registro de auditoria encontrado.">
+      <button className="primary" type="submit" disabled={loading}>Consultar</button>
+    </form>
+    <p className="note">Empresa selecionada: <strong>{selectedCompany.name}</strong>. Usuário logado: <strong>{user.full_name}</strong>. Para manter a auditoria leve, nenhum histórico é carregado antes da consulta e o retorno é limitado a 100 registros.</p>
+    {searched && <DataTable loading={loading} empty="Nenhum registro encontrado para os filtros informados.">
       <table><thead><tr><th>Data</th><th>Módulo</th><th>Ação</th><th>Empresa</th><th>Colaborador</th><th>Usuário</th><th>Detalhes</th></tr></thead>
-      <tbody>{filtered.map(item => <tr key={item.id}><td>{item.created_at}</td><td>{item.module}</td><td>{item.action}</td><td>{item.company_name}</td><td>{item.employee_name ?? "-"}</td><td>{item.performed_by}</td><td>{item.details}</td></tr>)}</tbody></table>
-    </DataTable>
+      <tbody>{items.map(item => <tr key={item.id}><td>{item.created_at}</td><td>{item.module}</td><td>{item.action}</td><td>{item.company_name}</td><td>{item.employee_name ?? "-"}</td><td>{item.performed_by}</td><td>{item.details}</td></tr>)}</tbody></table>
+    </DataTable>}
   </PageShell>;
 }
 
-function MovementDrawer({ item, token, user, onClose, onSaved }: { item: DemoMovement; token: string; user: User; onClose: () => void; onSaved: (movement: DemoMovement) => void }) {
+function MovementDrawer({ item, token, user, onClose, onSaved, onDeleted }: { item: DemoMovement; token: string; user: User; onClose: () => void; onSaved: (movement: DemoMovement) => void; onDeleted: () => void }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -797,6 +811,23 @@ function MovementDrawer({ item, token, user, onClose, onSaved }: { item: DemoMov
     }
   }
 
+  async function remove() {
+    if (user.role !== "ADMIN") return;
+    const password = window.prompt("Informe sua senha para confirmar a exclusão desta movimentação.");
+    if (!password) return;
+    if (!window.confirm("Excluir esta movimentação? Esta ação não pode ser desfeita.")) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api(`/demo/movements/${item.id}`, { method: "DELETE", body: JSON.stringify({ password }) }, token);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir movimentação");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer wide" onClick={event => event.stopPropagation()}>
     <button className="ghost right" onClick={onClose}>Fechar</button>
     <span className="eyebrow">{item.competency}</span>
@@ -819,7 +850,7 @@ function MovementDrawer({ item, token, user, onClose, onSaved }: { item: DemoMov
       <label>Status<select name="status" defaultValue={item.status} required><option value="Pendente">Pendente</option><option value="Conferida">Conferida</option><option value="Aplicada">Aplicada</option></select></label>
       <label className="span-2">Observação<input name="observation" defaultValue={item.observation} required /></label>
       <label className="span-2">Senha de confirmação<input name="password" type="password" required /></label>
-      <button className="primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button>
+      <div className="actions"><button className="primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button><button className="danger" type="button" onClick={() => void remove()} disabled={saving}>Excluir movimentação</button></div>
       {error && <p className="error-line span-2">{error}</p>}
       {success && <p className="success-line span-2">{success}</p>}
     </form> : <p className="note">Seu perfil possui acesso somente para consulta.</p>}

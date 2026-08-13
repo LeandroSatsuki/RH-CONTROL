@@ -304,7 +304,7 @@ export default function App() {
 
   return (
     <DemoScopeProvider companies={companies}>
-      <Layout user={user} page={page} onPage={setPage} onLogout={logout} localMode={localMode}>
+      <Layout user={user} token={token} page={page} onPage={setPage} onLogout={logout} localMode={localMode}>
         {updateStatus && (
           <div className={`update-banner update-${updateStatus.state}`}>
             <span>{updateStatus.message}</span>
@@ -316,7 +316,7 @@ export default function App() {
           </div>
         )}
         {page === "dashboard" && <DashboardPage token={token} />}
-        {page === "alerts" && <AlertsPage token={token} user={user} />}
+        {page === "alerts" && <AlertsPage token={token} user={user} onPage={setPage} />}
         {page === "audit" && <AuditPage token={token} user={user} />}
         {page === "employees" && <EmployeesPage token={token} user={user} />}
         {page === "movements" && <MovementsPage token={token} user={user} />}

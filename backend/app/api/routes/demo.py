@@ -593,6 +593,21 @@ def update_movement(movement_id: int, payload: dict[str, Any], db: DbSession, us
     return movement_to_dict(movement)
 
 
+@router.delete("/movements/{movement_id}")
+def delete_movement(movement_id: int, payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1) -> dict[str, bool]:
+    if not verify_password(str(payload.get("password") or ""), user.password_hash):
+        raise HTTPException(status_code=403, detail="Senha de confirmação inválida.")
+    query = select(Movement).where(Movement.id == movement_id)
+    if company_id != 0:
+        query = query.where(Movement.company_id == company_id)
+    movement = db.scalar(query)
+    if not movement:
+        raise HTTPException(status_code=404, detail="Movimentação não encontrada")
+    db.delete(movement)
+    db.commit()
+    return {"deleted": True}
+
+
 @router.get("/mei-contracts")
 def list_mei_contracts(db: DbSession, _: CurrentUser, company_id: int = 1) -> list[dict[str, Any]]:
     query = (
