@@ -82,6 +82,7 @@ function shouldScopePath(path: string) {
   return !path.startsWith("/auth")
     && !path.startsWith("/setup")
     && !path.startsWith("/companies")
+    && !path.startsWith("/chat")
     && !path.startsWith("/health");
 }
 

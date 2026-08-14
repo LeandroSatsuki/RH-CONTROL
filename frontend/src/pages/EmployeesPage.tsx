@@ -22,6 +22,7 @@ interface EmployeeDraft {
   result_center_id: string;
   employment_type_id: string;
   salary_base: string;
+  gratification: string;
   cost_aid: string;
   benefits: string[];
   cep: string;
@@ -56,6 +57,7 @@ function createEmployeeDraft(settings: DemoSettings | null, centers: ResultCente
     result_center_id: String(companyCenters[0]?.id ?? ""),
     employment_type_id: String(companyTypes[0]?.id ?? ""),
     salary_base: "0",
+    gratification: "0",
     cost_aid: "0",
     benefits: [],
     cep: "",
@@ -305,6 +307,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       await api(`/employees?company_id=${draftCompanyId}`, {
         method: "POST",
         body: JSON.stringify({
+          company_id: draftCompanyId,
           full_name: draft.full_name,
           cpf: cpfDigits,
           employee_code: generatedEmployeeCode,
@@ -316,6 +319,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
           employment_type_id: draft.employment_type_id,
           result_center_id: draft.result_center_id,
           salary_base: Number(draft.salary_base || 0),
+          gratification: Number(draft.gratification || 0),
           cost_aid: draft.benefits.includes("Ajuda de custo") ? Number(draft.cost_aid || 0) : 0,
           cep: draft.cep.replace(/\D/g, ""),
           street: draft.street,
@@ -420,6 +424,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       "SUPERVISOR": item.supervisor_name,
       "MODALIDADE": item.employment_type.name,
       "SALARIO": item.salary_base,
+      "GRATIFICACAO": item.gratification,
       "CEP": item.cep,
       "RUA": item.street,
       "NUMERO": item.address_number,
@@ -481,6 +486,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
             employment_type_id: type.id,
             result_center_id: center.id,
             salary_base: normalized.salario,
+            gratification: normalized.gratificacao,
             cep: normalized.cep,
             street: normalized.rua,
             address_number: normalized.numero,
@@ -553,6 +559,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <label>Supervisor<select value={draft.supervisor_name} onChange={event => setDraft(current => ({ ...current, supervisor_name: event.target.value }))}><option value="">Selecione</option>{draftSupervisorOptions.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
       <label>Modalidade<select value={draft.employment_type_id} onChange={event => setDraft(current => ({ ...current, employment_type_id: event.target.value }))} required><option value="">Selecione</option>{companyTypes.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
       <label>Salário base<input value={draft.salary_base} onChange={event => setDraft(current => ({ ...current, salary_base: event.target.value }))} type="number" step="100" required /></label>
+      <label>Gratificação<input value={draft.gratification} onChange={event => setDraft(current => ({ ...current, gratification: event.target.value }))} type="number" min="0" step="0.01" /></label>
       <h3 className="span-2 form-section-title">Endereço</h3>
       <label className="span-2">CEP<input value={draft.cep} onChange={event => setDraft(current => ({ ...current, cep: event.target.value.replace(/\D/g, "") }))} placeholder="00000000" maxLength={8} inputMode="numeric" required /></label>
       <label className="span-2">Rua<input value={draft.street} onChange={event => setDraft(current => ({ ...current, street: upperText(event.target.value) }))} placeholder="Logradouro" readOnly={addressLocked} /></label>
@@ -617,8 +624,8 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
 
     <div className="panel table-wrap">
       {loading && <div className="inline-loading">Carregando colaboradores...</div>}
-      <table><thead><tr>{selectedCompany.id === 0 && <th>Empresa</th>}<th>Matrícula</th><th>Colaborador</th><th>CPF/CNPJ</th><th>Cargo</th><th>CR</th><th>Modalidade</th><th>Salário</th><th>Admissão</th><th>Status</th></tr></thead>
-      <tbody>{filtered.map(item => <tr key={item.id} onClick={() => setSelected(item)} className="clickable">{selectedCompany.id === 0 && <td>{companies.find(company => company.id === item.company_id)?.code ?? item.company_id}</td>}<td>{item.employee_code}</td><td><strong>{item.employee.full_name}</strong></td><td>{formatDocument(item.employee.cpf)}</td><td>{item.job_title}</td><td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td><td>{item.employment_type.name}</td><td>{money.format(item.salary_base)}</td><td>{date(item.admission_date)}</td><td><span className={statusClass(item.status)}>{statusLabel(item.status)}</span></td></tr>)}</tbody></table>
+      <table><thead><tr>{selectedCompany.id === 0 && <th>Empresa</th>}<th>Matrícula</th><th>Colaborador</th><th>CPF/CNPJ</th><th>Cargo</th><th>CR</th><th>Modalidade</th><th>Salário</th><th>Gratificação</th><th>Admissão</th><th>Status</th></tr></thead>
+      <tbody>{filtered.map(item => <tr key={item.id} onClick={() => setSelected(item)} className="clickable">{selectedCompany.id === 0 && <td>{companies.find(company => company.id === item.company_id)?.code ?? item.company_id}</td>}<td>{item.employee_code}</td><td><strong>{item.employee.full_name}</strong></td><td>{formatDocument(item.employee.cpf)}</td><td>{item.job_title}</td><td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td><td>{item.employment_type.name}</td><td>{money.format(item.salary_base)}</td><td>{money.format(item.gratification ?? 0)}</td><td>{date(item.admission_date)}</td><td><span className={statusClass(item.status)}>{statusLabel(item.status)}</span></td></tr>)}</tbody></table>
       {!filtered.length && !loading && <Empty>Nenhum colaborador encontrado.</Empty>}
     </div>
 
@@ -685,13 +692,16 @@ function EmployeeDrawer({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const history = [...(employee.salary_history ?? [])].sort((a, b) => salaryHistoryDate(b).localeCompare(salaryHistoryDate(a)));
-  const estimatedCost = employee.salary_base * (employee.employment_type.has_charges ? 1.72 : 1.18);
+  const estimatedCost = (employee.salary_base + Number(employee.gratification ?? 0)) * (employee.employment_type.has_charges ? 1.72 : 1.18);
   const salaryChanged = Number(draft.salary_base || 0) !== Number(employee.salary_base || 0);
   const pixMessage = editing ? validatePixKey(draft.pix_key_type, draft.pix_key) : "";
   const textMessage = editing ? validateEmployeeText(draft) : "";
   const targetCompanyId = Number(draft.company_id);
   const targetCenters = centers.filter(item => item.company_id === targetCompanyId && (item.active || item.id === Number(draft.result_center_id)));
   const targetTypes = types.filter(item => item.company_id === targetCompanyId && (item.active || item.id === Number(draft.employment_type_id)));
+  const editJobTitleOptions = jobTitleOptions.includes(draft.job_title)
+    ? jobTitleOptions
+    : [draft.job_title, ...jobTitleOptions].filter(Boolean);
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -723,6 +733,7 @@ function EmployeeDrawer({
           employment_type_id: draft.employment_type_id,
           result_center_id: draft.result_center_id,
           salary_base: salaryChanged && salaryMode === "history" ? employee.salary_base : Number(draft.salary_base || 0),
+          gratification: Number(draft.gratification || 0),
           cost_aid: benefitDraft.includes("Ajuda de custo") ? Number(draft.cost_aid || 0) : 0,
           salary_mode: salaryMode === "correction" ? "correction" : undefined,
           cep: draft.cep.replace(/\D/g, ""),
@@ -843,12 +854,13 @@ function EmployeeDrawer({
       <label>CPF/CNPJ<input value={formatDocument(draft.cpf_cnpj)} readOnly disabled /></label>
       <label>E-mail<input value={draft.email} onChange={event => setDraft(current => ({ ...current, email: event.target.value.trim() }))} type="email" /></label>
       <label>Telefone<input value={formatPixKey("PHONE", draft.phone)} onChange={event => setDraft(current => ({ ...current, phone: event.target.value.replace(/\D/g, "").slice(0, 11) }))} inputMode="numeric" /></label>
-      <label>Cargo / função<input list="employee-edit-job-titles" value={draft.job_title} onChange={event => setDraft(current => ({ ...current, job_title: upperText(event.target.value) }))} required /><datalist id="employee-edit-job-titles">{jobTitleOptions.map(title => <option key={title} value={title} />)}</datalist></label>
+      <label>Cargo / função<select value={draft.job_title} onChange={event => setDraft(current => ({ ...current, job_title: event.target.value }))} required><option value="">Selecione</option>{editJobTitleOptions.map(title => <option key={title} value={title}>{title}</option>)}</select></label>
       <label>Supervisor<select value={draft.supervisor_name} onChange={event => setDraft(current => ({ ...current, supervisor_name: event.target.value }))}><option value="">Selecione</option>{supervisorOptions.filter(name => name !== employee.employee.full_name).map(name => <option key={name} value={name}>{name}</option>)}</select></label>
       <label>Centro de Resultado<select value={draft.result_center_id} onChange={event => setDraft(current => ({ ...current, result_center_id: event.target.value }))} required>{targetCenters.map(item => <option key={item.id} value={item.id}>{item.code} - {item.name}</option>)}</select></label>
       <label>Modalidade<select value={draft.employment_type_id} onChange={event => setDraft(current => ({ ...current, employment_type_id: event.target.value }))} required>{targetTypes.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>Data de admissão<input value={draft.admission_date} onChange={event => setDraft(current => ({ ...current, admission_date: event.target.value }))} type="date" required /></label>
       <label>Salário base<input value={draft.salary_base} onChange={event => setDraft(current => ({ ...current, salary_base: event.target.value }))} type="number" step="0.01" required /></label>
+      <label>Gratificação<input value={draft.gratification} onChange={event => setDraft(current => ({ ...current, gratification: event.target.value }))} type="number" min="0" step="0.01" /></label>
       {salaryChanged && <fieldset className="span-2 benefits-fieldset">
         <legend>Tipo da alteração salarial</legend>
         <label className="check"><input type="radio" name="salary_mode" checked={salaryMode === "history"} onChange={() => setSalaryMode("history")} /> Ajuste salarial: cria histórico e movimentação</label>
@@ -886,6 +898,8 @@ function EmployeeDrawer({
       <Info label="Supervisor" value={employee.supervisor_name || "-"} />
       <Info label="Centro atual" value={`${employee.result_center.code} - ${employee.result_center.name}`} />
       <Info label="Modalidade" value={employee.employment_type.name} />
+      <Info label="Salário base" value={money.format(employee.salary_base)} />
+      <Info label="Gratificação" value={money.format(employee.gratification ?? 0)} />
       <Info label="Custo estimado do mês" value={money.format(estimatedCost)} />
       <Info label="Endereço" value={[employee.street, employee.address_number, employee.address_complement, employee.neighborhood, employee.city, employee.state].filter(Boolean).join(", ") || "-"} />
       <Info label="Banco" value={[employee.bank_code, employee.bank_name].filter(Boolean).join(" - ")} />
@@ -944,6 +958,7 @@ function employeeToDraft(employee: DemoEmployee): EmployeeDraft {
     result_center_id: String(employee.result_center.id),
     employment_type_id: String(employee.employment_type.id),
     salary_base: String(employee.salary_base ?? 0),
+    gratification: String(employee.gratification ?? 0),
     cost_aid: String(employee.cost_aid ?? 0),
     benefits: employee.benefits ?? [],
     cep: employee.cep ?? "",
@@ -1017,6 +1032,7 @@ function normalizeImportRow(row: Record<string, unknown>) {
     supervisor: upperText(get("SUPERVISOR")),
     modalidade: get("MODALIDADE", "TIPO CONTRATO", "CONTRATO"),
     salario: Number(String(get("SALARIO", "SALÁRIO")).replace(/\./g, "").replace(",", ".")) || 0,
+    gratificacao: Number(String(get("GRATIFICACAO", "GRATIFICAÇÃO")).replace(/\./g, "").replace(",", ".")) || 0,
     admissao: get("ADMISSAO", "ADMISSÃO", "DATA ADMISSAO", "DATA ADMISSÃO"),
     cep: get("CEP").replace(/\D/g, ""),
     rua: upperText(get("RUA", "LOGRADOURO")),

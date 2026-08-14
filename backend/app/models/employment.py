@@ -42,6 +42,7 @@ class Employment(Base):
     )
     daily_hours: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("8.80"), nullable=False)
     salary_base: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
+    gratification: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
     cost_aid: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
     notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
     email: Mapped[str] = mapped_column(String(180), default="", nullable=False)

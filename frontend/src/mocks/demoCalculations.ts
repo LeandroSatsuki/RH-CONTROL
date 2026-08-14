@@ -35,6 +35,7 @@ export function payrollRows(
       result_center: employee.result_center,
       employment_type: employee.employment_type,
       salary,
+      gratification: Number(employee.gratification ?? 0),
       pro_labore: proLabore,
       profit_distribution: profitDistribution,
       bonus: 0,
@@ -70,7 +71,7 @@ export function payrollRows(
 }
 
 export function recalculatePayrollRow(row: PayrollRow, rates: DemoSettings["payroll_rates"]): PayrollRow {
-  const subtotalEarnings = roundMoney(row.salary + row.pro_labore + row.profit_distribution + row.bonus + row.cost_aid);
+  const subtotalEarnings = roundMoney(row.salary + row.gratification + row.pro_labore + row.profit_distribution + row.bonus + row.cost_aid);
   const benefitTotal = roundMoney(row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan);
   const chargeBase = subtotalEarnings;
   const inss = roundMoney(chargeBase * (rates.inss / 100));

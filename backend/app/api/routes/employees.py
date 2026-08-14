@@ -47,8 +47,14 @@ def list_employees(
 
 
 @router.post("", response_model=EmploymentRead, status_code=201)
-def create_employee(payload: EmployeeCreate, db: DbSession, _: AdminUser) -> Employment:
-    if not db.get(Company, payload.company_id):
+def create_employee(
+    payload: EmployeeCreate,
+    db: DbSession,
+    _: AdminUser,
+    company_id: int | None = None,
+) -> Employment:
+    target_company_id = company_id if company_id is not None else payload.company_id
+    if not db.get(Company, target_company_id):
         raise HTTPException(status_code=404, detail="Empresa não encontrada")
     duplicate = db.scalar(select(Employee).where(Employee.cpf == payload.cpf))
     if duplicate:
@@ -62,14 +68,14 @@ def create_employee(payload: EmployeeCreate, db: DbSession, _: AdminUser) -> Emp
     result_center = db.get(ResultCenter, payload.result_center_id)
     if not result_center:
         raise HTTPException(status_code=404, detail="Centro de Resultado não encontrado")
-    if employment_type.company_id != payload.company_id:
+    if employment_type.company_id != target_company_id:
         raise HTTPException(status_code=409, detail="Modalidade não pertence à empresa selecionada")
-    if result_center.company_id != payload.company_id:
+    if result_center.company_id != target_company_id:
         raise HTTPException(status_code=409, detail="Centro de Resultado não pertence à empresa selecionada")
 
     data = payload.model_dump(exclude={"cpf", "full_name", "company_id"})
-    person = Employee(company_id=payload.company_id, cpf=payload.cpf, full_name=payload.full_name)
-    employment = Employment(company_id=payload.company_id, employee=person, **data)
+    person = Employee(company_id=target_company_id, cpf=payload.cpf, full_name=payload.full_name)
+    employment = Employment(company_id=target_company_id, employee=person, **data)
     employment.salary_history.append(
         SalaryHistory(
             effective_date=payload.admission_date,

@@ -1771,6 +1771,7 @@ def save_payroll_override(
         )
     allowed = {
         "salary",
+        "gratification",
         "pro_labore",
         "profit_distribution",
         "bonus",
@@ -2417,6 +2418,7 @@ def build_indicator_sheet(
     ]
     cost_keys = {
         "Salário": "salary",
+        "Gratificação": "gratification",
         "Prolabore": "pro_labore",
         "Dist. Lucro": "profit_distribution",
         "Premiação": "bonus",
@@ -2652,6 +2654,7 @@ def payroll_row(
         )
     )
     cost_aid = money(values.get("cost_aid", employment.cost_aid))
+    gratification = money(values.get("gratification", employment.gratification))
     transport = money(values.get("transport", benefits.get("VT", Decimal("0.00"))))
     meal = money(values.get("meal", benefits.get("AL", Decimal("0.00"))))
     basic_basket = money(values.get("basic_basket", benefits.get("CB", Decimal("0.00"))))
@@ -2660,7 +2663,9 @@ def payroll_row(
     profit_distribution = money(values.get("profit_distribution", 0))
     bonus = money(values.get("bonus", 0))
     lodging = money(values.get("lodging", 0))
-    subtotal = money(salary + pro_labore + profit_distribution + bonus + cost_aid)
+    subtotal = money(
+        salary + gratification + pro_labore + profit_distribution + bonus + cost_aid
+    )
     benefit_total = money(transport + meal + basic_basket + lodging + insurance + health_plan)
     inss = money(subtotal * Decimal(str(rates["inss"])) / 100)
     rat = money(subtotal * Decimal(str(rates["rat"])) / 100)
@@ -2704,6 +2709,7 @@ def payroll_row(
         "result_center": result_center_to_dict(employment),
         "employment_type": employment_type_to_dict(employment),
         "salary": as_float(salary),
+        "gratification": as_float(gratification),
         "pro_labore": as_float(pro_labore),
         "profit_distribution": as_float(profit_distribution),
         "bonus": as_float(bonus),

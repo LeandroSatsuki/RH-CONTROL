@@ -57,6 +57,7 @@ export interface Employment {
   status: "ACTIVE" | "INACTIVE" | "ON_LEAVE";
   daily_hours: string;
   salary_base: number;
+  gratification: number;
   cost_aid: number;
   notes: string;
   supervisor_name: string;

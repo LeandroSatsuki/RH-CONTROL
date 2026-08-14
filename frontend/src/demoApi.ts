@@ -867,6 +867,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
         card,
         closed: true,
         salary: sumRows(rows, "salary"),
+        gratification: sumRows(rows, "gratification"),
         proLabore: sumRows(rows, "pro_labore"),
         profit: sumRows(rows, "profit_distribution"),
         bonus: sumRows(rows, "bonus"),
@@ -883,6 +884,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
     const costValues = (key: keyof typeof monthly[number]) => monthly.map(item => Number(item[key] ?? 0));
     const costRows = [
       { label: "Salário", values: costValues("salary"), total: costValues("salary").reduce((a, b) => a + b, 0) },
+      { label: "Gratificação", values: costValues("gratification"), total: costValues("gratification").reduce((a, b) => a + b, 0) },
       { label: "Prolabore", values: costValues("proLabore"), total: costValues("proLabore").reduce((a, b) => a + b, 0) },
       { label: "Dist. Lucro", values: costValues("profit"), total: costValues("profit").reduce((a, b) => a + b, 0) },
       { label: "Premiação", values: costValues("bonus"), total: costValues("bonus").reduce((a, b) => a + b, 0) },
@@ -1607,6 +1609,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       employment_type: type,
       result_center: center,
       salary_base: salary,
+      gratification: Number(payload.gratification || 0),
       cost_aid: payload.benefits?.includes("Ajuda de custo") ? Number(payload.cost_aid || 0) : 0,
       email: String(payload.email ?? ""),
       phone: String(payload.phone ?? ""),
@@ -1735,6 +1738,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     item.admission_date = String(payload.admission_date ?? item.admission_date);
     item.status = (payload.status as DemoEmployee["status"]) ?? item.status;
     item.salary_base = nextSalary;
+    item.gratification = payload.gratification === undefined ? Number(item.gratification ?? 0) : Number(payload.gratification || 0);
     item.cost_aid = Array.isArray(payload.benefits) && payload.benefits.includes("Ajuda de custo")
       ? Number(payload.cost_aid ?? item.cost_aid ?? 0)
       : 0;

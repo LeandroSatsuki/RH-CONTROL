@@ -386,6 +386,7 @@ export function createDemoEmployees(): DemoEmployee[] {
       employment_type: type,
       result_center: center,
       salary_base: Math.round(salaryBase),
+      gratification: 0,
       cost_aid: 0,
       email: `${name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ".")}@empresa-demo.com.br`,
       phone: `(11) 9${String(80000000 + index * 2317).slice(0, 8)}`,

@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     auth,
     backups,
+    chat,
     companies,
     dashboard,
     demo,
@@ -24,3 +25,4 @@ api_router.include_router(employment_types.router, prefix="/employment-types", t
 api_router.include_router(employees.router, prefix="/employees", tags=["Colaboradores"])
 api_router.include_router(users.router, prefix="/users", tags=["Usuários"])
 api_router.include_router(backups.router, prefix="/backups", tags=["Backup"])
+api_router.include_router(chat.router, prefix="/chat", tags=["Chat interno"])

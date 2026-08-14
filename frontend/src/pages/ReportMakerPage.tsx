@@ -68,6 +68,7 @@ const fieldLibrary: FieldMeta[] = [
   { id: "document", source: "Colaboradores", label: "CPF / CNPJ", extractor: row => row.employee?.cpf ?? row.cpf ?? row.cnpj ?? "" },
   { id: "employee_benefits", source: "Colaboradores", label: "Benefícios", extractor: row => Array.isArray(row.benefits) ? row.benefits.join(", ") : "" },
   { id: "salary_base", source: "Colaboradores", label: "Salário base", display: "currency", extractor: row => Number(row.salary_base ?? 0) },
+  { id: "gratification", source: "Colaboradores", label: "Gratificação", display: "currency", extractor: row => Number(row.gratification ?? 0) },
   { id: "status", source: "Colaboradores", label: "Status", extractor: row => row.status ?? "" },
 
   { id: "movement_type", source: "Movimentações", label: "Tipo", extractor: row => row.type ?? "" },
@@ -89,6 +90,7 @@ const fieldLibrary: FieldMeta[] = [
   { id: "payroll_employee", source: "Custo / Folha", label: "Colaborador", extractor: row => row.employee_name ?? "" },
   { id: "payroll_center", source: "Custo / Folha", label: "Centro de Resultado", extractor: row => row.result_center?.code ?? "" },
   { id: "payroll_salary", source: "Custo / Folha", label: "Salário", display: "currency", extractor: row => Number(row.salary ?? 0) },
+  { id: "payroll_gratification", source: "Custo / Folha", label: "Gratificação", display: "currency", extractor: row => Number(row.gratification ?? 0) },
   { id: "payroll_transport", source: "Custo / Folha", label: "Vale transporte", display: "currency", extractor: row => Number(row.transport ?? 0) },
   { id: "payroll_meal", source: "Custo / Folha", label: "Alimentação", display: "currency", extractor: row => Number(row.meal ?? 0) },
   { id: "payroll_health", source: "Custo / Folha", label: "Plano de saúde", display: "currency", extractor: row => Number(row.health_plan ?? 0) },
@@ -116,7 +118,7 @@ const fieldLibrary: FieldMeta[] = [
 ];
 
 const sourceDefaults: Record<SourceName, string[]> = {
-  "Colaboradores": ["employee_name", "center", "job_title", "employment_type", "salary_base", "status"],
+  "Colaboradores": ["employee_name", "center", "job_title", "employment_type", "salary_base", "gratification", "status"],
   "Movimentações": ["movement_employee", "movement_center", "movement_type", "movement_days", "movement_hours"],
   "Benefícios": ["benefit_employee", "benefit_center", "benefit_name", "benefit_days", "benefit_value_day", "benefit_amount"],
   "Custo / Folha": ["payroll_employee", "payroll_center", "payroll_earnings", "payroll_charges", "payroll_provisions", "payroll_grand_total"],
@@ -519,7 +521,8 @@ function getSourceRows(source: SourceName, employees: DemoEmployee[], movements:
         employee_name: employee.employee.full_name,
         center: employee.result_center.code,
         supervisor: employee.supervisor_name,
-        salary_base: employee.salary_base
+        salary_base: employee.salary_base,
+        gratification: employee.gratification
       }));
     case "Movimentações":
       return movements.filter(item => item.competency === competency).map(item => ({
@@ -611,7 +614,7 @@ function calculateReportTotal(source: SourceName, rows: any[]) {
     case "Benefícios":
       return rows.reduce((acc, row) => acc + Number(row.amount ?? 0), 0);
     case "Colaboradores":
-      return rows.reduce((acc, row) => acc + Number(row.salary_base ?? 0), 0);
+      return rows.reduce((acc, row) => acc + Number(row.salary_base ?? 0) + Number(row.gratification ?? 0), 0);
     case "Movimentações":
       return rows.reduce((acc, row) => acc + Number(row.hour_impact ?? 0), 0);
     case "Afastamentos":

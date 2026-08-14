@@ -44,6 +44,65 @@ def auth_header(client: TestClient, username: str, password: str) -> dict[str, s
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
+def test_private_network_chat_between_active_users(client: TestClient) -> None:
+    setup = client.post(
+        "/api/setup",
+        json={
+            "company_name": "Empresa Principal",
+            "backup_directory": "",
+            "auto_backup_on_start": True,
+            "include_saturdays": False,
+            "include_sundays": False,
+            "default_daily_hours": 8.8,
+            "admin_username": "admin",
+            "admin_full_name": "Administrador",
+            "admin_password": "SenhaForte123",
+        },
+    )
+    assert setup.status_code == 201
+    admin = auth_header(client, "admin", "SenhaForte123")
+    created = client.post(
+        "/api/users",
+        headers=admin,
+        json={
+            "username": "maria",
+            "full_name": "Maria Consultora",
+            "password": "SenhaMaria123",
+            "role": "CONSULTANT",
+        },
+    )
+    assert created.status_code == 201
+    maria_id = created.json()["id"]
+    maria = auth_header(client, "maria", "SenhaMaria123")
+
+    sent = client.post(
+        f"/api/chat/messages/{maria_id}", headers=admin, json={"body": "Bom dia, Maria!"}
+    )
+    assert sent.status_code == 201
+    admin_id = sent.json()["sender_id"]
+    maria_contacts = client.get("/api/chat/contacts", headers=maria)
+    assert maria_contacts.status_code == 200
+    assert maria_contacts.json()[0]["unread_count"] == 1
+
+    conversation = client.get(f"/api/chat/messages/{admin_id}", headers=maria)
+    assert conversation.status_code == 200
+    assert conversation.json()[0]["body"] == "Bom dia, Maria!"
+    assert client.get("/api/chat/contacts", headers=maria).json()[0]["unread_count"] == 0
+
+    reply = client.post(
+        f"/api/chat/messages/{admin_id}", headers=maria, json={"body": "Bom dia! Recebido."}
+    )
+    assert reply.status_code == 201
+    admin_conversation = client.get(f"/api/chat/messages/{maria_id}", headers=admin)
+    assert [item["body"] for item in admin_conversation.json()] == [
+        "Bom dia, Maria!",
+        "Bom dia! Recebido.",
+    ]
+    assert client.post(
+        f"/api/chat/messages/{admin_id}", headers=admin, json={"body": "Mensagem própria"}
+    ).status_code == 422
+
+
 def test_delete_empty_employee_and_company_with_safety_guards(
     client: TestClient,
 ) -> None:
@@ -409,6 +468,7 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         "status": "ACTIVE",
         "daily_hours": 8.8,
         "salary_base": 4500,
+        "gratification": 300,
         "notes": "",
         "email": "pessoa@empresa.com.br",
         "phone": "27999990000",
@@ -425,6 +485,7 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     created_employee = created.json()
     assert created_employee["email"] == "pessoa@empresa.com.br"
     assert created_employee["phone"] == "27999990000"
+    assert Decimal(created_employee["gratification"]) == Decimal("300")
     assert Decimal(created_employee["salary_history"][0]["amount"]) == Decimal("4500")
     assert Decimal(
         created_employee["salary_history"][0]["family_allowance"]
@@ -714,9 +775,10 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     assert payroll.status_code == 200
     row = payroll.json()[0]
     assert Decimal(str(row["transport"])) == Decimal("220.0")
-    assert Decimal(str(row["subtotal_earnings"])) == Decimal("4800.0")
-    assert Decimal(str(row["inss"])) == Decimal("960.0")
-    assert Decimal(str(row["gross_payroll"])) == Decimal("5020.0")
+    assert Decimal(str(row["gratification"])) == Decimal("300.0")
+    assert Decimal(str(row["subtotal_earnings"])) == Decimal("5100.0")
+    assert Decimal(str(row["inss"])) == Decimal("1020.0")
+    assert Decimal(str(row["gross_payroll"])) == Decimal("5320.0")
     templates = [
         {"id": 1, "name": "Custo mensal", "source": "Custo / Folha", "fields": []}
     ]
@@ -833,7 +895,10 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         "DIR",
         "IND",
     ]
-    assert dashboard.json()["consolidated"]["total_cost"] == 0
+    assert dashboard.json()["consolidated"]["active_employees"] >= 1
+    assert Decimal(str(dashboard.json()["consolidated"]["gross_payroll"])) > 0
+    assert Decimal(str(dashboard.json()["consolidated"]["net_payroll"])) > 0
+    assert Decimal(str(dashboard.json()["consolidated"]["total_cost"])) > 0
     dashboard_by_competency = client.get(
         "/api/dashboard?competency=2026-06", headers=admin
     )
@@ -950,6 +1015,28 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         ).json()
         if item["name"] == "CLT"
     )
+    scoped_adm_center = next(
+        item for item in filtered_centers.json() if item["code"] == "ADM"
+    )
+    new_employee_without_body_company = client.post(
+        f"/api/employees?company_id={company_id}",
+        headers=admin,
+        json={
+            "cpf": "11.222.333/0001-81",
+            "full_name": "Promotor Empresa Beta",
+            "employee_code": "ADM-001",
+            "employment_type_id": scoped_type["id"],
+            "result_center_id": scoped_adm_center["id"],
+            "job_title": "Promotor",
+            "admission_date": "2026-06-01",
+            "salary_base": 2500,
+            "pix_key_type": "CNPJ",
+            "pix_key": "11222333000181",
+        },
+    )
+    assert new_employee_without_body_company.status_code == 201
+    assert new_employee_without_body_company.json()["company_id"] == company_id
+    assert new_employee_without_body_company.json()["employment_type"]["id"] == scoped_type["id"]
     updated_global_center = client.patch(
         f"/api/result-centers/{scoped_center.json()['id']}?company_id={company_id}",
         headers=admin,

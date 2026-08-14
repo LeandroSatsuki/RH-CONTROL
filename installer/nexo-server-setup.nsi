@@ -2,7 +2,7 @@ Unicode true
 RequestExecutionLevel admin
 
 !ifndef APP_VERSION
-  !define APP_VERSION "1.0.6"
+  !define APP_VERSION "1.0.7"
 !endif
 
 !define PRODUCT_NAME "Nexo Servidor"

@@ -31,7 +31,7 @@ type LaunchBatch = {
 };
 
 const labels: Record<LaunchKind, { title: string; detail: string }> = {
-  MEI: { title: "MEI", detail: "Exibe somente MEIs com contrato assinado e vigente na competência." },
+  MEI: { title: "MEI", detail: "Exibe somente MEIs com contrato assinado e vigente, com filtro opcional de supervisor." },
   BASIC_BASKET: { title: "Cesta básica", detail: "Exibe somente quem possui o benefício marcado." },
   BONUS: { title: "Premiação", detail: "Permite filtrar por supervisor, modalidade e Centro de Resultado." }
 };
@@ -199,8 +199,10 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
       </div>
       <div className="launch-filters">
         <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar nome ou matrícula" />
-        {active.kind === "BONUS" && <>
+        {(active.kind === "MEI" || active.kind === "BONUS") &&
           <select value={active.filters.supervisor ?? ""} onChange={event => patchFilter("supervisor", event.target.value)}><option value="">Todos os supervisores</option>{options.supervisors.map(value => <option key={value}>{value}</option>)}</select>
+        }
+        {active.kind === "BONUS" && <>
           <select value={active.filters.modality ?? ""} onChange={event => patchFilter("modality", event.target.value)}><option value="">Todas as modalidades</option>{options.modalities.map(value => <option key={value}>{value}</option>)}</select>
           <select value={active.filters.center ?? ""} onChange={event => patchFilter("center", event.target.value)}><option value="">Todos os CRs</option>{options.centers.map(value => <option key={value.code} value={value.code}>{value.code} - {value.name}</option>)}</select>
         </>}

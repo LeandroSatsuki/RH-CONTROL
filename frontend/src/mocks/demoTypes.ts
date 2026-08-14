@@ -22,6 +22,7 @@ export interface Competency {
 export interface DemoEmployee extends Employment {
   company_id: number;
   salary_base: number;
+  gratification: number;
   cost_aid: number;
   bank_name: string;
   bank_agency: string;
@@ -70,6 +71,7 @@ export interface PayrollRow {
   result_center: ResultCenter;
   employment_type: EmploymentType;
   salary: number;
+  gratification: number;
   pro_labore: number;
   profit_distribution: number;
   bonus: number;

@@ -64,6 +64,7 @@ class EmployeeCreate(BaseModel):
     status: EmploymentStatus = EmploymentStatus.ACTIVE
     daily_hours: Decimal = Field(default=Decimal("8.80"), gt=0, le=24)
     salary_base: Decimal = Field(gt=0)
+    gratification: Decimal = Field(default=Decimal("0.00"), ge=0)
     cost_aid: Decimal = Field(default=Decimal("0.00"), ge=0)
     notes: str = ""
     email: str = Field(default="", max_length=180)
@@ -136,6 +137,7 @@ class EmployeeUpdate(BaseModel):
     status: EmploymentStatus | None = None
     daily_hours: Decimal | None = Field(default=None, gt=0, le=24)
     salary_base: Decimal | None = Field(default=None, ge=0)
+    gratification: Decimal | None = Field(default=None, ge=0)
     cost_aid: Decimal | None = Field(default=None, ge=0)
     salary_mode: str | None = None
     notes: str | None = None
@@ -172,6 +174,7 @@ class EmploymentRead(BaseModel):
     status: EmploymentStatus
     daily_hours: Decimal
     salary_base: Decimal
+    gratification: Decimal
     cost_aid: Decimal
     notes: str
     email: str
