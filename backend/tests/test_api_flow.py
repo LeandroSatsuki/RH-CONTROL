@@ -214,6 +214,36 @@ def test_monthly_launches_resume_confirm_and_feed_payroll(client: TestClient) ->
     assert employee.status_code == 201
     employment_id = employee.json()["id"]
 
+    without_contract = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2026-08", "kind": "MEI"},
+    )
+    assert without_contract.status_code == 200
+    assert without_contract.json()["eligible_count"] == 0
+    contract = client.post(
+        "/api/demo/mei-contracts", headers=admin,
+        json={
+            "employee_id": employment_id,
+            "start_date": "2026-08-01",
+            "end_date": "2027-07-31",
+        },
+    )
+    assert contract.status_code == 201
+    assert client.patch(
+        f"/api/demo/mei-contracts/{contract.json()['id']}/sign",
+        headers=admin,
+        json={
+            "attachment_name": "contrato-assinado.pdf",
+            "attachment_data_url": "data:application/pdf;base64,JVBERi0xLjQ=",
+        },
+    ).status_code == 200
+    expired_period = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2027-08", "kind": "MEI"},
+    )
+    assert expired_period.status_code == 200
+    assert expired_period.json()["eligible_count"] == 0
+
     created = client.post(
         "/api/demo/launches", headers=admin,
         json={"competency": "2026-08", "kind": "MEI"},

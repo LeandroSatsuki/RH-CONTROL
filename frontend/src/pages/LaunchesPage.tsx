@@ -31,7 +31,7 @@ type LaunchBatch = {
 };
 
 const labels: Record<LaunchKind, { title: string; detail: string }> = {
-  MEI: { title: "MEI", detail: "Exibe somente promotores da modalidade MEI." },
+  MEI: { title: "MEI", detail: "Exibe somente MEIs com contrato assinado e vigente na competência." },
   BASIC_BASKET: { title: "Cesta básica", detail: "Exibe somente quem possui o benefício marcado." },
   BONUS: { title: "Premiação", detail: "Permite filtrar por supervisor, modalidade e Centro de Resultado." }
 };

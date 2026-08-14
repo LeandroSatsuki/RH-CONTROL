@@ -88,19 +88,29 @@ def normalized(value: str) -> str:
     ).strip().upper()
 
 
-def launch_eligible(employment: Employment, kind: str) -> bool:
+def launch_eligible(
+    employment: Employment, kind: str, valid_mei_ids: set[int] | None = None
+) -> bool:
     if employment.status == EmploymentStatus.INACTIVE:
         return False
     if kind == "MEI":
-        return normalized(employment.employment_type.name) == "MEI"
+        return (
+            normalized(employment.employment_type.name) == "MEI"
+            and employment.id in (valid_mei_ids or set())
+        )
     if kind == "BASIC_BASKET":
         return any(normalized(value) == "CESTA BASICA" for value in (employment.benefits or []))
     return kind == "BONUS"
 
 
-def launch_batch_to_dict(batch: LaunchBatch, employments: list[Employment]) -> dict[str, Any]:
+def launch_batch_to_dict(
+    batch: LaunchBatch, employments: list[Employment], valid_mei_ids: set[int]
+) -> dict[str, Any]:
     stored = {item.employment_id: item for item in batch.items}
-    eligible = [item for item in employments if launch_eligible(item, batch.kind)]
+    eligible = [
+        item for item in employments
+        if launch_eligible(item, batch.kind, valid_mei_ids)
+    ]
     return {
         "id": batch.id,
         "company_id": batch.company_id,
@@ -1402,6 +1412,36 @@ def launch_employments(db: DbSession, company_id: int) -> list[Employment]:
     )
 
 
+def valid_mei_contract_ids(
+    db: DbSession, company_id: int, competency: str
+) -> set[int]:
+    try:
+        year, month = (int(value) for value in competency.split("-"))
+        period_start = date(year, month, 1)
+        period_end = date(year, month, calendar.monthrange(year, month)[1])
+    except (TypeError, ValueError):
+        return set()
+    return set(
+        db.scalars(
+            select(MeiContract.employee_id).where(
+                MeiContract.company_id == company_id,
+                MeiContract.status == "Ativo",
+                MeiContract.signed_at.is_not(None),
+                MeiContract.start_date <= period_end,
+                MeiContract.end_date >= period_start,
+            )
+        )
+    )
+
+
+def launch_response(db: DbSession, batch: LaunchBatch) -> dict[str, Any]:
+    return launch_batch_to_dict(
+        batch,
+        launch_employments(db, batch.company_id),
+        valid_mei_contract_ids(db, batch.company_id, batch.competency),
+    )
+
+
 def load_launch_batch(db: DbSession, batch_id: int, company_id: int) -> LaunchBatch:
     batch = db.scalar(
         select(LaunchBatch)
@@ -1429,8 +1469,7 @@ def list_launches(
             .order_by(LaunchBatch.updated_at.desc(), LaunchBatch.id.desc())
         )
     )
-    employments = launch_employments(db, company_id)
-    return [launch_batch_to_dict(batch, employments) for batch in batches]
+    return [launch_response(db, batch) for batch in batches]
 
 
 @router.post("/launches")
@@ -1468,7 +1507,7 @@ def create_launch(
         db.add(batch)
         db.commit()
         db.refresh(batch)
-    return launch_batch_to_dict(batch, launch_employments(db, company_id))
+    return launch_response(db, batch)
 
 
 @router.get("/launches/{batch_id}")
@@ -1476,7 +1515,7 @@ def get_launch(
     batch_id: int, db: DbSession, _: CurrentUser, company_id: int = 1
 ) -> dict[str, Any]:
     batch = load_launch_batch(db, batch_id, company_id)
-    return launch_batch_to_dict(batch, launch_employments(db, company_id))
+    return launch_response(db, batch)
 
 
 @router.patch("/launches/{batch_id}")
@@ -1493,7 +1532,11 @@ def save_launch_draft(
     if is_competency_closed(db, company_id, batch.competency):
         raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para editar.")
     employments = launch_employments(db, company_id)
-    eligible_ids = {item.id for item in employments if launch_eligible(item, batch.kind)}
+    valid_mei_ids = valid_mei_contract_ids(db, company_id, batch.competency)
+    eligible_ids = {
+        item.id for item in employments
+        if launch_eligible(item, batch.kind, valid_mei_ids)
+    }
     incoming: dict[int, tuple[Decimal, str]] = {}
     for raw in payload.get("items") or []:
         employment_id = int(raw.get("employment_id") or 0)
@@ -1513,7 +1556,7 @@ def save_launch_draft(
     batch.updated_by = user.full_name
     db.commit()
     batch = load_launch_batch(db, batch.id, company_id)
-    return launch_batch_to_dict(batch, launch_employments(db, company_id))
+    return launch_response(db, batch)
 
 
 @router.post("/launches/{batch_id}/confirm")
@@ -1526,10 +1569,13 @@ def confirm_launch(
     if is_competency_closed(db, company_id, batch.competency):
         raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para confirmar.")
     employments = {item.id: item for item in launch_employments(db, company_id)}
+    valid_mei_ids = valid_mei_contract_ids(db, company_id, batch.competency)
     valid_items = [
         item for item in batch.items
         if item.amount > 0 and item.employment_id in employments
-        and launch_eligible(employments[item.employment_id], batch.kind)
+        and launch_eligible(
+            employments[item.employment_id], batch.kind, valid_mei_ids
+        )
     ]
     if not valid_items:
         raise HTTPException(status_code=422, detail="Informe ao menos um valor antes de confirmar.")
@@ -1623,7 +1669,7 @@ def confirm_launch(
     )
     db.commit()
     batch = load_launch_batch(db, batch.id, company_id)
-    return launch_batch_to_dict(batch, launch_employments(db, company_id))
+    return launch_response(db, batch)
 
 
 @router.delete("/launches/{batch_id}")

@@ -388,16 +388,34 @@ function normalizeText(value: string) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-function localLaunchEligible(employee: DemoEmployee, kind: DemoLaunchBatch["kind"]) {
+function localLaunchEligible(
+  state: DemoState,
+  employee: DemoEmployee,
+  kind: DemoLaunchBatch["kind"],
+  competency: string
+) {
   if (employee.status === "INACTIVE") return false;
-  if (kind === "MEI") return normalizeText(employee.employment_type.name) === "mei";
+  if (kind === "MEI") {
+    const [year, month] = competency.split("-").map(Number);
+    const periodStart = `${competency}-01`;
+    const periodEnd = new Date(year, month, 0).toISOString().slice(0, 10);
+    const hasSignedCurrentContract = state.meiContracts.some(contract =>
+      contract.company_id === employee.company_id
+      && contract.employee_id === employee.id
+      && contract.status === "Ativo"
+      && Boolean(contract.signed_at)
+      && contract.start_date <= periodEnd
+      && contract.end_date >= periodStart
+    );
+    return normalizeText(employee.employment_type.name) === "mei" && hasSignedCurrentContract;
+  }
   if (kind === "BASIC_BASKET") return employee.benefits.some(value => normalizeText(value) === "cesta basica");
   return true;
 }
 
 function localLaunchResponse(state: DemoState, batch: DemoLaunchBatch) {
   const stored = new Map(batch.items.map(item => [item.employment_id, item]));
-  const eligible = state.employees.filter(item => item.company_id === batch.company_id && localLaunchEligible(item, batch.kind));
+  const eligible = state.employees.filter(item => item.company_id === batch.company_id && localLaunchEligible(state, item, batch.kind, batch.competency));
   return {
     ...batch,
     total: roundMoney(batch.items.reduce((sum, item) => sum + item.amount, 0)),
@@ -1968,7 +1986,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     if (!batch) throw new Error("Lançamento não encontrado.");
     if (batch.status !== "PENDING") throw new Error("Lançamento já confirmado e bloqueado para edição.");
     const payload = body<{ filters?: Record<string, string>; items?: DemoLaunchItem[] }>(options);
-    const eligible = new Set(state.employees.filter(item => item.company_id === companyId && localLaunchEligible(item, batch.kind)).map(item => item.id));
+    const eligible = new Set(state.employees.filter(item => item.company_id === companyId && localLaunchEligible(state, item, batch.kind, batch.competency)).map(item => item.id));
     batch.filters = payload.filters ?? {};
     batch.items = (payload.items ?? []).filter(item => eligible.has(item.employment_id) && Number(item.amount) > 0).map(item => ({ ...item, amount: roundMoney(Number(item.amount)) }));
     batch.updated_by = currentUser.full_name;

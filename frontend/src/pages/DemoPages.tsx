@@ -143,6 +143,8 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
   const [renewEndDate, setRenewEndDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [savingContract, setSavingContract] = useState(false);
+  const [contractDeleteOpen, setContractDeleteOpen] = useState(false);
+  const [contractDeleteError, setContractDeleteError] = useState("");
   const fb = useFeedback();
 
   async function load() {
@@ -238,17 +240,22 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
     finally { setSavingContract(false); }
   }
 
-  async function deleteContract() {
+  async function deleteContract(password?: string) {
     if (restricted(user, fb.fail) || !selected) return;
-    const password = window.prompt("Informe sua senha para excluir este contrato pendente.");
-    if (!password || !window.confirm("Excluir este contrato pendente? A operação será registrada na Auditoria.")) return;
+    if (!password) {
+      setContractDeleteError("");
+      setContractDeleteOpen(true);
+      return;
+    }
     setSavingContract(true);
+    setContractDeleteError("");
     try {
       await api(`/demo/mei-contracts/${selected.id}`, { method: "DELETE", body: JSON.stringify({ password }) }, token);
+      setContractDeleteOpen(false);
       setSelected(null);
       fb.notify("Contrato pendente excluído e registrado na Auditoria.");
       await load();
-    } catch (err) { fb.fail(err instanceof Error ? err.message : "Erro ao excluir contrato"); }
+    } catch (err) { setContractDeleteError(err instanceof Error ? err.message : "Erro ao excluir contrato"); }
     finally { setSavingContract(false); }
   }
 
@@ -283,6 +290,15 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
       {selected.status === "Pendente de assinatura" ? <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">1. Conferir dados</span><h3>Editar contrato pendente</h3><div className="form-grid compact"><label className="span-2">MEI<select value={selectedEmployeeId} onChange={event => setSelectedEmployeeId(event.target.value)}>{meis.map(employee => <option key={employee.id} value={employee.id}>{employee.employee.full_name} • {employee.employee_code}</option>)}</select></label><label>Vigência inicial<input type="date" value={selectedStartDate} onChange={event => setSelectedStartDate(event.target.value)} /></label><label>Vigência final<input type="date" value={selectedEndDate} onChange={event => setSelectedEndDate(event.target.value)} /></label></div><div className="actions"><button className="secondary" type="button" onClick={() => void editContract()} disabled={savingContract}>Salvar alterações</button><button className="danger" type="button" onClick={() => void deleteContract()} disabled={savingContract}>Excluir pendente</button></div></section><section className="panel mei-action-panel mei-sign-panel"><span className="eyebrow">2. Concluir pendência</span><h3>Anexar e ativar</h3><p>O alerta desaparecerá quando o contrato assinado for anexado.</p><label>Contrato assinado<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={handleAttachment} /></label>{attachmentName && <p className="note">Arquivo: <strong>{attachmentName}</strong></p>}<button className="primary" type="button" onClick={() => void signContract()} disabled={savingContract || !attachmentName}>Assinar e ativar</button></section></div>
       : <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">Documento vigente</span><h3>Contrato assinado</h3><p>Assinado por <strong>{selected.signed_by ?? "-"}</strong> em {selected.signed_at ? dateTime(selected.signed_at) : "-"}.</p><button className="secondary" type="button" onClick={() => downloadAttachment(selected)} disabled={!selected.attachment_data_url}>Baixar contrato</button></section><section className="panel mei-action-panel"><span className="eyebrow">Próxima vigência</span><h3>Renovar sem alterar o histórico</h3><div className="form-grid compact"><label>Início<input type="date" value={renewStartDate} onChange={event => setRenewStartDate(event.target.value)} /></label><label>Fim<input type="date" value={renewEndDate} onChange={event => setRenewEndDate(event.target.value)} /></label></div><p className="note">A renovação cria um novo contrato pendente e preserva este documento assinado.</p><button className="primary" type="button" onClick={() => void renewContract()} disabled={savingContract}>Criar renovação</button></section></div>}
     </div>}
+    {contractDeleteOpen && selected && <DeleteConfirmationModal
+      title="Excluir contrato pendente"
+      itemName={`${selected.employee_name} • ${date(selected.start_date)} a ${date(selected.end_date)}`}
+      description="O contrato pendente e a movimentação automática associada serão removidos. A exclusão ficará registrada na Auditoria."
+      busy={savingContract}
+      error={contractDeleteError}
+      onCancel={() => { setContractDeleteOpen(false); setContractDeleteError(""); }}
+      onConfirm={deleteContract}
+    />}
   </PageShell>;
 }
 

@@ -329,7 +329,17 @@ describe("modo local multiempresa", () => {
       method: "POST",
       body: JSON.stringify({ competency: "2026-08", kind: "MEI" })
     }, adminToken);
-    expect(batch.eligible_count).toBe(1);
+    expect(batch.eligible_count).toBe(0);
+    const contract = await demoApi<any>("/demo/mei-contracts?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({ employee_id: employee.id, start_date: "2026-08-01", end_date: "2027-07-31" })
+    }, adminToken);
+    await demoApi(`/demo/mei-contracts/${contract.id}/sign?company_id=1`, {
+      method: "PATCH",
+      body: JSON.stringify({ attachment_name: "contrato-assinado.pdf", attachment_data_url: "data:application/pdf;base64,JVBERi0xLjQ=" })
+    }, adminToken);
+    const eligibleBatch = (await demoApi<any[]>("/demo/launches?company_id=1&competency=2026-08", {}, adminToken))[0];
+    expect(eligibleBatch.eligible_count).toBe(1);
     await demoApi(`/demo/launches/${batch.id}?company_id=1`, {
       method: "PATCH",
       body: JSON.stringify({ filters: {}, items: [{ employment_id: employee.id, amount: 1800, note: "NF agosto" }] })
