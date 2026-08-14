@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.5 - 2026-08-14
+
+### Exclusão segura de cadastros
+
+- permite excluir colaboradores sem movimentações, contratos, benefícios ou ajustes de folha vinculados;
+- permite excluir empresas não principais sem colaboradores, movimentos ou histórico operacional;
+- exige senha de Administrador e confirmação antes da exclusão definitiva;
+- registra a exclusão na Auditoria e orienta a inativação quando houver histórico a preservar.
+
 ## 1.0.1 - 2026-08-03
 
 ### Correção do servidor Windows

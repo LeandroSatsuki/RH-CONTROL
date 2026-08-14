@@ -6,10 +6,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.dependencies import AdminUser, CurrentUser, DbSession
+from app.core.security import verify_password
+from app.models.audit_entry import AuditEntry
+from app.models.benefit import BenefitDistribution
 from app.models.company import Company
 from app.models.employment import Employee, Employment, SalaryHistory
 from app.models.employment_type import EmploymentType
+from app.models.mei_contract import MeiContract
 from app.models.movement import Movement
+from app.models.payroll_override import PayrollOverride
 from app.models.result_center import ResultCenter
 from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmploymentRead, SalaryHistoryCreate
 
@@ -173,6 +178,83 @@ def update_employee(
 
     db.commit()
     return db.scalar(employment_query().where(Employment.id == employment.id))
+
+
+@router.delete("/{employment_id}")
+def delete_employee(
+    employment_id: int,
+    payload: dict[str, str],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, bool]:
+    if not verify_password(str(payload.get("password") or ""), user.password_hash):
+        raise HTTPException(status_code=403, detail="Senha de confirmação inválida.")
+
+    query = employment_query().where(Employment.id == employment_id)
+    if company_id != 0:
+        query = query.where(Employment.company_id == company_id)
+    employment = db.scalar(query)
+    if not employment:
+        raise HTTPException(status_code=404, detail="Vínculo não encontrado")
+
+    linked_records = [
+        (Movement, Movement.employee_id, "movimentações"),
+        (MeiContract, MeiContract.employee_id, "contratos MEI"),
+        (BenefitDistribution, BenefitDistribution.employee_id, "benefícios lançados"),
+        (PayrollOverride, PayrollOverride.employment_id, "ajustes de folha"),
+    ]
+    blockers = [
+        label
+        for model, field, label in linked_records
+        if db.scalar(select(model.id).where(field == employment.id).limit(1)) is not None
+    ]
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Este colaborador possui registros vinculados: "
+                f"{', '.join(blockers)}. Inative-o para preservar o histórico."
+            ),
+        )
+
+    employee = employment.employee
+    employee_name = employee.full_name
+    employee_code = employment.employee_code
+    company_id_for_audit = employment.company_id
+    result_center = {
+        "code": employment.result_center.code,
+        "name": employment.result_center.name,
+        "color": employment.result_center.color,
+    }
+    db.add(
+        AuditEntry(
+            company_id=company_id_for_audit,
+            module="Colaboradores",
+            action="Colaborador excluído",
+            employee_name=employee_name,
+            result_center=result_center,
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"Matrícula {employee_code} | cadastro sem movimentações ou registros operacionais",
+        )
+    )
+    db.delete(employment)
+    try:
+        db.flush()
+        remaining_employment = db.scalar(
+            select(Employment.id).where(Employment.employee_id == employee.id).limit(1)
+        )
+        if remaining_employment is None:
+            db.delete(employee)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="O colaborador ainda possui registros vinculados. Inative-o em vez de excluir.",
+        ) from None
+    return {"deleted": True}
 
 
 @router.post("/{employment_id}/salary-history", response_model=EmploymentRead, status_code=201)

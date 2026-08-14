@@ -44,6 +44,130 @@ def auth_header(client: TestClient, username: str, password: str) -> dict[str, s
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
+def test_delete_empty_employee_and_company_with_safety_guards(
+    client: TestClient,
+) -> None:
+    setup = client.post(
+        "/api/setup",
+        json={
+            "company_name": "Empresa Principal",
+            "backup_directory": "",
+            "auto_backup_on_start": True,
+            "include_saturdays": False,
+            "include_sundays": False,
+            "default_daily_hours": 8.8,
+            "admin_username": "admin",
+            "admin_full_name": "Administrador",
+            "admin_password": "SenhaForte123",
+        },
+    )
+    assert setup.status_code == 201
+    admin = auth_header(client, "admin", "SenhaForte123")
+    center = client.post(
+        "/api/result-centers",
+        headers=admin,
+        json={"code": "ADM", "name": "Administrativo", "active": True},
+    ).json()
+    employment_type = client.post(
+        "/api/employment-types",
+        headers=admin,
+        json={"name": "CLT", "has_charges": True, "active": True},
+    ).json()
+
+    def employee_payload(cpf: str, code: str, name: str) -> dict[str, object]:
+        return {
+            "cpf": cpf,
+            "full_name": name,
+            "employee_code": code,
+            "company_id": 1,
+            "employment_type_id": employment_type["id"],
+            "result_center_id": center["id"],
+            "job_title": "Analista",
+            "admission_date": "2026-08-01",
+            "salary_base": 3000,
+            "pix_key_type": "CPF",
+            "pix_key": cpf,
+        }
+
+    removable = client.post(
+        "/api/employees",
+        headers=admin,
+        json=employee_payload("52998224725", "ADM-001", "Cadastro sem movimento"),
+    )
+    assert removable.status_code == 201
+    removable_id = removable.json()["id"]
+    assert client.request(
+        "DELETE",
+        f"/api/employees/{removable_id}",
+        headers=admin,
+        json={"password": "senha-errada"},
+    ).status_code == 403
+    removed = client.request(
+        "DELETE",
+        f"/api/employees/{removable_id}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert removed.status_code == 200
+    assert removed.json() == {"deleted": True}
+
+    protected = client.post(
+        "/api/employees",
+        headers=admin,
+        json=employee_payload("11144477735", "ADM-002", "Cadastro com movimento"),
+    )
+    assert protected.status_code == 201
+    protected_id = protected.json()["id"]
+    assert client.post(
+        "/api/demo/movements",
+        headers=admin,
+        json={
+            "competency": "2026-08",
+            "employee_id": protected_id,
+            "type": "falta",
+            "start_date": "2026-08-05",
+            "days": 1,
+            "observation": "Movimento de proteção",
+        },
+    ).status_code == 201
+    blocked_employee = client.request(
+        "DELETE",
+        f"/api/employees/{protected_id}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert blocked_employee.status_code == 409
+    assert "movimenta" in blocked_employee.json()["detail"].lower()
+
+    empty_company = client.post(
+        "/api/companies",
+        headers=admin,
+        json={"code": "TEMP", "name": "Empresa temporária"},
+    )
+    assert empty_company.status_code == 201
+    company_id = empty_company.json()["id"]
+    assert client.request(
+        "DELETE",
+        f"/api/companies/{company_id}",
+        headers=admin,
+        json={"password": "senha-errada"},
+    ).status_code == 403
+    removed_company = client.request(
+        "DELETE",
+        f"/api/companies/{company_id}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert removed_company.status_code == 200
+    assert removed_company.json() == {"deleted": True}
+    assert client.request(
+        "DELETE",
+        "/api/companies/1",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    ).status_code == 409
+
+
 def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     setup = client.post(
         "/api/setup",

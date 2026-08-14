@@ -2025,6 +2025,28 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
     }
   }
 
+  async function deleteCompany(item: Company) {
+    if (restricted(user, fb.fail)) return;
+    const password = window.prompt("Informe sua senha para excluir esta empresa.");
+    if (!password) return;
+    if (!window.confirm(`Excluir definitivamente ${item.name}? A exclusão só será permitida se não houver colaboradores, movimentações ou outros registros vinculados.`)) return;
+    try {
+      await api(`/companies/${item.id}`, {
+        method: "DELETE",
+        body: JSON.stringify({ password })
+      }, token);
+      const remaining = companies.filter(company => company.id !== item.id);
+      setCompanies(sortCompaniesForDisplay(remaining));
+      if (editingCompanyId === item.id) resetCompanyDraft();
+      const fallback = remaining.find(company => company.is_primary) ?? remaining[0];
+      if (fallback) localStorage.setItem("indicadores-selected-company-id", String(fallback.id));
+      window.dispatchEvent(new Event("nexo:companies-changed"));
+      fb.notify(`Empresa ${item.name} excluída com sucesso.`);
+    } catch (err) {
+      fb.fail(err instanceof Error ? err.message : "Erro ao excluir empresa");
+    }
+  }
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (restricted(user, fb.fail)) return;
@@ -2186,6 +2208,7 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
           <span className={item.active ? "status-pill status-active" : "status-pill status-inactive"}>{item.is_primary ? "Principal" : item.active ? "Ativa" : "Inativa"}</span>
           {user.role === "ADMIN" && <button className="secondary compact-button" type="button" onClick={() => editCompany(item)}>Editar</button>}
           {user.role === "ADMIN" && <button className="secondary compact-button" type="button" onClick={() => void toggleCompanyActive(item)}>{item.active ? "Inativar" : "Ativar"}</button>}
+          {user.role === "ADMIN" && <button className="danger compact-button" type="button" onClick={() => void deleteCompany(item)}>Excluir</button>}
         </div>)}
         {!companies.length && !companiesLoading && <Empty>Nenhuma empresa cadastrada.</Empty>}
         {companiesLoading && <div className="inline-loading">Carregando empresas...</div>}

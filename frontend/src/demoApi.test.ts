@@ -304,6 +304,69 @@ describe("modo local multiempresa", () => {
     expect(rows.find(row => row.employee_id === employee.id)?.cost_aid).toBe(175);
   });
 
+  it("exclui somente colaboradores e empresas sem registros vinculados", async () => {
+    const employee = await demoApi<DemoEmployee>("/employees?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({
+        full_name: "CADASTRO TEMPORÁRIO",
+        cpf: "52998224725",
+        employee_code: "ADM-001",
+        admission_date: "2026-08-01",
+        job_title: "ANALISTA",
+        employment_type_id: 1,
+        result_center_id: 1,
+        salary_base: 3000,
+        pix_key_type: "CPF",
+        pix_key: "52998224725"
+      })
+    }, adminToken);
+    await expect(demoApi(`/employees/${employee.id}?company_id=1`, {
+      method: "DELETE",
+      body: JSON.stringify({ password: "senha-errada" })
+    }, adminToken)).rejects.toThrow("Senha de confirmação inválida");
+    await expect(demoApi(`/employees/${employee.id}?company_id=1`, {
+      method: "DELETE",
+      body: JSON.stringify({ password: "admin" })
+    }, adminToken)).resolves.toEqual({ deleted: true });
+
+    const protectedEmployee = await demoApi<DemoEmployee>("/employees?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({
+        full_name: "CADASTRO COM MOVIMENTO",
+        cpf: "11144477735",
+        employee_code: "ADM-002",
+        admission_date: "2026-08-01",
+        job_title: "ANALISTA",
+        employment_type_id: 1,
+        result_center_id: 1,
+        salary_base: 3000,
+        pix_key_type: "CPF",
+        pix_key: "11144477735"
+      })
+    }, adminToken);
+    await demoApi("/demo/movements?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({ employee_id: protectedEmployee.id, type: "falta", start_date: "2026-08-05" })
+    }, adminToken);
+    await expect(demoApi(`/employees/${protectedEmployee.id}?company_id=1`, {
+      method: "DELETE",
+      body: JSON.stringify({ password: "admin" })
+    }, adminToken)).rejects.toThrow("movimentações");
+
+    const company = await demoApi<Company>("/companies", {
+      method: "POST",
+      body: JSON.stringify({ code: "TEMP", name: "EMPRESA TEMPORÁRIA", active: true })
+    }, adminToken);
+    await expect(demoApi(`/companies/${company.id}`, {
+      method: "DELETE",
+      body: JSON.stringify({ password: "admin" })
+    }, adminToken)).resolves.toEqual({ deleted: true });
+    await expect(demoApi("/companies/1", {
+      method: "DELETE",
+      body: JSON.stringify({ password: "admin" })
+    }, adminToken)).rejects.toThrow("empresa principal");
+  });
+
   it("lê planilhas XLSX de importação sem perder documento e valores", async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Colaboradores");

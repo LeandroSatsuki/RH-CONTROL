@@ -11,8 +11,16 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import AdminUser, CurrentUser, DbSession
 from app.core.config import settings
+from app.core.security import verify_password
+from app.models.audit_entry import AuditEntry
+from app.models.benefit import BenefitDistribution
 from app.models.company import Company
+from app.models.employment import Employee, Employment
 from app.models.employment_type import EmploymentType
+from app.models.mei_contract import MeiContract
+from app.models.monthly_closing import MonthlyClosing
+from app.models.movement import Movement
+from app.models.payroll_override import PayrollOverride
 from app.models.result_center import ResultCenter
 from app.models.system_setting import SystemSetting
 from app.models.enums import CompanyKind
@@ -404,3 +412,89 @@ def update_company(
         ) from None
     db.refresh(item)
     return item
+
+
+@router.delete("/{company_id}")
+def delete_company(
+    company_id: int,
+    payload: dict[str, str],
+    db: DbSession,
+    user: AdminUser,
+) -> dict[str, bool]:
+    if not verify_password(str(payload.get("password") or ""), user.password_hash):
+        raise HTTPException(status_code=403, detail="Senha de confirmação inválida.")
+
+    item = db.get(Company, company_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Empresa não encontrada")
+    if item.is_primary:
+        raise HTTPException(
+            status_code=409,
+            detail="A empresa principal não pode ser excluída. Defina outra empresa como principal primeiro.",
+        )
+    if db.scalar(
+        select(Company.id).where(Company.parent_company_id == company_id).limit(1)
+    ) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta empresa possui filiais vinculadas. Remova ou transfira as filiais primeiro.",
+        )
+
+    linked_records = [
+        (Employee, Employee.company_id, "colaboradores"),
+        (Employment, Employment.company_id, "vínculos de colaboradores"),
+        (Movement, Movement.company_id, "movimentações"),
+        (MeiContract, MeiContract.company_id, "contratos MEI"),
+        (BenefitDistribution, BenefitDistribution.company_id, "benefícios lançados"),
+        (PayrollOverride, PayrollOverride.company_id, "ajustes de folha"),
+        (MonthlyClosing, MonthlyClosing.company_id, "fechamentos mensais"),
+        (AuditEntry, AuditEntry.company_id, "registros de auditoria"),
+    ]
+    blockers = [
+        label
+        for model, field, label in linked_records
+        if db.scalar(select(model.id).where(field == company_id).limit(1)) is not None
+    ]
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Esta empresa possui registros vinculados: "
+                f"{', '.join(blockers)}. Inative-a para preservar o histórico."
+            ),
+        )
+
+    audit_company = db.scalar(
+        select(Company)
+        .where(Company.id != company_id)
+        .order_by(Company.is_primary.desc(), Company.id)
+        .limit(1)
+    )
+    if not audit_company:
+        raise HTTPException(
+            status_code=409,
+            detail="A última empresa do sistema não pode ser excluída.",
+        )
+
+    deleted_name = item.name
+    deleted_code = item.code
+    db.delete(item)
+    db.add(
+        AuditEntry(
+            company_id=audit_company.id,
+            module="Empresas",
+            action="Empresa excluída",
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"{deleted_code} | {deleted_name} | cadastro sem movimentações ou registros operacionais",
+        )
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="A empresa ainda possui registros vinculados. Inative-a em vez de excluir.",
+        ) from None
+    return {"deleted": True}

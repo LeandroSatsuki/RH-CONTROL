@@ -1062,6 +1062,41 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     saveState(state);
     return cleanCompany(state.companies.find(item => item.id === id) ?? current) as T;
   }
+  if (route.startsWith("/companies/") && method === "DELETE") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[2]);
+    const payload = body<{ password?: string }>(options);
+    const storedUser = state.users.find(user => user.token === token);
+    if (!storedUser || payload.password !== storedUser.password) throw new Error("Senha de confirmação inválida.");
+    const company = state.companies.find(item => item.id === id);
+    if (!company) throw new Error("Empresa não encontrada.");
+    if (company.is_primary) throw new Error("A empresa principal não pode ser excluída. Defina outra empresa como principal primeiro.");
+    if (state.companies.some(item => item.parent_company_id === id)) throw new Error("Esta empresa possui filiais vinculadas. Remova ou transfira as filiais primeiro.");
+    const blockers = [
+      state.employees.some(item => item.company_id === id) && "colaboradores",
+      state.movements.some(item => item.company_id === id) && "movimentações",
+      state.meiContracts.some(item => item.company_id === id) && "contratos MEI",
+      state.benefitDistributions.some(item => item.company_id === id) && "benefícios lançados",
+      state.allocations.some(item => item.company_id === id) && "custos alocados",
+      state.auditLogs.some(item => item.company_id === id) && "registros de auditoria"
+    ].filter(Boolean);
+    if (blockers.length) throw new Error(`Esta empresa possui registros vinculados: ${blockers.join(", ")}. Inative-a para preservar o histórico.`);
+    const auditCompany = state.companies.find(item => item.id !== id && item.is_primary) ?? state.companies.find(item => item.id !== id);
+    if (!auditCompany) throw new Error("A última empresa do sistema não pode ser excluída.");
+    state.companies = state.companies.filter(item => item.id !== id);
+    state.resultCenters = state.resultCenters.filter(item => item.company_id !== id);
+    state.employmentTypes = state.employmentTypes.filter(item => item.company_id !== id);
+    appendAudit(state, {
+      company_id: auditCompany.id,
+      module: "Empresas",
+      action: "Empresa excluída",
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${company.code} | ${company.name} | cadastro sem movimentações ou registros operacionais`
+    });
+    saveState(state);
+    return { deleted: true } as T;
+  }
 
   if (route === "/demo/alerts" && method === "GET") return buildAlerts(state, companyId) as T;
   if (route === "/demo/audit-logs" && method === "GET") {
@@ -1679,6 +1714,37 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     });
     saveState(state);
     return item as T;
+  }
+  if (route.startsWith("/employees/") && method === "DELETE") {
+    assertAdmin(token);
+    const employmentId = Number(route.split("/")[2]);
+    const payload = body<{ password?: string }>(options);
+    const storedUser = state.users.find(user => user.token === token);
+    if (!storedUser || payload.password !== storedUser.password) throw new Error("Senha de confirmação inválida.");
+    const item = companyId === ALL_COMPANIES_ID
+      ? state.employees.find(employee => employee.id === employmentId)
+      : state.employees.find(employee => employee.id === employmentId && employee.company_id === companyId);
+    if (!item) throw new Error("Vínculo não encontrado");
+    const blockers = [
+      state.movements.some(movement => movement.employee_id === employmentId) && "movimentações",
+      state.meiContracts.some(contract => contract.employee_id === employmentId) && "contratos MEI",
+      state.benefitDistributions.some(distribution => distribution.employee_id === employmentId) && "benefícios lançados",
+      Object.keys(state.payrollOverrides).some(key => key.endsWith(`:${employmentId}`)) && "ajustes de folha"
+    ].filter(Boolean);
+    if (blockers.length) throw new Error(`Este colaborador possui registros vinculados: ${blockers.join(", ")}. Inative-o para preservar o histórico.`);
+    state.employees = state.employees.filter(employee => employee.id !== employmentId);
+    appendAudit(state, {
+      company_id: item.company_id,
+      module: "Colaboradores",
+      action: "Colaborador excluído",
+      employee_name: item.employee.full_name,
+      result_center: item.result_center,
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `Matrícula ${item.employee_code} | cadastro sem movimentações ou registros operacionais`
+    });
+    saveState(state);
+    return { deleted: true } as T;
   }
 
   if (route === "/demo/movements" && method === "GET") return scopeMovements(state, companyId).filter(item => !params.get("competency") || item.competency === params.get("competency")) as T;

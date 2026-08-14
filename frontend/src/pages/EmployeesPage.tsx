@@ -640,6 +640,10 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         setSelected(updated);
         void load();
       }}
+      onDeleted={() => {
+        setSelected(null);
+        void load();
+      }}
     />}
   </>;
 }
@@ -655,7 +659,8 @@ function EmployeeDrawer({
   supervisorOptions,
   onClose,
   onAction,
-  onSaved
+  onSaved,
+  onDeleted
 }: {
   employee: DemoEmployee;
   token: string;
@@ -668,6 +673,7 @@ function EmployeeDrawer({
   onClose: () => void;
   onAction: (message: string, adminOnly?: boolean) => void;
   onSaved: (employee: DemoEmployee) => void;
+  onDeleted: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EmployeeDraft>(() => employeeToDraft(employee));
@@ -774,6 +780,27 @@ function EmployeeDrawer({
     }
   }
 
+  async function deleteEmployee() {
+    if (user.role !== "ADMIN") return onAction("Seu perfil possui acesso somente para consulta.");
+    const password = window.prompt("Informe sua senha para excluir este colaborador.");
+    if (!password) return;
+    if (!window.confirm(`Excluir definitivamente ${employee.employee.full_name}? A exclusão só será permitida se não houver movimentações ou outros registros vinculados.`)) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api(`/employees/${employee.id}?company_id=${employee.company_id}`, {
+        method: "DELETE",
+        body: JSON.stringify({ password })
+      }, token);
+      onAction(`Colaborador ${employee.employee.full_name} excluído com sucesso.`);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir colaborador.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer wide" onClick={event => event.stopPropagation()}>
     <button className="ghost right" onClick={onClose}>Fechar</button>
     <span className="eyebrow">{employee.employee_code}</span><h2>{employee.employee.full_name}</h2>
@@ -790,6 +817,7 @@ function EmployeeDrawer({
         }}>{editing ? "Cancelar edição" : "Editar"}</button>
         <button className="secondary" onClick={() => void inactivateEmployee()} disabled={saving}>{employee.status === "INACTIVE" ? "Reativar" : "Inativar"}</button>
         <button className="secondary" onClick={() => setEditing(true)}>Transferir CR</button>
+        <button className="danger" onClick={() => void deleteEmployee()} disabled={saving}>Excluir</button>
       </> : <button className="secondary" onClick={() => onAction("Seu perfil possui acesso somente para consulta.")}>Solicitar alteração</button>}
     </div>
     {error && <ErrorMessage message={error} />}
