@@ -15,6 +15,7 @@ from app.models.employment_type import EmploymentType
 from app.models.mei_contract import MeiContract
 from app.models.movement import Movement
 from app.models.payroll_override import PayrollOverride
+from app.models.launch import LaunchItem
 from app.models.result_center import ResultCenter
 from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmploymentRead, SalaryHistoryCreate
 
@@ -203,6 +204,7 @@ def delete_employee(
         (MeiContract, MeiContract.employee_id, "contratos MEI"),
         (BenefitDistribution, BenefitDistribution.employee_id, "benefícios lançados"),
         (PayrollOverride, PayrollOverride.employment_id, "ajustes de folha"),
+        (LaunchItem, LaunchItem.employment_id, "lançamentos"),
     ]
     blockers = [
         label

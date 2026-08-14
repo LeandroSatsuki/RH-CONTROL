@@ -168,6 +168,127 @@ def test_delete_empty_employee_and_company_with_safety_guards(
     ).status_code == 409
 
 
+def test_monthly_launches_resume_confirm_and_feed_payroll(client: TestClient) -> None:
+    assert client.post(
+        "/api/setup",
+        json={
+            "company_name": "Empresa Principal",
+            "backup_directory": "",
+            "auto_backup_on_start": True,
+            "include_saturdays": False,
+            "include_sundays": False,
+            "default_daily_hours": 8.8,
+            "admin_username": "admin",
+            "admin_full_name": "Administrador",
+            "admin_password": "SenhaForte123",
+        },
+    ).status_code == 201
+    admin = auth_header(client, "admin", "SenhaForte123")
+    center = client.post(
+        "/api/result-centers", headers=admin,
+        json={"code": "COM", "name": "Comercial", "active": True},
+    ).json()
+    mei_type = client.post(
+        "/api/employment-types", headers=admin,
+        json={"name": "MEI", "has_charges": False, "active": True},
+    ).json()
+    employee = client.post(
+        "/api/employees",
+        headers=admin,
+        json={
+            "cpf": "52998224725",
+            "full_name": "Promotor MEI",
+            "employee_code": "MEI-001",
+            "company_id": 1,
+            "employment_type_id": mei_type["id"],
+            "result_center_id": center["id"],
+            "job_title": "Promotor",
+            "admission_date": "2026-08-01",
+            "salary_base": 1,
+            "supervisor_name": "Supervisora A",
+            "benefits": ["Cesta básica"],
+            "pix_key_type": "CPF",
+            "pix_key": "52998224725",
+        },
+    )
+    assert employee.status_code == 201
+    employment_id = employee.json()["id"]
+
+    created = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2026-08", "kind": "MEI"},
+    )
+    assert created.status_code == 200
+    batch = created.json()
+    assert batch["status"] == "PENDING"
+    assert batch["eligible_count"] == 1
+    assert client.patch(
+        f"/api/demo/launches/{batch['id']}", headers=admin,
+        json={"filters": {}, "items": [{"employment_id": employment_id, "amount": 1800, "note": "NF agosto"}]},
+    ).status_code == 200
+    resumed = client.get(
+        "/api/demo/launches?competency=2026-08", headers=admin
+    ).json()[0]
+    assert resumed["total"] == 1800
+    assert resumed["employees"][0]["note"] == "NF agosto"
+    confirmed = client.post(
+        f"/api/demo/launches/{batch['id']}/confirm", headers=admin
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "CONFIRMED"
+    assert client.post(
+        f"/api/demo/launches/{batch['id']}/confirm", headers=admin
+    ).status_code == 409
+    payroll = client.get(
+        "/api/demo/payroll?competency=2026-08", headers=admin
+    ).json()[0]
+    assert payroll["pro_labore"] == 1800
+
+    basket = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2026-08", "kind": "BASIC_BASKET"},
+    ).json()
+    assert basket["eligible_count"] == 1
+    client.patch(
+        f"/api/demo/launches/{basket['id']}", headers=admin,
+        json={"filters": {}, "items": [{"employment_id": employment_id, "amount": 250}]},
+    )
+    assert client.post(
+        f"/api/demo/launches/{basket['id']}/confirm", headers=admin
+    ).status_code == 200
+    payroll = client.get(
+        "/api/demo/payroll?competency=2026-08", headers=admin
+    ).json()[0]
+    assert payroll["basic_basket"] == 250
+    assert payroll["grand_total"] > payroll["pro_labore"] + payroll["basic_basket"]
+
+    bonus = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2026-08", "kind": "BONUS"},
+    ).json()
+    saved_bonus = client.patch(
+        f"/api/demo/launches/{bonus['id']}", headers=admin,
+        json={
+            "filters": {"supervisor": "Supervisora A", "modality": "MEI", "center": "COM"},
+            "items": [{"employment_id": employment_id, "amount": 400}],
+        },
+    )
+    assert saved_bonus.status_code == 200
+    assert saved_bonus.json()["filters"]["supervisor"] == "Supervisora A"
+    assert client.post(
+        f"/api/demo/launches/{bonus['id']}/confirm", headers=admin
+    ).status_code == 200
+    payroll = client.get(
+        "/api/demo/payroll?competency=2026-08", headers=admin
+    ).json()[0]
+    assert payroll["profit_distribution"] == 400
+
+    audit = client.get(
+        "/api/demo/audit-logs?module=Lançamentos", headers=admin
+    ).json()
+    assert len(audit) == 3
+
+
 def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     setup = client.post(
         "/api/setup",

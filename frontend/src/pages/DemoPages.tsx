@@ -333,6 +333,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     costAid: acc.costAid + item.cost_aid,
     transport: acc.transport + item.transport,
     meal: acc.meal + item.meal,
+    basicBasket: acc.basicBasket + item.basic_basket,
     lodging: acc.lodging + item.lodging,
     insurance: acc.insurance + item.insurance,
     healthPlan: acc.healthPlan + item.health_plan,
@@ -354,7 +355,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     totalProvisions: acc.totalProvisions + item.total_provisions,
     grandTotal: acc.grandTotal + item.grand_total
   }), {
-    salary: 0, proLabore: 0, profit: 0, costAid: 0, transport: 0, meal: 0, lodging: 0, insurance: 0, healthPlan: 0,
+    salary: 0, proLabore: 0, profit: 0, costAid: 0, transport: 0, meal: 0, basicBasket: 0, lodging: 0, insurance: 0, healthPlan: 0,
     subtotal: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacationThird: 0,
     fgtsVacation: 0, thirteenth: 0, fgtsThirteenth: 0, notice: 0, fgtsNotice: 0, fgtsFine: 0,
     employerContribution: 0, totalProvisions: 0, grandTotal: 0
@@ -363,9 +364,9 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     acc[item.result_center.code] = (acc[item.result_center.code] ?? 0) + item.grand_total;
     return acc;
   }, {});
-  const benefitsTotal = totals.transport + totals.meal + totals.lodging + totals.insurance + totals.healthPlan;
+  const benefitsTotal = totals.transport + totals.meal + totals.basicBasket + totals.lodging + totals.insurance + totals.healthPlan;
   const payrollCenters = distinctBy(rows.map(item => item.result_center), item => item.code).sort((a, b) => a.code.localeCompare(b.code, "pt-BR"));
-  function updateRowField(rowId: number, field: keyof Pick<PayrollRow, "salary" | "pro_labore" | "profit_distribution" | "cost_aid" | "transport" | "meal" | "lodging" | "insurance" | "health_plan">, value: number) {
+  function updateRowField(rowId: number, field: keyof Pick<PayrollRow, "salary" | "pro_labore" | "profit_distribution" | "cost_aid" | "transport" | "meal" | "basic_basket" | "lodging" | "insurance" | "health_plan">, value: number) {
     setDirtyRows(current => new Set(current).add(rowId));
     setRows(current => current.map(row => {
       if (row.employee_id !== rowId) return row;
@@ -390,6 +391,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
           cost_aid: row.cost_aid,
           transport: row.transport,
           meal: row.meal,
+          basic_basket: row.basic_basket,
           lodging: row.lodging,
           insurance: row.insurance,
           health_plan: row.health_plan
@@ -484,7 +486,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <th colSpan={5} className="group-head group-earnings">Composições</th>
             <th colSpan={5} className="group-head group-charges">Encargos</th>
             <th colSpan={10} className="group-head group-provisions">Provisões</th>
-            <th colSpan={5} className="group-head group-earnings">Benefícios</th>
+            <th colSpan={6} className="group-head group-earnings">Benefícios</th>
             <th rowSpan={2} className="group-head group-total">Total Geral</th>
             <th rowSpan={2}>Memória</th>
           </tr>
@@ -511,6 +513,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <th className="group-provisions">Total Provisões</th>
             <th className="group-earnings">Vale transporte</th>
             <th className="group-earnings">Alimentação</th>
+            <th className="group-earnings">Cesta básica</th>
             <th className="group-earnings">Hospedagem</th>
             <th className="group-earnings">Seguro</th>
             <th className="group-earnings">Plano de Saúde</th>
@@ -574,6 +577,12 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
                 className="group-earnings"
               />
               <EditablePayrollCell
+                value={item.basic_basket}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "basic_basket", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
                 value={item.lodging}
                 editing={editMode}
                 onChange={value => updateRowField(item.employee_id, "lodging", value)}
@@ -620,6 +629,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
               <td className="group-provisions strong">{money.format(totals.totalProvisions)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.transport)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.meal)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.basicBasket)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.lodging)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.insurance)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.healthPlan)}</td>
@@ -2799,7 +2809,7 @@ function EditablePayrollCell({ value, editing, onChange, className }: { value: n
 }
 
 const payrollNumericFields = [
-  "salary", "pro_labore", "profit_distribution", "cost_aid", "transport", "meal", "lodging", "insurance", "health_plan",
+  "salary", "pro_labore", "profit_distribution", "cost_aid", "transport", "meal", "basic_basket", "lodging", "insurance", "health_plan",
   "subtotal_earnings", "inss", "rat", "terceiros", "fgts", "charges", "vacation", "vacation_third", "fgts_vacation",
   "thirteenth_salary", "fgts_thirteenth_salary", "notice_indemnity", "fgts_notice", "fgts_fine", "employer_contribution",
   "total_provisions", "gross_payroll", "net_payroll", "total_cost", "grand_total"
@@ -2814,7 +2824,7 @@ function normalizePayrollRow(row: PayrollRow) {
 }
 
 function PayrollCalculationMemory({ row, rates, onClose }: { row: PayrollRow; rates: DemoSettings["payroll_rates"]; onClose: () => void }) {
-  const benefits = row.transport + row.meal + row.lodging + row.insurance + row.health_plan;
+  const benefits = row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan;
   const lines = [
     ["Base dos encargos", "Salário + pró-labore + distribuição de lucro + ajuda de custo", row.subtotal_earnings],
     ["INSS", `${money.format(row.subtotal_earnings)} x ${rates.inss}%`, row.inss],
@@ -2823,7 +2833,7 @@ function PayrollCalculationMemory({ row, rates, onClose }: { row: PayrollRow; ra
     ["FGTS", `${money.format(row.subtotal_earnings)} x ${rates.fgts}%`, row.fgts],
     ["Total de encargos", "INSS + RAT + Terceiros + FGTS", row.charges],
     ["Total de provisões", "Férias + 1/3 + FGTS férias + 13º + aviso + FGTS + multa + patronal", row.total_provisions],
-    ["Total de benefícios", "VT + alimentação + hospedagem + seguro + plano de saúde (fora da base de encargos)", benefits],
+    ["Total de benefícios", "VT + alimentação + cesta básica + hospedagem + seguro + plano de saúde (fora da base de encargos)", benefits],
     ["Total geral", "Composições + encargos + provisões + benefícios", row.grand_total]
   ] as const;
   return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer wide" onClick={event => event.stopPropagation()}>
@@ -2847,7 +2857,7 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
   const headers = [
     "Colaborador", "Centro", "Salario", "Prolabore", "DistribuicaoLucro", "AjudaCusto",
     "Subtotal", "INSS", "RAT", "Terceiros", "FGTS", "TotalEncargos", "Ferias", "1_3Ferias", "FGTSFerias", "13Salario", "FGTS13",
-    "AvisoPrevio", "FGTSAviso", "MultaFGTS", "Patronal", "TotalProvisoes", "ValeTransporte", "Alimentacao", "Hospedagem", "Seguro", "PlanoSaude", "TotalGeral"
+    "AvisoPrevio", "FGTSAviso", "MultaFGTS", "Patronal", "TotalProvisoes", "ValeTransporte", "Alimentacao", "CestaBasica", "Hospedagem", "Seguro", "PlanoSaude", "TotalGeral"
   ];
   const totals = rows.reduce((acc, row) => ({
     salary: acc.salary + row.salary,
@@ -2856,6 +2866,7 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
     cost_aid: acc.cost_aid + row.cost_aid,
     transport: acc.transport + row.transport,
     meal: acc.meal + row.meal,
+    basic_basket: acc.basic_basket + row.basic_basket,
     lodging: acc.lodging + row.lodging,
     insurance: acc.insurance + row.insurance,
     health_plan: acc.health_plan + row.health_plan,
@@ -2877,7 +2888,7 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
     total_provisions: acc.total_provisions + row.total_provisions,
     grand_total: acc.grand_total + row.grand_total
   }), {
-    salary: 0, pro_labore: 0, profit_distribution: 0, cost_aid: 0, transport: 0, meal: 0, lodging: 0, insurance: 0, health_plan: 0,
+    salary: 0, pro_labore: 0, profit_distribution: 0, cost_aid: 0, transport: 0, meal: 0, basic_basket: 0, lodging: 0, insurance: 0, health_plan: 0,
     subtotal_earnings: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacation_third: 0,
     fgts_vacation: 0, thirteenth_salary: 0, fgts_thirteenth_salary: 0, notice_indemnity: 0, fgts_notice: 0, fgts_fine: 0,
     employer_contribution: 0, total_provisions: 0, grand_total: 0
@@ -2893,10 +2904,10 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
       row.salary, row.pro_labore, row.profit_distribution, row.cost_aid,
       row.subtotal_earnings, row.inss, row.rat, row.terceiros, row.fgts, row.charges, row.vacation, row.vacation_third, row.fgts_vacation,
       row.thirteenth_salary, row.fgts_thirteenth_salary, row.notice_indemnity, row.fgts_notice, row.fgts_fine, row.employer_contribution,
-      row.total_provisions, row.transport, row.meal, row.lodging, row.insurance, row.health_plan, row.grand_total
+      row.total_provisions, row.transport, row.meal, row.basic_basket, row.lodging, row.insurance, row.health_plan, row.grand_total
     ]),
     [],
-    ["Totais", "", totals.salary, totals.pro_labore, totals.profit_distribution, totals.cost_aid, totals.subtotal_earnings, totals.inss, totals.rat, totals.terceiros, totals.fgts, totals.charges, totals.vacation, totals.vacation_third, totals.fgts_vacation, totals.thirteenth_salary, totals.fgts_thirteenth_salary, totals.notice_indemnity, totals.fgts_notice, totals.fgts_fine, totals.employer_contribution, totals.total_provisions, totals.transport, totals.meal, totals.lodging, totals.insurance, totals.health_plan, totals.grand_total]
+    ["Totais", "", totals.salary, totals.pro_labore, totals.profit_distribution, totals.cost_aid, totals.subtotal_earnings, totals.inss, totals.rat, totals.terceiros, totals.fgts, totals.charges, totals.vacation, totals.vacation_third, totals.fgts_vacation, totals.thirteenth_salary, totals.fgts_thirteenth_salary, totals.notice_indemnity, totals.fgts_notice, totals.fgts_fine, totals.employer_contribution, totals.total_provisions, totals.transport, totals.meal, totals.basic_basket, totals.lodging, totals.insurance, totals.health_plan, totals.grand_total]
   ];
   downloadCsv(`custo-folha-${slugify(competency)}.csv`, lines);
 }

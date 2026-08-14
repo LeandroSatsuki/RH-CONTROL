@@ -21,6 +21,7 @@ from app.models.mei_contract import MeiContract
 from app.models.monthly_closing import MonthlyClosing
 from app.models.movement import Movement
 from app.models.payroll_override import PayrollOverride
+from app.models.launch import LaunchBatch
 from app.models.result_center import ResultCenter
 from app.models.system_setting import SystemSetting
 from app.models.enums import CompanyKind
@@ -447,6 +448,7 @@ def delete_company(
         (MeiContract, MeiContract.company_id, "contratos MEI"),
         (BenefitDistribution, BenefitDistribution.company_id, "benefícios lançados"),
         (PayrollOverride, PayrollOverride.company_id, "ajustes de folha"),
+        (LaunchBatch, LaunchBatch.company_id, "lançamentos"),
         (MonthlyClosing, MonthlyClosing.company_id, "fechamentos mensais"),
         (AuditEntry, AuditEntry.company_id, "registros de auditoria"),
     ]

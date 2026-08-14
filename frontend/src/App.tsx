@@ -10,6 +10,7 @@ import { EmployeesPage } from "./pages/EmployeesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SetupPage } from "./pages/SetupPage";
 import { ReportMakerPage } from "./pages/ReportMakerPage";
+import { LaunchesPage } from "./pages/LaunchesPage";
 import { DemoScopeProvider, ScopedCompany } from "./context/DemoScope";
 import { Company, User } from "./types";
 
@@ -17,7 +18,7 @@ type LoadState = "loading" | "ready" | "error";
 
 const isDev = import.meta.env.DEV;
 const LAST_PAGE_KEY = "nexo:last-page";
-const pages: Page[] = ["dashboard", "alerts", "audit", "employees", "movements", "mei-contracts", "benefits", "payroll", "indicators", "report-maker", "reports", "import", "backup", "closing", "settings", "centers", "types"];
+const pages: Page[] = ["dashboard", "alerts", "audit", "employees", "movements", "launches", "mei-contracts", "benefits", "payroll", "indicators", "report-maker", "reports", "import", "backup", "closing", "settings", "centers", "types"];
 
 function storedPage(): Page {
   const value = localStorage.getItem(LAST_PAGE_KEY);
@@ -338,6 +339,7 @@ export default function App() {
         {page === "audit" && <AuditPage token={token} user={user} />}
         {page === "employees" && <EmployeesPage token={token} user={user} />}
         {page === "movements" && <MovementsPage token={token} user={user} />}
+        {page === "launches" && <LaunchesPage token={token} user={user} />}
         {page === "mei-contracts" && <MeiContractsPage token={token} user={user} />}
         {page === "benefits" && <BenefitsPage token={token} user={user} />}
         {page === "payroll" && <PayrollPage token={token} user={user} />}

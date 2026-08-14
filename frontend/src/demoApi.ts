@@ -9,6 +9,13 @@ const LOCAL_MODE_STORAGE_KEY = "nexo-local-mode";
 const PRESENTATION_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 const ALL_COMPANIES_ID = 0;
 
+interface DemoLaunchItem { employment_id: number; amount: number; note: string }
+interface DemoLaunchBatch {
+  id: number; company_id: number; competency: string; kind: "MEI" | "BASIC_BASKET" | "BONUS";
+  status: "PENDING" | "CONFIRMED"; filters: Record<string, string>; items: DemoLaunchItem[];
+  created_by: string; updated_by: string; created_at: string; updated_at: string; confirmed_at: string | null;
+}
+
 interface DemoState {
   companies: DemoCompany[];
   closings: Record<string, DemoClosing>;
@@ -25,6 +32,7 @@ interface DemoState {
   reportTemplates: Record<string, unknown[]>;
   indicatorRevenue: Record<string, Record<string, number>>;
   payrollOverrides: Record<string, Partial<Record<string, number>>>;
+  launchBatches: DemoLaunchBatch[];
 }
 
 function isOperationalLocalMode() {
@@ -97,6 +105,7 @@ function localDefaultState(): DemoState {
     reportTemplates: {},
     indicatorRevenue: {},
     payrollOverrides: {},
+    launchBatches: [],
     auditLogs: [
       {
         id: 1,
@@ -133,6 +142,7 @@ function presentationDemoDefaultState(): DemoState {
     reportTemplates: {},
     indicatorRevenue: {},
     payrollOverrides: {},
+    launchBatches: [],
     auditLogs: [
       {
         id: 1,
@@ -163,6 +173,7 @@ function loadState(): DemoState {
     parsed.reportTemplates = parsed.reportTemplates ?? {};
     parsed.indicatorRevenue = parsed.indicatorRevenue ?? {};
     parsed.payrollOverrides = parsed.payrollOverrides ?? {};
+    parsed.launchBatches = parsed.launchBatches ?? [];
     const fallbackRates = demoCompanies[0].settings.payroll_rates;
     parsed.companies = parsed.companies.map(company => ({
       ...company,
@@ -375,6 +386,34 @@ function normalizeText(value: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function localLaunchEligible(employee: DemoEmployee, kind: DemoLaunchBatch["kind"]) {
+  if (employee.status === "INACTIVE") return false;
+  if (kind === "MEI") return normalizeText(employee.employment_type.name) === "mei";
+  if (kind === "BASIC_BASKET") return employee.benefits.some(value => normalizeText(value) === "cesta basica");
+  return true;
+}
+
+function localLaunchResponse(state: DemoState, batch: DemoLaunchBatch) {
+  const stored = new Map(batch.items.map(item => [item.employment_id, item]));
+  const eligible = state.employees.filter(item => item.company_id === batch.company_id && localLaunchEligible(item, batch.kind));
+  return {
+    ...batch,
+    total: roundMoney(batch.items.reduce((sum, item) => sum + item.amount, 0)),
+    filled_count: batch.items.filter(item => item.amount > 0).length,
+    eligible_count: eligible.length,
+    employees: eligible.map(employee => ({
+      employment_id: employee.id,
+      employee_name: employee.employee.full_name,
+      employee_code: employee.employee_code,
+      supervisor_name: employee.supervisor_name,
+      employment_type: employee.employment_type.name,
+      result_center: employee.result_center,
+      amount: stored.get(employee.id)?.amount ?? 0,
+      note: stored.get(employee.id)?.note ?? ""
+    }))
+  };
 }
 
 function isValidCpfCnpj(value: string) {
@@ -1894,6 +1933,80 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     });
     saveState(state);
     return item as T;
+  }
+
+  if (route === "/demo/launches" && method === "GET") {
+    const competency = params.get("competency") ?? "2026-06";
+    return state.launchBatches
+      .filter(item => item.company_id === companyId && item.competency === competency)
+      .map(item => localLaunchResponse(state, item)) as T;
+  }
+  if (route === "/demo/launches" && method === "POST") {
+    assertAdmin(token);
+    if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para realizar lançamentos.");
+    const payload = body<{ competency: string; kind: DemoLaunchBatch["kind"] }>(options);
+    let batch = state.launchBatches.find(item => item.company_id === companyId && item.competency === payload.competency && item.kind === payload.kind);
+    if (!batch) {
+      const now = new Date().toISOString();
+      batch = { id: nextId(state.launchBatches), company_id: companyId, competency: payload.competency, kind: payload.kind, status: "PENDING", filters: {}, items: [], created_by: currentUser.full_name, updated_by: currentUser.full_name, created_at: now, updated_at: now, confirmed_at: null };
+      state.launchBatches.push(batch);
+      saveState(state);
+    }
+    return localLaunchResponse(state, batch) as T;
+  }
+  const launchMatch = route.match(/^\/demo\/launches\/(\d+)$/);
+  if (launchMatch && method === "GET") {
+    const batch = state.launchBatches.find(item => item.id === Number(launchMatch[1]) && item.company_id === companyId);
+    if (!batch) throw new Error("Lançamento não encontrado.");
+    return localLaunchResponse(state, batch) as T;
+  }
+  if (launchMatch && method === "PATCH") {
+    assertAdmin(token);
+    const batch = state.launchBatches.find(item => item.id === Number(launchMatch[1]) && item.company_id === companyId);
+    if (!batch) throw new Error("Lançamento não encontrado.");
+    if (batch.status !== "PENDING") throw new Error("Lançamento já confirmado e bloqueado para edição.");
+    const payload = body<{ filters?: Record<string, string>; items?: DemoLaunchItem[] }>(options);
+    const eligible = new Set(state.employees.filter(item => item.company_id === companyId && localLaunchEligible(item, batch.kind)).map(item => item.id));
+    batch.filters = payload.filters ?? {};
+    batch.items = (payload.items ?? []).filter(item => eligible.has(item.employment_id) && Number(item.amount) > 0).map(item => ({ ...item, amount: roundMoney(Number(item.amount)) }));
+    batch.updated_by = currentUser.full_name;
+    batch.updated_at = new Date().toISOString();
+    saveState(state);
+    return localLaunchResponse(state, batch) as T;
+  }
+  const confirmLaunchMatch = route.match(/^\/demo\/launches\/(\d+)\/confirm$/);
+  if (confirmLaunchMatch && method === "POST") {
+    assertAdmin(token);
+    const batch = state.launchBatches.find(item => item.id === Number(confirmLaunchMatch[1]) && item.company_id === companyId);
+    if (!batch) throw new Error("Lançamento não encontrado.");
+    if (batch.status !== "PENDING") throw new Error("Este lançamento já foi confirmado.");
+    if (!batch.items.length) throw new Error("Informe ao menos um valor antes de confirmar.");
+    if (batch.kind === "BASIC_BASKET") {
+      for (const item of batch.items) {
+        const employee = state.employees.find(value => value.id === item.employment_id)!;
+        state.benefitDistributions.push({
+          id: nextId(state.benefitDistributions), company_id: companyId, competency: batch.competency,
+          benefit_code: "CB", benefit_name: "Cesta básica", employee_id: employee.id,
+          employee_name: employee.employee.full_name, result_center: employee.result_center,
+          supervisor_name: employee.supervisor_name, employment_type: employee.employment_type.name,
+          state: employee.state, days_worked: 0, value_per_day: 0, monthly_value: item.amount,
+          amount: item.amount, source: "Lançamentos", description: "Lançamento mensal confirmado",
+          created_at: new Date().toLocaleString("pt-BR"), created_by: currentUser.full_name
+        });
+      }
+    } else {
+      const field = batch.kind === "MEI" ? "pro_labore" : "profit_distribution";
+      for (const item of batch.items) {
+        const key = `${companyId}:${batch.competency}:${item.employment_id}`;
+        state.payrollOverrides[key] = { ...(state.payrollOverrides[key] ?? {}), [field]: item.amount };
+      }
+    }
+    batch.status = "CONFIRMED";
+    batch.confirmed_at = new Date().toISOString();
+    batch.updated_at = batch.confirmed_at;
+    appendAudit(state, { company_id: companyId, module: "Lançamentos", action: "Lançamento confirmado", performed_by: currentUser.full_name, performed_role: currentUser.role, details: `${batch.kind} | ${batch.competency} | ${batch.items.length} colaborador(es)` });
+    saveState(state);
+    return localLaunchResponse(state, batch) as T;
   }
 
   if (route === "/demo/payroll" && method === "GET") {
