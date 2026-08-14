@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.6 - 2026-08-14
+
+### Visibilidade da atualização do cliente
+
+- mostra permanentemente a versão instalada no cabeçalho;
+- informa quando a verificação está em andamento ou quando o sistema já está atualizado;
+- exibe a porcentagem e uma barra durante o download;
+- destaca quando a nova versão está pronta para reiniciar e instalar;
+- permite solicitar uma nova verificação diretamente pelo indicador de versão.
+
 ## 1.0.1 - 2026-08-03
 
 ### Correção do servidor Windows

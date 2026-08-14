@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld("nexoUpdater", {
   },
   check() {
     ipcRenderer.send("updater:check");
+  },
+  getStatus() {
+    return ipcRenderer.invoke("updater:get-status");
   }
 });
 

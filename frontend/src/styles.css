@@ -176,11 +176,20 @@ label.check input { width: 15px; min-height: 15px; height: 15px; padding: 0; }
 :root[data-theme="dark"] .feedback.success { border-color: #2f6847; background: #193425; color: #9addb2; }
 .update-banner { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; border: 1px solid #b7d4ef; border-radius: 8px; background: #eef6ff; color: #173b67; padding: 10px 12px; font-size: 13px; font-weight: 700; }
 .update-banner button { padding: 7px 11px; font-size: 12px; }
+.update-banner-copy { display: grid; gap: 7px; flex: 1; }
+.update-banner progress { width: min(360px, 100%); height: 8px; accent-color: #1d5f9d; }
 .update-ready { border-color: #a9d8bd; background: #eefaf3; color: #1e6240; }
 .update-error { border-color: #f2d1a8; background: #fff8ed; color: #8a5b11; }
 :root[data-theme="dark"] .update-banner { border-color: #315a80; background: #122539; color: #d6e9fb; }
 :root[data-theme="dark"] .update-ready { border-color: #2f6847; background: #193425; color: #9addb2; }
 :root[data-theme="dark"] .update-error { border-color: #6f5528; background: #342817; color: #f5c56d; }
+.update-status-button { display: inline-flex; align-items: center; gap: 6px; min-width: max-content; border: 1px solid #cbd8e5; border-radius: 8px; background: #fff; color: #31506f; padding: 8px 10px; font-size: 11px; font-weight: 800; cursor: pointer; }
+.update-status-button:hover { border-color: #7da6ce; background: #f3f8fd; }
+.update-status-button span { font-size: 15px; line-height: 1; }
+.update-status-downloading, .update-status-checking, .update-status-available { color: #18588f; background: #eef6ff; }
+.update-status-ready { border-color: #72ba90; color: #1e6240; background: #eefaf3; }
+.update-status-error { border-color: #dfb26e; color: #8a5b11; background: #fff8ed; }
+:root[data-theme="dark"] .update-status-button { border-color: #354c63; background: #182535; color: #d6e9fb; }
 .inline-loading { padding: 14px 4px; color: var(--muted); font-size: 13px; }
 .empty { padding: 32px; text-align: center; color: var(--muted); font-size: 13px; }
 .note { margin-top: 18px; font-size: 12px; }
