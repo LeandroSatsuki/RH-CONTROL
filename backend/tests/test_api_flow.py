@@ -1053,6 +1053,20 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         )["name"]
         == "BETA GLOBAL"
     )
+    primary_beta_center = next(
+        item
+        for item in client.get(
+            "/api/result-centers?company_id=1", headers=admin
+        ).json()
+        if item["code"] == "BETA"
+    )
+    changed_center_employee = client.patch(
+        f"/api/employees/{created_employee['id']}?company_id=1",
+        headers=admin,
+        json={"result_center_id": primary_beta_center["id"]},
+    )
+    assert changed_center_employee.status_code == 200
+    assert changed_center_employee.json()["employee_code"].startswith("BETA-")
     transferred_employee = client.patch(
         f"/api/employees/{created_employee['id']}?company_id=1",
         headers=admin,

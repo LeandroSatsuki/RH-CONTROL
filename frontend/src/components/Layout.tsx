@@ -62,6 +62,7 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
   const [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
   const [alerts, setAlerts] = useState<DemoAlert[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [companySwitching, setCompanySwitching] = useState(false);
   const { companies, selectedCompany, selectedCompanyId, setSelectedCompanyId } = useDemoScope();
 
   useEffect(() => {
@@ -83,6 +84,19 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
     const timer = window.setInterval(() => { void loadAlerts(); }, 30_000);
     return () => { active = false; window.clearInterval(timer); };
   }, [selectedCompany.id, token]);
+
+  useEffect(() => {
+    if (!companySwitching) return;
+    const timer = window.setTimeout(() => setCompanySwitching(false), 600);
+    return () => window.clearTimeout(timer);
+  }, [companySwitching, selectedCompanyId]);
+
+  function changeCompany(companyId: number) {
+    if (companyId === selectedCompanyId) return;
+    setNotificationsOpen(false);
+    setCompanySwitching(true);
+    setSelectedCompanyId(companyId);
+  }
 
   function openAlert(alert: DemoAlert) {
     setNotificationsOpen(false);
@@ -139,7 +153,8 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
           <select
             className="company-switch"
             value={selectedCompanyId}
-            onChange={event => setSelectedCompanyId(Number(event.target.value))}
+            onChange={event => changeCompany(Number(event.target.value))}
+            disabled={companySwitching}
             aria-label="Selecionar empresa"
           >
             {companies.map(company => (
@@ -180,7 +195,10 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
           </div>
           <span className="role">{user.role === "ADMIN" ? "Administrador" : "Consultor"}</span>
         </header>
-        <div className="content">{children}</div>
+        <div className="content" key={selectedCompanyId}>
+          {children}
+          {companySwitching && <div className="company-loading" role="status" aria-live="polite"><span className="company-loading-spinner" />Carregando dados da empresa...</div>}
+        </div>
       </main>
       {!localMode && <NetworkChat currentUser={user} token={token} />}
     </div>

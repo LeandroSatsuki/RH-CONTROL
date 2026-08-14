@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { DemoBackup, DemoClosing, DemoSettings } from "../mocks/demoTypes";
 import { CompanyKind } from "../types";
 
@@ -65,6 +65,10 @@ function readStoredCompanyId(fallback: number) {
 
 export function CompanyScopeProvider({ companies, children }: { companies: ScopedCompany[]; children: ReactNode }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState(() => readStoredCompanyId(companies[0]?.id ?? 1));
+  const selectCompany = useCallback((companyId: number) => {
+    localStorage.setItem(COMPANY_KEY, String(companyId));
+    setSelectedCompanyId(companyId);
+  }, []);
 
   useEffect(() => {
     if (!companies.length) return;
@@ -85,10 +89,10 @@ export function CompanyScopeProvider({ companies, children }: { companies: Scope
     return {
       companies: [allCompaniesScope, ...companies],
       selectedCompanyId: selectedCompany.id,
-      setSelectedCompanyId,
+      setSelectedCompanyId: selectCompany,
       selectedCompany
     };
-  }, [companies, selectedCompanyId]);
+  }, [companies, selectCompany, selectedCompanyId]);
 
   return <CompanyScopeContext.Provider value={value}>{children}</CompanyScopeContext.Provider>;
 }

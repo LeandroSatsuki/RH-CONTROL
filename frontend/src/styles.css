@@ -126,7 +126,10 @@ header small { color: var(--muted); font-size: 11px; font-weight: 600; }
 .benefits-fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
 .benefits-fieldset legend { padding: 0 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .eyebrow { color: #47729f; font-size: 10px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; }
-.content { padding: 24px 28px 36px; max-width: 1580px; margin: auto; }
+.content { position: relative; min-height: calc(100vh - 92px); padding: 24px 28px 36px; max-width: 1580px; margin: auto; }
+.company-loading { position: absolute; z-index: 40; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 260px; background: color-mix(in srgb, var(--bg) 88%, transparent); color: var(--muted); font-size: 14px; font-weight: 700; backdrop-filter: blur(2px); }
+.company-loading-spinner { width: 22px; height: 22px; border: 3px solid var(--line); border-top-color: var(--primary); border-radius: 50%; animation: company-loading-spin .75s linear infinite; }
+@keyframes company-loading-spin { to { transform: rotate(360deg); } }
 .page-title { display: flex; justify-content: space-between; align-items: end; gap: 18px; margin-bottom: 17px; }
 .page-title p { margin-bottom: 0; }
 .compact-title h1 { margin-bottom: 3px; }
