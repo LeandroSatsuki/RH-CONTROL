@@ -35,6 +35,9 @@ interface Props {
   onLogout: () => void;
   children: ReactNode;
   localMode?: boolean;
+  updateStatus?: NexoUpdateStatus | null;
+  onCheckUpdate?: () => void;
+  onInstallUpdate?: () => void;
 }
 
 const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] = [
@@ -54,7 +57,7 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "settings", label: "Ajustes do sistema", icon: "⚙", adminOnly: true }
 ];
 
-export function Layout({ user, token, page, onPage, onRefresh, onLogout, children, localMode = IS_DEMO_MODE }: Props) {
+export function Layout({ user, token, page, onPage, onRefresh, onLogout, children, localMode = IS_DEMO_MODE, updateStatus, onCheckUpdate, onInstallUpdate }: Props) {
   const [dark, setDark] = useState(localStorage.getItem("theme") === "dark");
   const [alerts, setAlerts] = useState<DemoAlert[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -84,6 +87,26 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
     setNotificationsOpen(false);
     if (alert.type.includes("Contrato") && alert.target_id) localStorage.setItem("nexo:mei-contract-target-id", String(alert.target_id));
     onPage(alert.type === "Ajuste pendente" ? "movements" : alert.type.includes("Contrato") ? "mei-contracts" : "employees");
+  }
+
+  const installedVersion = updateStatus?.currentVersion || updateStatus?.version || "";
+  const updateLabel = updateStatus?.state === "checking"
+    ? "Verificando atualização..."
+    : updateStatus?.state === "available"
+      ? "Atualização encontrada"
+      : updateStatus?.state === "downloading"
+        ? `Baixando ${updateStatus.percent ?? 0}%`
+        : updateStatus?.state === "ready"
+          ? `Instalar v${updateStatus.version || "nova versão"}`
+          : updateStatus?.state === "error"
+            ? "Falha ao atualizar"
+            : installedVersion
+              ? `v${installedVersion} • atualizado`
+              : "Verificar atualização";
+
+  function handleUpdateClick() {
+    if (updateStatus?.state === "ready") onInstallUpdate?.();
+    else onCheckUpdate?.();
   }
 
   return (
@@ -139,6 +162,15 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
               {alerts.length > 5 && <button className="notification-more" type="button" onClick={() => { setNotificationsOpen(false); onPage("alerts"); }}>Ver mais alertas</button>}
             </div>}
           </div>
+          <button
+            type="button"
+            className={`update-status-button update-status-${updateStatus?.state || "idle"}`}
+            onClick={handleUpdateClick}
+            title={updateStatus?.message || "Verificar se existe uma nova versão"}
+            aria-label={updateLabel}
+          >
+            <span aria-hidden="true">↥</span>{updateLabel}
+          </button>
           <button type="button" className="refresh-button" onClick={onRefresh} aria-label="Atualizar dados desta tela" title="Atualizar dados desta tela">↻</button>
           <div>
             <span className="eyebrow">{localMode ? "Operação local" : "Sistema conectado"}</span>

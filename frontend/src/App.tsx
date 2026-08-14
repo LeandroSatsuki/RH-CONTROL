@@ -57,9 +57,15 @@ export default function App() {
 
   useEffect(() => {
     if (!window.nexoUpdater) return;
-    return window.nexoUpdater.onStatus(status => {
-      setUpdateStatus(status.state === "idle" ? null : status);
+    let active = true;
+    void window.nexoUpdater.getStatus().then(status => {
+      if (active) setUpdateStatus(status);
     });
+    const unsubscribe = window.nexoUpdater.onStatus(status => setUpdateStatus(status));
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -323,10 +329,26 @@ export default function App() {
 
   return (
     <DemoScopeProvider companies={companies}>
-      <Layout user={user} token={token} page={page} onPage={navigate} onRefresh={refreshCurrentPage} onLogout={logout} localMode={localMode}>
-        {updateStatus && (
+      <Layout
+        user={user}
+        token={token}
+        page={page}
+        onPage={navigate}
+        onRefresh={refreshCurrentPage}
+        onLogout={logout}
+        localMode={localMode}
+        updateStatus={updateStatus}
+        onCheckUpdate={() => window.nexoUpdater?.check()}
+        onInstallUpdate={() => window.nexoUpdater?.restart()}
+      >
+        {updateStatus && updateStatus.state !== "idle" && (
           <div className={`update-banner update-${updateStatus.state}`}>
-            <span>{updateStatus.message}</span>
+            <div className="update-banner-copy">
+              <span>{updateStatus.message}</span>
+              {updateStatus.state === "downloading" && (
+                <progress max="100" value={updateStatus.percent ?? 0} aria-label="Progresso da atualização" />
+              )}
+            </div>
             {updateStatus.state === "ready" && (
               <button className="secondary" onClick={() => window.nexoUpdater?.restart()}>
                 Reiniciar

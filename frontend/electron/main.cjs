@@ -8,14 +8,19 @@ const isDev = !app.isPackaged || Boolean(process.env.ELECTRON_START_URL);
 let updateTimer = null;
 let updateReady = false;
 let checkForUpdates = null;
+let currentUpdateStatus = null;
 
 function credentialsPath() {
   return path.join(app.getPath("userData"), "credentials.json");
 }
 
 function sendUpdateStatus(win, payload) {
+  currentUpdateStatus = {
+    currentVersion: app.getVersion(),
+    ...payload
+  };
   if (!win || win.isDestroyed()) return;
-  win.webContents.send("updater:status", payload);
+  win.webContents.send("updater:status", currentUpdateStatus);
 }
 
 function createWindow() {
@@ -70,7 +75,11 @@ function setupAutoUpdates(win) {
 
   autoUpdater.on("update-not-available", info => {
     console.info("[updater] sistema atualizado", info.version);
-    sendUpdateStatus(win, { state: "idle", version: info.version, message: "" });
+    sendUpdateStatus(win, {
+      state: "idle",
+      version: info.version,
+      message: `Nexo ${app.getVersion()} está atualizado.`
+    });
   });
 
   autoUpdater.on("error", error => {
@@ -85,6 +94,8 @@ function setupAutoUpdates(win) {
     console.info("[updater] download", Math.round(progress.percent), "%");
     sendUpdateStatus(win, {
       state: "downloading",
+      version: progress.version,
+      percent: Math.round(progress.percent),
       message: `Baixando atualização: ${Math.round(progress.percent)}%`
     });
   });
@@ -138,6 +149,13 @@ ipcMain.on("updater:restart", () => {
 
 ipcMain.on("updater:check", () => {
   if (checkForUpdates) checkForUpdates();
+});
+
+ipcMain.handle("updater:get-status", () => currentUpdateStatus || {
+  state: "idle",
+  currentVersion: app.getVersion(),
+  version: app.getVersion(),
+  message: `Nexo ${app.getVersion()} instalado.`
 });
 
 ipcMain.handle("credentials:load", () => {

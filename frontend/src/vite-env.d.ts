@@ -16,6 +16,8 @@ interface NexoUpdateStatus {
   state: NexoUpdateState;
   message: string;
   version?: string;
+  currentVersion?: string;
+  percent?: number;
 }
 
 interface Window {
@@ -26,6 +28,7 @@ interface Window {
     onStatus: (callback: (status: NexoUpdateStatus) => void) => () => void;
     restart: () => void;
     check: () => void;
+    getStatus: () => Promise<NexoUpdateStatus>;
   };
   nexoCredentials?: {
     load: () => Promise<{ username: string; password: string } | null>;
