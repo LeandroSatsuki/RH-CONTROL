@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.7 - 2026-08-14
+
+### Cadastros e custo/folha
+
+- corrige o cadastro de novos promotores em empresas secundárias com modalidades e Centros de Resultado globais;
+- exibe a lista completa de cargos e funções ao editar um colaborador;
+- adiciona gratificação ao cadastro do colaborador, cálculos, indicadores, relatórios e exportações;
+- abre o Dashboard preferencialmente na competência atual e restaura seus valores consolidados;
+- adiciona filtro opcional de supervisor aos lançamentos MEI.
+
+### Operação e comunicação
+
+- corrige a exclusão de movimentações com confirmação segura;
+- adiciona chat privado entre usuários da rede com conversas e avisos de mensagens não lidas;
+- inclui migrations compatíveis com a base existente, sem remoção de dados.
+
 ## 1.0.6 - 2026-08-14
 
 ### Visibilidade da atualização do cliente

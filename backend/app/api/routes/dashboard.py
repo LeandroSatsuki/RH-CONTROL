@@ -9,6 +9,7 @@ from app.api.dependencies import CurrentUser, DbSession
 from app.models.company import Company
 from app.models.employment import Employment
 from app.models.enums import EmploymentStatus
+from app.models.movement import Movement
 from app.models.result_center import ResultCenter
 from app.schemas.dashboard import DashboardCard, DashboardCompany, DashboardConsolidated, DashboardResponse
 from app.services.indicators import turnover
@@ -29,7 +30,7 @@ def active_in_period(item: Employment, start: date, end: date) -> bool:
 @router.get("", response_model=DashboardResponse)
 def get_dashboard(
     db: DbSession,
-    _: CurrentUser,
+    user: CurrentUser,
     month: int | None = Query(default=None, ge=1, le=12),
     year: int | None = Query(default=None, ge=2000, le=2100),
     competency: str | None = None,
@@ -74,8 +75,30 @@ def get_dashboard(
     if employment_type_id:
         employment_query = employment_query.where(Employment.employment_type_id == employment_type_id)
     employments = list(db.scalars(employment_query))
+    competency_value = f"{year:04d}-{month:02d}"
+    movement_query = (
+        select(Movement)
+        .options(
+            joinedload(Movement.employment).joinedload(Employment.result_center),
+        )
+        .where(Movement.competency == competency_value)
+    )
+    if company_id != 0:
+        movement_query = movement_query.where(Movement.company_id == company_id)
+    movements = list(db.scalars(movement_query))
+
+    # Reuse the same official payroll calculation shown on Custo/Folha so the
+    # dashboard never presents a second, divergent cost formula.
+    from app.api.routes.demo import payroll
+
+    payroll_by_employment = {
+        int(row["employee_id"]): row
+        for row in payroll(db, user, competency_value, company_id)
+    }
 
     cards: list[DashboardCard] = []
+    total_scheduled_hours = 0.0
+    total_non_productive_hours = 0.0
     for center in centers:
         scoped = [
             item
@@ -95,6 +118,22 @@ def get_dashboard(
         by_type: dict[str, int] = {}
         for item in active:
             by_type[item.employment_type.name] = by_type.get(item.employment_type.name, 0) + 1
+        active_ids = {item.id for item in active}
+        payroll_rows = [
+            payroll_by_employment[item_id]
+            for item_id in active_ids
+            if item_id in payroll_by_employment
+        ]
+        center_movements = [
+            item
+            for item in movements
+            if item.employment.result_center.code.strip().upper()
+            == center.code.strip().upper()
+        ]
+        scheduled_hours = sum(float(item.daily_hours or 0) * 22 for item in active)
+        non_productive_hours = sum(float(item.hour_impact or 0) for item in center_movements)
+        total_scheduled_hours += scheduled_hours
+        total_non_productive_hours += non_productive_hours
         cards.append(
             DashboardCard(
                 id=center.id,
@@ -105,11 +144,11 @@ def get_dashboard(
                 by_employment_type=by_type,
                 admissions=admissions,
                 terminations=terminations,
-                absenteeism=0,
+                absenteeism=(non_productive_hours / scheduled_hours) if scheduled_hours else 0,
                 turnover=turnover(admissions, terminations, len(active)),
-                gross_payroll=0,
-                net_payroll=0,
-                total_cost=0,
+                gross_payroll=sum(float(row["gross_payroll"]) for row in payroll_rows),
+                net_payroll=sum(float(row["net_payroll"]) for row in payroll_rows),
+                total_cost=sum(float(row["total_cost"]) for row in payroll_rows),
                 previous_active_employees=len(previous_active),
             )
         )
@@ -120,7 +159,9 @@ def get_dashboard(
         gross_payroll=sum(card.gross_payroll for card in cards),
         net_payroll=sum(card.net_payroll for card in cards),
         total_cost=sum(card.total_cost for card in cards),
-        absenteeism=0,
+        absenteeism=(total_non_productive_hours / total_scheduled_hours)
+        if total_scheduled_hours
+        else 0,
         turnover=turnover(
             sum(card.admissions for card in cards),
             sum(card.terminations for card in cards),

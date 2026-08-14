@@ -344,6 +344,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
   const filtered = rows.filter(item => (!center || item.result_center.code === center) && (!employmentType || item.employment_type.name === employmentType) && (!query || `${item.employee_name} ${item.result_center.code} ${item.employment_type.name}`.toLowerCase().includes(query.toLowerCase())));
   const totals = filtered.reduce((acc, item) => ({
     salary: acc.salary + item.salary,
+    gratification: acc.gratification + item.gratification,
     proLabore: acc.proLabore + item.pro_labore,
     profit: acc.profit + item.profit_distribution,
     bonus: acc.bonus + item.bonus,
@@ -372,7 +373,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     totalProvisions: acc.totalProvisions + item.total_provisions,
     grandTotal: acc.grandTotal + item.grand_total
   }), {
-    salary: 0, proLabore: 0, profit: 0, bonus: 0, costAid: 0, transport: 0, meal: 0, basicBasket: 0, lodging: 0, insurance: 0, healthPlan: 0,
+    salary: 0, gratification: 0, proLabore: 0, profit: 0, bonus: 0, costAid: 0, transport: 0, meal: 0, basicBasket: 0, lodging: 0, insurance: 0, healthPlan: 0,
     subtotal: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacationThird: 0,
     fgtsVacation: 0, thirteenth: 0, fgtsThirteenth: 0, notice: 0, fgtsNotice: 0, fgtsFine: 0,
     employerContribution: 0, totalProvisions: 0, grandTotal: 0
@@ -383,7 +384,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
   }, {});
   const benefitsTotal = totals.transport + totals.meal + totals.basicBasket + totals.lodging + totals.insurance + totals.healthPlan;
   const payrollCenters = distinctBy(rows.map(item => item.result_center), item => item.code).sort((a, b) => a.code.localeCompare(b.code, "pt-BR"));
-  function updateRowField(rowId: number, field: keyof Pick<PayrollRow, "salary" | "pro_labore" | "profit_distribution" | "bonus" | "cost_aid" | "transport" | "meal" | "basic_basket" | "lodging" | "insurance" | "health_plan">, value: number) {
+  function updateRowField(rowId: number, field: keyof Pick<PayrollRow, "salary" | "gratification" | "pro_labore" | "profit_distribution" | "bonus" | "cost_aid" | "transport" | "meal" | "basic_basket" | "lodging" | "insurance" | "health_plan">, value: number) {
     setDirtyRows(current => new Set(current).add(rowId));
     setRows(current => current.map(row => {
       if (row.employee_id !== rowId) return row;
@@ -403,6 +404,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
         method: "PATCH",
         body: JSON.stringify({
           salary: row.salary,
+          gratification: row.gratification,
           pro_labore: row.pro_labore,
           profit_distribution: row.profit_distribution,
           bonus: row.bonus,
@@ -501,7 +503,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
           <tr>
             <th rowSpan={2}>Colaborador</th>
             <th rowSpan={2}>Centro de resultado</th>
-            <th colSpan={6} className="group-head group-earnings">Composições</th>
+            <th colSpan={7} className="group-head group-earnings">Composições</th>
             <th colSpan={5} className="group-head group-charges">Encargos</th>
             <th colSpan={10} className="group-head group-provisions">Provisões</th>
             <th colSpan={6} className="group-head group-earnings">Benefícios</th>
@@ -510,6 +512,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
           </tr>
           <tr>
             <th className="group-earnings">Salário</th>
+            <th className="group-earnings">Gratificação</th>
             <th className="group-earnings">Prolabore</th>
             <th className="group-earnings">Distribuição de Lucro</th>
             <th className="group-earnings">Premiação</th>
@@ -550,6 +553,12 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
                 className="group-earnings"
               />
               <EditablePayrollCell
+                value={item.gratification}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "gratification", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
                 value={item.pro_labore}
                 editing={editMode}
                 onChange={value => updateRowField(item.employee_id, "pro_labore", value)}
@@ -559,6 +568,12 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
                 value={item.profit_distribution}
                 editing={editMode}
                 onChange={value => updateRowField(item.employee_id, "profit_distribution", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.bonus}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "bonus", value)}
                 className="group-earnings"
               />
               <EditablePayrollCell
@@ -596,12 +611,6 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
                 className="group-earnings"
               />
               <EditablePayrollCell
-                value={item.bonus}
-                editing={editMode}
-                onChange={value => updateRowField(item.employee_id, "bonus", value)}
-                className="group-earnings"
-              />
-              <EditablePayrollCell
                 value={item.basic_basket}
                 editing={editMode}
                 onChange={value => updateRowField(item.employee_id, "basic_basket", value)}
@@ -633,6 +642,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <tr className="totals-row">
               <td colSpan={2}><strong>Total da competência</strong></td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.salary)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.gratification)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.proLabore)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.profit)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.bonus)}</td>
@@ -787,6 +797,8 @@ function MovementDrawer({ item, token, user, onClose, onSaved, onDeleted }: { it
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -824,24 +836,22 @@ function MovementDrawer({ item, token, user, onClose, onSaved, onDeleted }: { it
     }
   }
 
-  async function remove() {
+  async function remove(password: string) {
     if (user.role !== "ADMIN") return;
-    const password = window.prompt("Informe sua senha para confirmar a exclusão desta movimentação.");
-    if (!password) return;
-    if (!window.confirm("Excluir esta movimentação? Esta ação não pode ser desfeita.")) return;
     setSaving(true);
-    setError("");
+    setDeleteError("");
     try {
       await api(`/demo/movements/${item.id}`, { method: "DELETE", body: JSON.stringify({ password }) }, token);
+      setDeleteOpen(false);
       onDeleted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao excluir movimentação");
+      setDeleteError(err instanceof Error ? err.message : "Erro ao excluir movimentação");
     } finally {
       setSaving(false);
     }
   }
 
-  return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer wide" onClick={event => event.stopPropagation()}>
+  return <><div className="drawer-backdrop" onClick={onClose}><aside className="drawer wide" onClick={event => event.stopPropagation()}>
     <button className="ghost right" onClick={onClose}>Fechar</button>
     <span className="eyebrow">{item.competency}</span>
     <h2>{item.employee_name}</h2>
@@ -863,11 +873,21 @@ function MovementDrawer({ item, token, user, onClose, onSaved, onDeleted }: { it
       <label>Status<select name="status" defaultValue={item.status} required><option value="Pendente">Pendente</option><option value="Conferida">Conferida</option><option value="Aplicada">Aplicada</option></select></label>
       <label className="span-2">Observação<input name="observation" defaultValue={item.observation} required /></label>
       <label className="span-2">Senha de confirmação<input name="password" type="password" required /></label>
-      <div className="actions"><button className="primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button><button className="danger" type="button" onClick={() => void remove()} disabled={saving}>Excluir movimentação</button></div>
+      <div className="actions"><button className="primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button><button className="danger" type="button" onClick={() => { setDeleteError(""); setDeleteOpen(true); }} disabled={saving}>Excluir movimentação</button></div>
       {error && <p className="error-line span-2">{error}</p>}
       {success && <p className="success-line span-2">{success}</p>}
     </form> : <p className="note">Seu perfil possui acesso somente para consulta.</p>}
-  </aside></div>;
+  </aside></div>
+    {deleteOpen && <DeleteConfirmationModal
+      title="Excluir movimentação"
+      itemName={`${item.employee_name} • ${item.type}`}
+      description="Esta ação é definitiva. A movimentação será removida e a exclusão ficará registrada na auditoria. Informe sua senha de Administrador para confirmar."
+      busy={saving}
+      error={deleteError}
+      onCancel={() => { setDeleteOpen(false); setDeleteError(""); }}
+      onConfirm={remove}
+    />}
+  </>;
 }
 
 function MovementCreateModal({
@@ -1323,6 +1343,7 @@ function buildReportPreviews(input: {
     center: employee.result_center.code,
     type: employee.employment_type.name,
     salary: employee.salary_base,
+    gratification: employee.gratification,
     benefits: employee.benefits.join(", ") || "-"
   }));
   const movementRows = input.movements.filter(item => {
@@ -1465,6 +1486,7 @@ function buildReportPreviews(input: {
         { key: "center", label: "Centro" },
         { key: "type", label: "Modalidade" },
         { key: "salary", label: "Salário base", display: "currency" },
+        { key: "gratification", label: "Gratificação", display: "currency" },
         { key: "benefits", label: "Benefícios" }
       ],
       rows: employeeRows
@@ -2623,6 +2645,7 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
             employment_type_id: type.id,
             result_center_id: center.id,
             salary_base: row.salary,
+            gratification: row.gratification,
             cep: row.cep,
             street: row.street,
             address_number: row.number,
@@ -2666,6 +2689,7 @@ function normalizeSheetImportRow(row: Record<string, unknown>) {
     return String(entry?.[1] ?? "").trim();
   };
   const salaryText = read("SALARIO", "SALÁRIO").replace(/\./g, "").replace(",", ".");
+  const gratificationText = read("GRATIFICACAO", "GRATIFICAÇÃO").replace(/\./g, "").replace(",", ".");
   return {
     name: read("NOME", "NOME COMPLETO").toUpperCase(),
     document: onlyDigits(read("CPF/CNPJ", "CPF", "CNPJ")),
@@ -2677,6 +2701,7 @@ function normalizeSheetImportRow(row: Record<string, unknown>) {
     supervisor: read("SUPERVISOR").toUpperCase(),
     type: read("MODALIDADE", "TIPO DE CONTRATO").toUpperCase(),
     salary: Number(salaryText) || 0,
+    gratification: Number(gratificationText) || 0,
     cep: onlyDigits(read("CEP")),
     street: read("RUA", "LOGRADOURO").toUpperCase(),
     number: read("NUMERO", "NÚMERO"),
@@ -2835,7 +2860,7 @@ function EditablePayrollCell({ value, editing, onChange, className }: { value: n
 }
 
 const payrollNumericFields = [
-  "salary", "pro_labore", "profit_distribution", "bonus", "cost_aid", "transport", "meal", "basic_basket", "lodging", "insurance", "health_plan",
+  "salary", "gratification", "pro_labore", "profit_distribution", "bonus", "cost_aid", "transport", "meal", "basic_basket", "lodging", "insurance", "health_plan",
   "subtotal_earnings", "inss", "rat", "terceiros", "fgts", "charges", "vacation", "vacation_third", "fgts_vacation",
   "thirteenth_salary", "fgts_thirteenth_salary", "notice_indemnity", "fgts_notice", "fgts_fine", "employer_contribution",
   "total_provisions", "gross_payroll", "net_payroll", "total_cost", "grand_total"
@@ -2852,7 +2877,7 @@ function normalizePayrollRow(row: PayrollRow) {
 function PayrollCalculationMemory({ row, rates, onClose }: { row: PayrollRow; rates: DemoSettings["payroll_rates"]; onClose: () => void }) {
   const benefits = row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan;
   const lines = [
-    ["Base dos encargos", "Salário + pró-labore + distribuição de lucro + premiação + ajuda de custo", row.subtotal_earnings],
+    ["Base dos encargos", "Salário + gratificação + pró-labore + distribuição de lucro + premiação + ajuda de custo", row.subtotal_earnings],
     ["INSS", `${money.format(row.subtotal_earnings)} x ${rates.inss}%`, row.inss],
     ["RAT", `${money.format(row.subtotal_earnings)} x ${rates.rat}%`, row.rat],
     ["Terceiros", `${money.format(row.subtotal_earnings)} x ${rates.terceiros}%`, row.terceiros],
@@ -2881,12 +2906,13 @@ function InfoLine({ label, value }: { label: string; value: string }) {
 
 function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: string }, competency: string) {
   const headers = [
-    "Colaborador", "Centro", "Salario", "Prolabore", "DistribuicaoLucro", "Premiacao", "AjudaCusto",
+    "Colaborador", "Centro", "Salario", "Gratificacao", "Prolabore", "DistribuicaoLucro", "Premiacao", "AjudaCusto",
     "Subtotal", "INSS", "RAT", "Terceiros", "FGTS", "TotalEncargos", "Ferias", "1_3Ferias", "FGTSFerias", "13Salario", "FGTS13",
     "AvisoPrevio", "FGTSAviso", "MultaFGTS", "Patronal", "TotalProvisoes", "ValeTransporte", "Alimentacao", "CestaBasica", "Hospedagem", "Seguro", "PlanoSaude", "TotalGeral"
   ];
   const totals = rows.reduce((acc, row) => ({
     salary: acc.salary + row.salary,
+    gratification: acc.gratification + row.gratification,
     pro_labore: acc.pro_labore + row.pro_labore,
     profit_distribution: acc.profit_distribution + row.profit_distribution,
     bonus: acc.bonus + row.bonus,
@@ -2915,7 +2941,7 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
     total_provisions: acc.total_provisions + row.total_provisions,
     grand_total: acc.grand_total + row.grand_total
   }), {
-    salary: 0, pro_labore: 0, profit_distribution: 0, bonus: 0, cost_aid: 0, transport: 0, meal: 0, basic_basket: 0, lodging: 0, insurance: 0, health_plan: 0,
+    salary: 0, gratification: 0, pro_labore: 0, profit_distribution: 0, bonus: 0, cost_aid: 0, transport: 0, meal: 0, basic_basket: 0, lodging: 0, insurance: 0, health_plan: 0,
     subtotal_earnings: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacation_third: 0,
     fgts_vacation: 0, thirteenth_salary: 0, fgts_thirteenth_salary: 0, notice_indemnity: 0, fgts_notice: 0, fgts_fine: 0,
     employer_contribution: 0, total_provisions: 0, grand_total: 0
@@ -2928,13 +2954,13 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
     ...rows.map(row => [
       row.employee_name,
       row.result_center.code,
-      row.salary, row.pro_labore, row.profit_distribution, row.bonus, row.cost_aid,
+      row.salary, row.gratification, row.pro_labore, row.profit_distribution, row.bonus, row.cost_aid,
       row.subtotal_earnings, row.inss, row.rat, row.terceiros, row.fgts, row.charges, row.vacation, row.vacation_third, row.fgts_vacation,
       row.thirteenth_salary, row.fgts_thirteenth_salary, row.notice_indemnity, row.fgts_notice, row.fgts_fine, row.employer_contribution,
       row.total_provisions, row.transport, row.meal, row.basic_basket, row.lodging, row.insurance, row.health_plan, row.grand_total
     ]),
     [],
-    ["Totais", "", totals.salary, totals.pro_labore, totals.profit_distribution, totals.bonus, totals.cost_aid, totals.subtotal_earnings, totals.inss, totals.rat, totals.terceiros, totals.fgts, totals.charges, totals.vacation, totals.vacation_third, totals.fgts_vacation, totals.thirteenth_salary, totals.fgts_thirteenth_salary, totals.notice_indemnity, totals.fgts_notice, totals.fgts_fine, totals.employer_contribution, totals.total_provisions, totals.transport, totals.meal, totals.basic_basket, totals.lodging, totals.insurance, totals.health_plan, totals.grand_total]
+    ["Totais", "", totals.salary, totals.gratification, totals.pro_labore, totals.profit_distribution, totals.bonus, totals.cost_aid, totals.subtotal_earnings, totals.inss, totals.rat, totals.terceiros, totals.fgts, totals.charges, totals.vacation, totals.vacation_third, totals.fgts_vacation, totals.thirteenth_salary, totals.fgts_thirteenth_salary, totals.notice_indemnity, totals.fgts_notice, totals.fgts_fine, totals.employer_contribution, totals.total_provisions, totals.transport, totals.meal, totals.basic_basket, totals.lodging, totals.insurance, totals.health_plan, totals.grand_total]
   ];
   downloadCsv(`custo-folha-${slugify(competency)}.csv`, lines);
 }

@@ -4,6 +4,7 @@ import { useDemoScope } from "../context/DemoScope";
 import { User } from "../types";
 import { DemoAlert } from "../mocks/demoTypes";
 import nexoLogoMark from "../assets/nexo-logo-mark.png";
+import { NetworkChat } from "./NetworkChat";
 
 export type Page =
   | "dashboard"
@@ -181,6 +182,7 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
         </header>
         <div className="content">{children}</div>
       </main>
+      {!localMode && <NetworkChat currentUser={user} token={token} />}
     </div>
   );
 }

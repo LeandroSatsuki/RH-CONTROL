@@ -30,6 +30,7 @@ async def legacy_api_prefix_redirect(request: Request, call_next):
         "/employees",
         "/users",
         "/backups",
+        "/chat",
     )
     if path != "/health" and not path.startswith("/api") and any(path == prefix or path.startswith(f"{prefix}/") for prefix in legacy_prefixes):
         return RedirectResponse(url=f"/api{path}{('?' + request.url.query) if request.url.query else ''}", status_code=307)

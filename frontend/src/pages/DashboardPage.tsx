@@ -4,13 +4,14 @@ import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage } from "../components/Feedback";
 import { DashboardResponseDemo } from "../mocks/demoTypes";
 import { DashboardCard } from "../types";
+import { currentCompetency, operationalCompetencies } from "../competencies";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
 
 export function DashboardPage({ token }: { token: string }) {
   const { selectedCompany } = useDemoScope();
-  const [competency, setCompetency] = useState("2026-06");
+  const [competency, setCompetency] = useState(currentCompetency());
   const [data, setData] = useState<DashboardResponseDemo | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -47,7 +48,7 @@ export function DashboardPage({ token }: { token: string }) {
         </div>
         <div className="filters">
           <select value={competency} onChange={event => setCompetency(event.target.value)}>
-            {Array.from({ length: 12 }, (_, index) => `2026-${String(index + 1).padStart(2, "0")}`).map(item => <option key={item} value={item}>{labelCompetency(item)}</option>)}
+            {operationalCompetencies.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select>
         </div>
       </div>
@@ -102,9 +103,4 @@ function Metric({ label, value, important, wide }: { label: string; value: strin
 
 function Summary({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return <div className={`summary-card ${strong ? "strong" : ""}`}><span>{label}</span><strong>{value}</strong></div>;
-}
-
-function labelCompetency(value: string) {
-  const [year, month] = value.split("-");
-  return new Date(Number(year), Number(month) - 1).toLocaleString("pt-BR", { month: "long", year: "numeric" });
 }
