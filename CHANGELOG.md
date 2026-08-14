@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.8 - 2026-08-14
+
+### Troca de empresa e matrículas
+
+- adiciona carregamento visível e bloqueio temporário durante a troca de empresa;
+- elimina consultas com o identificador anterior e descarta respostas atrasadas, evitando telas com valores zerados;
+- atualiza automaticamente o prefixo e a sequência da matrícula quando o Centro de Resultado é alterado;
+- mantém matrícula e Centro de Resultado sincronizados nos contratos MEI do modo local.
+
 ## 1.0.7 - 2026-08-14
 
 ### Cadastros e custo/folha

@@ -36,6 +36,28 @@ def employment_query():
     )
 
 
+def next_employee_code(
+    db: DbSession, *, company_id: int, center_code: str, exclude_id: int
+) -> str:
+    prefix = center_code.strip().upper()
+    codes = db.scalars(
+        select(Employment.employee_code).where(
+            Employment.company_id == company_id,
+            Employment.id != exclude_id,
+            Employment.employee_code.like(f"{prefix}-%"),
+        )
+    )
+    last_number = max(
+        (
+            int(code.rsplit("-", 1)[-1])
+            for code in codes
+            if code.rsplit("-", 1)[-1].isdigit()
+        ),
+        default=0,
+    )
+    return f"{prefix}-{last_number + 1:03d}"
+
+
 @router.get("", response_model=list[EmploymentRead])
 def list_employees(
     db: DbSession, _: CurrentUser, company_id: int = 1
@@ -121,6 +143,11 @@ def update_employee(
     if not target_company:
         raise HTTPException(status_code=404, detail="Empresa de destino não encontrada")
     previous_company_id = employment.company_id
+    previous_result_center_id = employment.result_center_id
+    result_center_changed = (
+        result_center_id is not None
+        and result_center_id != previous_result_center_id
+    )
 
     if employment_type_id is not None:
         employment_type = db.get(EmploymentType, employment_type_id)
@@ -137,25 +164,8 @@ def update_employee(
             raise HTTPException(status_code=409, detail="Selecione um Centro de Resultado da empresa de destino")
         if employment.employment_type.company_id != target_company_id:
             raise HTTPException(status_code=409, detail="Selecione uma modalidade da empresa de destino")
-        prefix = employment.result_center.code
-        codes = db.scalars(
-            select(Employment.employee_code).where(
-                Employment.company_id == target_company_id,
-                Employment.id != employment.id,
-                Employment.employee_code.like(f"{prefix}-%"),
-            )
-        )
-        last_number = max(
-            (
-                int(code.rsplit("-", 1)[-1])
-                for code in codes
-                if code.rsplit("-", 1)[-1].isdigit()
-            ),
-            default=0,
-        )
         employment.company_id = target_company_id
         employment.employee.company_id = target_company_id
-        employment.employee_code = f"{prefix}-{last_number + 1:03d}"
         db.add(
             Movement(
                 company_id=target_company_id,
@@ -169,6 +179,16 @@ def update_employee(
                 observation=f"TRANSFERÊNCIA ENTRE EMPRESAS: {previous_company_id} PARA {target_company_id}",
                 status="Aplicada",
             )
+        )
+    if (
+        target_company_id != previous_company_id
+        or result_center_changed
+    ):
+        employment.employee_code = next_employee_code(
+            db,
+            company_id=target_company_id,
+            center_code=employment.result_center.code,
+            exclude_id=employment.id,
         )
     if full_name is not None:
         employment.employee.full_name = full_name.strip().upper()

@@ -102,6 +102,13 @@ describe("modo local multiempresa", () => {
     expect(await demoApi<DemoEmployee[]>(`/employees?company_id=${company.id}`, {}, adminToken)).toHaveLength(0);
     expect(await demoApi<DemoEmployee[]>("/employees?company_id=1", {}, adminToken)).toHaveLength(1);
 
+    const companyOneComCenter = (await demoApi<ResultCenter[]>("/result-centers?company_id=1", {}, adminToken)).find(item => item.code === "COM")!;
+    const changedCenter = await demoApi<DemoEmployee>(`/employees/${employee.id}?company_id=1`, {
+      method: "PATCH",
+      body: JSON.stringify({ result_center_id: companyOneComCenter.id })
+    }, adminToken);
+    expect(changedCenter.employee_code).toMatch(/^COM-\d{3}$/);
+
     const inactive = await demoApi<DemoEmployee>(`/employees/${employee.id}?company_id=1`, {
       method: "PATCH",
       body: JSON.stringify({ status: "INACTIVE" })

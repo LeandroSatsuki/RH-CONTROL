@@ -1699,20 +1699,23 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       : state.employees.find(employee => employee.id === employmentId && employee.company_id === companyId);
     if (!item) throw new Error("Vínculo não encontrado");
     const previousCompanyId = item.company_id;
+    const previousCenterId = item.result_center.id;
     const targetCompanyId = Number(payload.company_id ?? item.company_id);
     if (!state.companies.some(company => company.id === targetCompanyId)) throw new Error("Empresa de destino não encontrada.");
     const type = payload.employment_type_id ? state.employmentTypes.find(typeItem => typeItem.id === Number(payload.employment_type_id) && typeItem.company_id === targetCompanyId) : item.employment_type;
     const center = payload.result_center_id ? state.resultCenters.find(centerItem => centerItem.id === Number(payload.result_center_id) && centerItem.company_id === targetCompanyId) : item.result_center;
     if (!type) throw new Error("Modalidade não encontrada.");
     if (!center) throw new Error("Centro de Resultado não encontrado.");
-    if (targetCompanyId !== previousCompanyId) {
+    if (targetCompanyId !== previousCompanyId || center.id !== previousCenterId) {
       const lastNumber = state.employees
         .filter(employee => employee.id !== item.id && employee.company_id === targetCompanyId && employee.employee_code.startsWith(`${center.code}-`))
         .map(employee => Number(employee.employee_code.split("-").at(-1) ?? 0))
         .filter(Number.isFinite)
         .reduce((max, value) => Math.max(max, value), 0);
-      item.company_id = targetCompanyId;
       item.employee_code = `${center.code}-${String(lastNumber + 1).padStart(3, "0")}`;
+    }
+    if (targetCompanyId !== previousCompanyId) {
+      item.company_id = targetCompanyId;
       state.movements = [{
         id: nextId(state.movements),
         company_id: targetCompanyId,
@@ -1760,6 +1763,12 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     item.pix_key = String(payload.pix_key ?? item.pix_key);
     item.notes = String(payload.notes ?? item.notes).trim().toUpperCase();
     item.benefits = Array.isArray(payload.benefits) ? payload.benefits.map(String) : item.benefits;
+    state.meiContracts
+      .filter(contract => contract.employee_id === item.id)
+      .forEach(contract => {
+        contract.employee_code = item.employee_code;
+        contract.result_center = center;
+      });
     if (payload.salary_mode === "correction" && item.salary_history.length) {
       const latest = [...item.salary_history].sort((a, b) => b.date.localeCompare(a.date))[0];
       latest.amount = nextSalary;
