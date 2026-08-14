@@ -4,6 +4,7 @@ import { api, downloadApiFile, isLocalDataMode } from "../api";
 import { downloadExcel, readFirstExcelSheet } from "../excel";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
+import { DeleteConfirmationModal } from "../components/DeleteConfirmationModal";
 import { demoBenefitDefinitions, demoResultCenters, demoSettings } from "../mocks/demoData";
 import { currentCompetency, operationalCompetencies } from "../competencies";
 import { DemoAlert, DemoAppUser, DemoAuditEntry, DemoBackup, DemoBenefitDistribution, DemoClosing, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
@@ -1823,6 +1824,9 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
   });
   const [companiesLoading, setCompaniesLoading] = useState(false);
   const [companyLookupLoading, setCompanyLookupLoading] = useState(false);
+  const [companyDeleteTarget, setCompanyDeleteTarget] = useState<Company | null>(null);
+  const [companyDeleteBusy, setCompanyDeleteBusy] = useState(false);
+  const [companyDeleteError, setCompanyDeleteError] = useState("");
   const [jobTitles, setJobTitles] = useState<string[]>(demoSettings.job_titles);
   const [payrollRates, setPayrollRates] = useState<DemoSettings["payroll_rates"]>(demoSettings.payroll_rates);
   const [jobTitleDraft, setJobTitleDraft] = useState("");
@@ -2025,11 +2029,10 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
     }
   }
 
-  async function deleteCompany(item: Company) {
+  async function deleteCompany(item: Company, password: string) {
     if (restricted(user, fb.fail)) return;
-    const password = window.prompt("Informe sua senha para excluir esta empresa.");
-    if (!password) return;
-    if (!window.confirm(`Excluir definitivamente ${item.name}? A exclusão só será permitida se não houver colaboradores, movimentações ou outros registros vinculados.`)) return;
+    setCompanyDeleteBusy(true);
+    setCompanyDeleteError("");
     try {
       await api(`/companies/${item.id}`, {
         method: "DELETE",
@@ -2041,9 +2044,12 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
       const fallback = remaining.find(company => company.is_primary) ?? remaining[0];
       if (fallback) localStorage.setItem("indicadores-selected-company-id", String(fallback.id));
       window.dispatchEvent(new Event("nexo:companies-changed"));
+      setCompanyDeleteTarget(null);
       fb.notify(`Empresa ${item.name} excluída com sucesso.`);
     } catch (err) {
-      fb.fail(err instanceof Error ? err.message : "Erro ao excluir empresa");
+      setCompanyDeleteError(err instanceof Error ? err.message : "Erro ao excluir empresa");
+    } finally {
+      setCompanyDeleteBusy(false);
     }
   }
 
@@ -2165,6 +2171,15 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
       <button className={section === "backup" ? "active" : ""} onClick={() => setSection("backup")}>Backup</button>
       <button className={section === "import" ? "active" : ""} onClick={() => setSection("import")}>Importação</button>
     </div>
+    {companyDeleteTarget && <DeleteConfirmationModal
+      title="Excluir empresa"
+      itemName={companyDeleteTarget.name}
+      description="Esta ação é definitiva e só será concluída se a empresa não for a principal e não possuir colaboradores, movimentações ou outros registros vinculados. Caso exista histórico, inative a empresa."
+      busy={companyDeleteBusy}
+      error={companyDeleteError}
+      onCancel={() => { setCompanyDeleteTarget(null); setCompanyDeleteError(""); }}
+      onConfirm={password => deleteCompany(companyDeleteTarget, password)}
+    />}
     {section === "companies" && <section className="panel report-saved-panel">
       <div className="report-saved-head">
         <div>
@@ -2208,7 +2223,7 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
           <span className={item.active ? "status-pill status-active" : "status-pill status-inactive"}>{item.is_primary ? "Principal" : item.active ? "Ativa" : "Inativa"}</span>
           {user.role === "ADMIN" && <button className="secondary compact-button" type="button" onClick={() => editCompany(item)}>Editar</button>}
           {user.role === "ADMIN" && <button className="secondary compact-button" type="button" onClick={() => void toggleCompanyActive(item)}>{item.active ? "Inativar" : "Ativar"}</button>}
-          {user.role === "ADMIN" && <button className="danger compact-button" type="button" onClick={() => void deleteCompany(item)}>Excluir</button>}
+          {user.role === "ADMIN" && <button className="danger compact-button" type="button" onClick={() => { setCompanyDeleteError(""); setCompanyDeleteTarget(item); }}>Excluir</button>}
         </div>)}
         {!companies.length && !companiesLoading && <Empty>Nenhuma empresa cadastrada.</Empty>}
         {companiesLoading && <div className="inline-loading">Carregando empresas...</div>}

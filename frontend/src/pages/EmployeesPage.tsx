@@ -3,6 +3,7 @@ import { api } from "../api";
 import { downloadExcel, readFirstExcelSheet } from "../excel";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
+import { DeleteConfirmationModal } from "../components/DeleteConfirmationModal";
 import { DemoEmployee, DemoSettings } from "../mocks/demoTypes";
 import { demoSettings } from "../mocks/demoData";
 import { Employment, EmploymentType, ResultCenter, User } from "../types";
@@ -681,6 +682,8 @@ function EmployeeDrawer({
   const [benefitDraft, setBenefitDraft] = useState<string[]>(employee.benefits ?? []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const history = [...(employee.salary_history ?? [])].sort((a, b) => salaryHistoryDate(b).localeCompare(salaryHistoryDate(a)));
   const estimatedCost = employee.salary_base * (employee.employment_type.has_charges ? 1.72 : 1.18);
   const salaryChanged = Number(draft.salary_base || 0) !== Number(employee.salary_base || 0);
@@ -780,22 +783,20 @@ function EmployeeDrawer({
     }
   }
 
-  async function deleteEmployee() {
+  async function deleteEmployee(password: string) {
     if (user.role !== "ADMIN") return onAction("Seu perfil possui acesso somente para consulta.");
-    const password = window.prompt("Informe sua senha para excluir este colaborador.");
-    if (!password) return;
-    if (!window.confirm(`Excluir definitivamente ${employee.employee.full_name}? A exclusão só será permitida se não houver movimentações ou outros registros vinculados.`)) return;
     setSaving(true);
-    setError("");
+    setDeleteError("");
     try {
       await api(`/employees/${employee.id}?company_id=${employee.company_id}`, {
         method: "DELETE",
         body: JSON.stringify({ password })
       }, token);
+      setDeleteOpen(false);
       onAction(`Colaborador ${employee.employee.full_name} excluído com sucesso.`);
       onDeleted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao excluir colaborador.");
+      setDeleteError(err instanceof Error ? err.message : "Erro ao excluir colaborador.");
     } finally {
       setSaving(false);
     }
@@ -817,9 +818,18 @@ function EmployeeDrawer({
         }}>{editing ? "Cancelar edição" : "Editar"}</button>
         <button className="secondary" onClick={() => void inactivateEmployee()} disabled={saving}>{employee.status === "INACTIVE" ? "Reativar" : "Inativar"}</button>
         <button className="secondary" onClick={() => setEditing(true)}>Transferir CR</button>
-        <button className="danger" onClick={() => void deleteEmployee()} disabled={saving}>Excluir</button>
+        <button className="danger" onClick={() => { setDeleteError(""); setDeleteOpen(true); }} disabled={saving}>Excluir</button>
       </> : <button className="secondary" onClick={() => onAction("Seu perfil possui acesso somente para consulta.")}>Solicitar alteração</button>}
     </div>
+    {deleteOpen && <DeleteConfirmationModal
+      title="Excluir colaborador"
+      itemName={employee.employee.full_name}
+      description="Esta ação é definitiva e só será concluída se não houver movimentações ou outros registros vinculados. Caso exista histórico, inative o colaborador."
+      busy={saving}
+      error={deleteError}
+      onCancel={() => { setDeleteOpen(false); setDeleteError(""); }}
+      onConfirm={deleteEmployee}
+    />}
     {error && <ErrorMessage message={error} />}
     {editing && <form className="panel form-grid compact" onSubmit={saveEdit}>
       <h3 className="span-2 form-section-title">Editar cadastro</h3>
