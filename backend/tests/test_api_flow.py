@@ -990,6 +990,27 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         ).json()
     )
 
+    primary_dashboard = client.get(
+        "/api/dashboard?company_id=1&competency=2026-06", headers=admin
+    ).json()
+    beta_dashboard = client.get(
+        f"/api/dashboard?company_id={company_id}&competency=2026-06", headers=admin
+    ).json()
+    consolidated_dashboard = client.get(
+        "/api/dashboard?company_id=0&competency=2026-06", headers=admin
+    ).json()
+    primary_codes = [card["code"] for card in primary_dashboard["cards"]]
+    beta_codes = [card["code"] for card in beta_dashboard["cards"]]
+    consolidated_codes = [card["code"] for card in consolidated_dashboard["cards"]]
+    assert primary_codes == beta_codes == consolidated_codes
+    assert len(consolidated_codes) == 5
+    assert next(
+        card for card in consolidated_dashboard["cards"] if card["code"] == "BETA"
+    )["active_employees"] == 1
+    assert next(
+        card for card in primary_dashboard["cards"] if card["code"] == "BETA"
+    )["active_employees"] == 0
+
     with next(app.dependency_overrides[get_db]()) as db:
         db.add(
             User(
