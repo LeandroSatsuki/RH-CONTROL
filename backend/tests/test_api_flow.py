@@ -281,7 +281,7 @@ def test_monthly_launches_resume_confirm_and_feed_payroll(client: TestClient) ->
     payroll = client.get(
         "/api/demo/payroll?competency=2026-08", headers=admin
     ).json()[0]
-    assert payroll["profit_distribution"] == 400
+    assert payroll["bonus"] == 400
 
     audit = client.get(
         "/api/demo/audit-logs?module=Lançamentos", headers=admin

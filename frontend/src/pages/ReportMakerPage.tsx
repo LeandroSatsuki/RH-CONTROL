@@ -97,6 +97,7 @@ const fieldLibrary: FieldMeta[] = [
   { id: "payroll_cost_aid", source: "Custo / Folha", label: "Ajuda de custo", display: "currency", extractor: row => Number(row.cost_aid ?? 0) },
   { id: "payroll_pro_labore", source: "Custo / Folha", label: "Pró-labore", display: "currency", extractor: row => Number(row.pro_labore ?? 0) },
   { id: "payroll_profit_distribution", source: "Custo / Folha", label: "Distribuição de lucros", display: "currency", extractor: row => Number(row.profit_distribution ?? 0) },
+  { id: "payroll_bonus", source: "Custo / Folha", label: "Premiação", display: "currency", extractor: row => Number(row.bonus ?? 0) },
   { id: "payroll_basic_basket", source: "Custo / Folha", label: "Cesta básica", display: "currency", extractor: row => Number(row.basic_basket ?? 0) },
   { id: "payroll_earnings", source: "Custo / Folha", label: "Total de proventos", display: "currency", extractor: row => Number(row.subtotal_earnings ?? 0) },
   { id: "payroll_charges", source: "Custo / Folha", label: "Encargos", display: "currency", extractor: row => Number(row.charges ?? 0) },

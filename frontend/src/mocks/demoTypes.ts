@@ -72,6 +72,7 @@ export interface PayrollRow {
   salary: number;
   pro_labore: number;
   profit_distribution: number;
+  bonus: number;
   cost_aid: number;
   transport: number;
   meal: number;

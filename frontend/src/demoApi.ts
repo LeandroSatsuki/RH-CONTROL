@@ -841,7 +841,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
       const card = cards.find(item => item.code === center.code) ?? null;
       const plannedHours = Math.max(card?.active_employees ?? 0, 0) * 22 * 8;
       const nonProductiveHours = plannedHours * (card?.absenteeism ?? 0);
-      const benefit = sumRows(rows, "transport") + sumRows(rows, "meal") + sumRows(rows, "lodging") + sumRows(rows, "insurance") + sumRows(rows, "health_plan");
+      const benefit = sumRows(rows, "transport") + sumRows(rows, "meal") + sumRows(rows, "basic_basket") + sumRows(rows, "lodging") + sumRows(rows, "insurance") + sumRows(rows, "health_plan");
 
       return {
         monthLabel,
@@ -851,6 +851,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
         salary: sumRows(rows, "salary"),
         proLabore: sumRows(rows, "pro_labore"),
         profit: sumRows(rows, "profit_distribution"),
+        bonus: sumRows(rows, "bonus"),
         benefit,
         patronal: sumRows(rows, "employer_contribution"),
         fgts: sumRows(rows, "fgts"),
@@ -866,6 +867,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
       { label: "Salário", values: costValues("salary"), total: costValues("salary").reduce((a, b) => a + b, 0) },
       { label: "Prolabore", values: costValues("proLabore"), total: costValues("proLabore").reduce((a, b) => a + b, 0) },
       { label: "Dist. Lucro", values: costValues("profit"), total: costValues("profit").reduce((a, b) => a + b, 0) },
+      { label: "Premiação", values: costValues("bonus"), total: costValues("bonus").reduce((a, b) => a + b, 0) },
       { label: "Benefício", values: costValues("benefit"), total: costValues("benefit").reduce((a, b) => a + b, 0) },
       { label: "Patronal", values: costValues("patronal"), total: costValues("patronal").reduce((a, b) => a + b, 0) },
       { label: "FGTS", values: costValues("fgts"), total: costValues("fgts").reduce((a, b) => a + b, 0) },
@@ -1995,7 +1997,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
         });
       }
     } else {
-      const field = batch.kind === "MEI" ? "pro_labore" : "profit_distribution";
+      const field = batch.kind === "MEI" ? "pro_labore" : "bonus";
       for (const item of batch.items) {
         const key = `${companyId}:${batch.competency}:${item.employment_id}`;
         state.payrollOverrides[key] = { ...(state.payrollOverrides[key] ?? {}), [field]: item.amount };

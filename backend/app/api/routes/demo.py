@@ -1536,7 +1536,7 @@ def confirm_launch(
     if len(valid_items) != len(batch.items):
         raise HTTPException(status_code=409, detail="A lista de elegíveis mudou. Salve o rascunho novamente.")
     if batch.kind in {"MEI", "BONUS"}:
-        field = "pro_labore" if batch.kind == "MEI" else "profit_distribution"
+        field = "pro_labore" if batch.kind == "MEI" else "bonus"
         existing_overrides = {
             item.employment_id: item
             for item in db.scalars(
@@ -1728,6 +1728,7 @@ def save_payroll_override(
         "salary",
         "pro_labore",
         "profit_distribution",
+        "bonus",
         "cost_aid",
         "transport",
         "meal",
@@ -2373,6 +2374,7 @@ def build_indicator_sheet(
         "Salário": "salary",
         "Prolabore": "pro_labore",
         "Dist. Lucro": "profit_distribution",
+        "Premiação": "bonus",
         "Benefício": "benefits_total",
         "Patronal": "employer_contribution",
         "FGTS": "fgts",
@@ -2611,8 +2613,9 @@ def payroll_row(
     health_plan = money(values.get("health_plan", benefits.get("PS", Decimal("0.00"))))
     insurance = money(values.get("insurance", benefits.get("SV", Decimal("0.00"))))
     profit_distribution = money(values.get("profit_distribution", 0))
+    bonus = money(values.get("bonus", 0))
     lodging = money(values.get("lodging", 0))
-    subtotal = money(salary + pro_labore + profit_distribution + cost_aid)
+    subtotal = money(salary + pro_labore + profit_distribution + bonus + cost_aid)
     benefit_total = money(transport + meal + basic_basket + lodging + insurance + health_plan)
     inss = money(subtotal * Decimal(str(rates["inss"])) / 100)
     rat = money(subtotal * Decimal(str(rates["rat"])) / 100)
@@ -2658,6 +2661,7 @@ def payroll_row(
         "salary": as_float(salary),
         "pro_labore": as_float(pro_labore),
         "profit_distribution": as_float(profit_distribution),
+        "bonus": as_float(bonus),
         "cost_aid": as_float(cost_aid),
         "transport": as_float(transport),
         "meal": as_float(meal),
