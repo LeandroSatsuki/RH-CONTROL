@@ -4,7 +4,7 @@ Sistema de controle de custos e pessoas com operação multiempresa, histórico 
 
 ## Versão de produção
 
-A versão `1.0.4` utiliza uma arquitetura cliente-servidor:
+A versão `1.0.5` utiliza uma arquitetura cliente-servidor:
 
 - **Servidor principal:** FastAPI, PostgreSQL, migrations, backup e API compartilhada.
 - **Estações clientes:** aplicativo Windows Electron com frontend React.
@@ -22,6 +22,7 @@ O computador principal deve permanecer ligado durante o uso e ter IP fixo ou res
 - cargos/funções, modalidades e Centros de Resultado globais, com exclusão protegida quando houver vínculos;
 - histórico salarial e movimentações auditáveis;
 - contratos MEI com ações pendentes, edição antes da assinatura, anexo, renovação, download, auditoria e alertas;
+- lançamentos mensais de MEI, cesta básica e premiação, com elegibilidade, rascunho recuperável, confirmação e integração ao Custo/Folha;
 - benefícios mensais, distribuição individual ou em lote e dependentes de plano de saúde;
 - custo/folha por competência, CR e modalidade, com encargos e provisões configuráveis;
 - fechamento mensal e bloqueios de pendências;
@@ -36,16 +37,16 @@ O computador principal deve permanecer ligado durante o uso e ter IP fixo ou res
 
 Os artefatos finais ficam em `entregas/`:
 
-- `Nexo-Servidor-Setup-1.0.4.exe` para primeira instalação;
-- `Nexo-Servidor-Atualizador-1.0.4.exe` para servidor já instalado;
-- `Nexo-Cliente-Setup-1.0.4.exe` para instalação manual do cliente.
+- `Nexo-Servidor-Setup-1.0.5.exe` para primeira instalação;
+- `Nexo-Servidor-Atualizador-1.0.5.exe` para servidor já instalado;
+- `Nexo-Cliente-Setup-1.0.5.exe` para instalação manual do cliente.
 
 ### Computador principal
 
-1. Execute `Nexo-Servidor-Setup-1.0.4.exe` como Administrador na primeira instalação.
+1. Execute `Nexo-Servidor-Setup-1.0.5.exe` como Administrador na primeira instalação.
 2. Informe uma senha para o PostgreSQL e uma senha inicial para o usuário `admin`.
 3. Aguarde a confirmação de que banco, migrations, seed, API, firewall e backup foram configurados.
-4. Execute também `Nexo-Cliente-Setup-1.0.4.exe` para usar o Nexo no computador principal.
+4. Execute também `Nexo-Cliente-Setup-1.0.5.exe` para usar o Nexo no computador principal.
 5. Clique duas vezes no atalho de diagnóstico; ele solicitará permissão de Administrador:
 
 ```text
@@ -56,7 +57,7 @@ O resultado deve mostrar `PostgreSQL 5432: True`, `API 8000: True` e `Saude da A
 
 ### Outros computadores
 
-1. Instale somente `Nexo-Cliente-Setup-1.0.4.exe`.
+1. Instale somente `Nexo-Cliente-Setup-1.0.5.exe`.
 2. Na primeira abertura, informe o endereço privado mostrado pelo diagnóstico, por exemplo `http://192.168.0.10:8000`.
 3. Entre com o usuário criado pelo Administrador.
 
@@ -98,7 +99,7 @@ Boas práticas:
 
 O cliente Electron consulta versões publicadas em GitHub Releases, baixa a nova versão em segundo plano e oferece a reinicialização. Se o usuário escolher “Depois”, a versão baixada será aplicada quando o Nexo for fechado.
 
-Em um servidor já instalado, execute `Nexo-Servidor-Atualizador-1.0.4.exe` como Administrador. Esse entregável não faz instalação inicial: ele exige `C:\Nexo\.env`, cria e valida o backup, atualiza os arquivos, aplica migrations e só conclui depois que a API responder pela tarefa automática. Use `Nexo-Servidor-Setup-1.0.4.exe` apenas para uma máquina sem servidor ou para reparo assistido.
+Em um servidor já instalado, execute `Nexo-Servidor-Atualizador-1.0.5.exe` como Administrador. Esse entregável não faz instalação inicial: ele exige `C:\Nexo\.env`, cria e valida o backup, atualiza os arquivos, aplica migrations e só conclui depois que a API responder pela tarefa automática. Use `Nexo-Servidor-Setup-1.0.5.exe` apenas para uma máquina sem servidor ou para reparo assistido.
 
 Antes de qualquer migration, `server-update.ps1` cria e valida um backup integral. Se isso falhar, a atualização é interrompida antes de modificar o banco.
 
@@ -159,16 +160,16 @@ cd frontend
 npm.cmd run desktop:build
 
 cd ..
-.\scripts\build-server-package.ps1 -Version 1.0.4
-.\scripts\build-separated-installers.ps1 -Version 1.0.4
+.\scripts\build-server-package.ps1 -Version 1.0.5
+.\scripts\build-separated-installers.ps1 -Version 1.0.5
 ```
 
 Antes da entrega, valide hashes e tamanhos:
 
 ```powershell
-Get-FileHash .\entregas\Nexo-Servidor-Setup-1.0.4.exe -Algorithm SHA256
-Get-FileHash .\entregas\Nexo-Servidor-Atualizador-1.0.4.exe -Algorithm SHA256
-Get-FileHash .\entregas\Nexo-Cliente-Setup-1.0.4.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Servidor-Setup-1.0.5.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Servidor-Atualizador-1.0.5.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Cliente-Setup-1.0.5.exe -Algorithm SHA256
 ```
 
 ## Estrutura

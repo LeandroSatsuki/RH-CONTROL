@@ -1636,7 +1636,6 @@ def confirm_launch(
                 detail=f"Já existe Cesta básica lançada para: {', '.join(names[:5])}. Remova o lançamento anterior antes de confirmar.",
             )
         for item in valid_items:
-            employment = employments[item.employment_id]
             db.add(
                 BenefitDistribution(
                     company_id=company_id,
