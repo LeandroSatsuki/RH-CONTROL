@@ -55,13 +55,20 @@ def get_dashboard(
     if company_id != 0 and not company:
         raise HTTPException(status_code=404, detail="Empresa não encontrada")
     centers_query = select(ResultCenter).where(ResultCenter.active.is_(True)).order_by(ResultCenter.code)
-    if company_id != 0:
-        centers_query = centers_query.where(ResultCenter.company_id == company_id)
     if result_center_id:
         centers_query = centers_query.where(ResultCenter.id == result_center_id)
     centers = list(db.scalars(centers_query))
+    # Global catalogs have one physical row per company. The dashboard always
+    # exposes the same logical card set and only changes the scoped values.
+    unique_centers: dict[str, ResultCenter] = {}
+    for center in centers:
+        unique_centers.setdefault(center.code.strip().upper(), center)
+    centers = sorted(unique_centers.values(), key=lambda item: item.code)
 
-    employment_query = select(Employment).options(joinedload(Employment.employment_type))
+    employment_query = select(Employment).options(
+        joinedload(Employment.employment_type),
+        joinedload(Employment.result_center),
+    )
     if company_id != 0:
         employment_query = employment_query.where(Employment.company_id == company_id)
     if employment_type_id:
@@ -70,7 +77,11 @@ def get_dashboard(
 
     cards: list[DashboardCard] = []
     for center in centers:
-        scoped = [item for item in employments if item.result_center_id == center.id]
+        scoped = [
+            item
+            for item in employments
+            if item.result_center.code.strip().upper() == center.code.strip().upper()
+        ]
         active = [
             item
             for item in scoped

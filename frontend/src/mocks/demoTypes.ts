@@ -72,9 +72,11 @@ export interface PayrollRow {
   salary: number;
   pro_labore: number;
   profit_distribution: number;
+  bonus: number;
   cost_aid: number;
   transport: number;
   meal: number;
+  basic_basket: number;
   lodging: number;
   insurance: number;
   health_plan: number;
@@ -277,7 +279,7 @@ export interface DemoBenefitDistribution {
   dependents_count?: number;
   dependent_value?: number;
   amount: number;
-  source: "Lote" | "Individual";
+  source: "Lote" | "Individual" | "Lançamentos";
   description: string;
   created_at: string;
   created_by: string;

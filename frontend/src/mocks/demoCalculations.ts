@@ -24,7 +24,8 @@ export function payrollRows(
     const profitDistribution = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
     const costAid = Number(employee.cost_aid ?? 0);
     const transport = sumBenefit(benefitMap["vale transporte"] ?? []);
-    const meal = sumBenefit([...(benefitMap["alimentacao"] ?? []), ...(benefitMap["cesta basica"] ?? [])]);
+    const meal = sumBenefit(benefitMap["alimentacao"] ?? []);
+    const basicBasket = sumBenefit(benefitMap["cesta basica"] ?? []);
     const lodging = employee.benefits.some(item => normalizeLabel(item) === "hospedagem") ? (employee.result_center.code === "DIR" ? 900 : 550) : 0;
     const insurance = sumBenefit(benefitMap["seguro de vida"] ?? []);
     const healthPlan = sumBenefit(benefitMap["plano de saude"] ?? []);
@@ -36,9 +37,11 @@ export function payrollRows(
       salary,
       pro_labore: proLabore,
       profit_distribution: profitDistribution,
+      bonus: 0,
       cost_aid: costAid,
       transport,
       meal,
+      basic_basket: basicBasket,
       lodging,
       insurance,
       health_plan: healthPlan,
@@ -67,8 +70,8 @@ export function payrollRows(
 }
 
 export function recalculatePayrollRow(row: PayrollRow, rates: DemoSettings["payroll_rates"]): PayrollRow {
-  const subtotalEarnings = roundMoney(row.salary + row.pro_labore + row.profit_distribution + row.cost_aid);
-  const benefitTotal = roundMoney(row.transport + row.meal + row.lodging + row.insurance + row.health_plan);
+  const subtotalEarnings = roundMoney(row.salary + row.pro_labore + row.profit_distribution + row.bonus + row.cost_aid);
+  const benefitTotal = roundMoney(row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan);
   const chargeBase = subtotalEarnings;
   const inss = roundMoney(chargeBase * (rates.inss / 100));
   const rat = roundMoney(chargeBase * (rates.rat / 100));

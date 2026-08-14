@@ -4,6 +4,7 @@ import { api, downloadApiFile, isLocalDataMode } from "../api";
 import { downloadExcel, readFirstExcelSheet } from "../excel";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
+import { DeleteConfirmationModal } from "../components/DeleteConfirmationModal";
 import { demoBenefitDefinitions, demoResultCenters, demoSettings } from "../mocks/demoData";
 import { currentCompetency, operationalCompetencies } from "../competencies";
 import { DemoAlert, DemoAppUser, DemoAuditEntry, DemoBackup, DemoBenefitDistribution, DemoClosing, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings, IndicatorSummary, PayrollRow } from "../mocks/demoTypes";
@@ -142,6 +143,8 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
   const [renewEndDate, setRenewEndDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [savingContract, setSavingContract] = useState(false);
+  const [contractDeleteOpen, setContractDeleteOpen] = useState(false);
+  const [contractDeleteError, setContractDeleteError] = useState("");
   const fb = useFeedback();
 
   async function load() {
@@ -237,17 +240,22 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
     finally { setSavingContract(false); }
   }
 
-  async function deleteContract() {
+  async function deleteContract(password?: string) {
     if (restricted(user, fb.fail) || !selected) return;
-    const password = window.prompt("Informe sua senha para excluir este contrato pendente.");
-    if (!password || !window.confirm("Excluir este contrato pendente? A operação será registrada na Auditoria.")) return;
+    if (!password) {
+      setContractDeleteError("");
+      setContractDeleteOpen(true);
+      return;
+    }
     setSavingContract(true);
+    setContractDeleteError("");
     try {
       await api(`/demo/mei-contracts/${selected.id}`, { method: "DELETE", body: JSON.stringify({ password }) }, token);
+      setContractDeleteOpen(false);
       setSelected(null);
       fb.notify("Contrato pendente excluído e registrado na Auditoria.");
       await load();
-    } catch (err) { fb.fail(err instanceof Error ? err.message : "Erro ao excluir contrato"); }
+    } catch (err) { setContractDeleteError(err instanceof Error ? err.message : "Erro ao excluir contrato"); }
     finally { setSavingContract(false); }
   }
 
@@ -282,6 +290,15 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
       {selected.status === "Pendente de assinatura" ? <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">1. Conferir dados</span><h3>Editar contrato pendente</h3><div className="form-grid compact"><label className="span-2">MEI<select value={selectedEmployeeId} onChange={event => setSelectedEmployeeId(event.target.value)}>{meis.map(employee => <option key={employee.id} value={employee.id}>{employee.employee.full_name} • {employee.employee_code}</option>)}</select></label><label>Vigência inicial<input type="date" value={selectedStartDate} onChange={event => setSelectedStartDate(event.target.value)} /></label><label>Vigência final<input type="date" value={selectedEndDate} onChange={event => setSelectedEndDate(event.target.value)} /></label></div><div className="actions"><button className="secondary" type="button" onClick={() => void editContract()} disabled={savingContract}>Salvar alterações</button><button className="danger" type="button" onClick={() => void deleteContract()} disabled={savingContract}>Excluir pendente</button></div></section><section className="panel mei-action-panel mei-sign-panel"><span className="eyebrow">2. Concluir pendência</span><h3>Anexar e ativar</h3><p>O alerta desaparecerá quando o contrato assinado for anexado.</p><label>Contrato assinado<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={handleAttachment} /></label>{attachmentName && <p className="note">Arquivo: <strong>{attachmentName}</strong></p>}<button className="primary" type="button" onClick={() => void signContract()} disabled={savingContract || !attachmentName}>Assinar e ativar</button></section></div>
       : <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">Documento vigente</span><h3>Contrato assinado</h3><p>Assinado por <strong>{selected.signed_by ?? "-"}</strong> em {selected.signed_at ? dateTime(selected.signed_at) : "-"}.</p><button className="secondary" type="button" onClick={() => downloadAttachment(selected)} disabled={!selected.attachment_data_url}>Baixar contrato</button></section><section className="panel mei-action-panel"><span className="eyebrow">Próxima vigência</span><h3>Renovar sem alterar o histórico</h3><div className="form-grid compact"><label>Início<input type="date" value={renewStartDate} onChange={event => setRenewStartDate(event.target.value)} /></label><label>Fim<input type="date" value={renewEndDate} onChange={event => setRenewEndDate(event.target.value)} /></label></div><p className="note">A renovação cria um novo contrato pendente e preserva este documento assinado.</p><button className="primary" type="button" onClick={() => void renewContract()} disabled={savingContract}>Criar renovação</button></section></div>}
     </div>}
+    {contractDeleteOpen && selected && <DeleteConfirmationModal
+      title="Excluir contrato pendente"
+      itemName={`${selected.employee_name} • ${date(selected.start_date)} a ${date(selected.end_date)}`}
+      description="O contrato pendente e a movimentação automática associada serão removidos. A exclusão ficará registrada na Auditoria."
+      busy={savingContract}
+      error={contractDeleteError}
+      onCancel={() => { setContractDeleteOpen(false); setContractDeleteError(""); }}
+      onConfirm={deleteContract}
+    />}
   </PageShell>;
 }
 
@@ -329,9 +346,11 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     salary: acc.salary + item.salary,
     proLabore: acc.proLabore + item.pro_labore,
     profit: acc.profit + item.profit_distribution,
+    bonus: acc.bonus + item.bonus,
     costAid: acc.costAid + item.cost_aid,
     transport: acc.transport + item.transport,
     meal: acc.meal + item.meal,
+    basicBasket: acc.basicBasket + item.basic_basket,
     lodging: acc.lodging + item.lodging,
     insurance: acc.insurance + item.insurance,
     healthPlan: acc.healthPlan + item.health_plan,
@@ -353,7 +372,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     totalProvisions: acc.totalProvisions + item.total_provisions,
     grandTotal: acc.grandTotal + item.grand_total
   }), {
-    salary: 0, proLabore: 0, profit: 0, costAid: 0, transport: 0, meal: 0, lodging: 0, insurance: 0, healthPlan: 0,
+    salary: 0, proLabore: 0, profit: 0, bonus: 0, costAid: 0, transport: 0, meal: 0, basicBasket: 0, lodging: 0, insurance: 0, healthPlan: 0,
     subtotal: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacationThird: 0,
     fgtsVacation: 0, thirteenth: 0, fgtsThirteenth: 0, notice: 0, fgtsNotice: 0, fgtsFine: 0,
     employerContribution: 0, totalProvisions: 0, grandTotal: 0
@@ -362,9 +381,9 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     acc[item.result_center.code] = (acc[item.result_center.code] ?? 0) + item.grand_total;
     return acc;
   }, {});
-  const benefitsTotal = totals.transport + totals.meal + totals.lodging + totals.insurance + totals.healthPlan;
+  const benefitsTotal = totals.transport + totals.meal + totals.basicBasket + totals.lodging + totals.insurance + totals.healthPlan;
   const payrollCenters = distinctBy(rows.map(item => item.result_center), item => item.code).sort((a, b) => a.code.localeCompare(b.code, "pt-BR"));
-  function updateRowField(rowId: number, field: keyof Pick<PayrollRow, "salary" | "pro_labore" | "profit_distribution" | "cost_aid" | "transport" | "meal" | "lodging" | "insurance" | "health_plan">, value: number) {
+  function updateRowField(rowId: number, field: keyof Pick<PayrollRow, "salary" | "pro_labore" | "profit_distribution" | "bonus" | "cost_aid" | "transport" | "meal" | "basic_basket" | "lodging" | "insurance" | "health_plan">, value: number) {
     setDirtyRows(current => new Set(current).add(rowId));
     setRows(current => current.map(row => {
       if (row.employee_id !== rowId) return row;
@@ -386,9 +405,11 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
           salary: row.salary,
           pro_labore: row.pro_labore,
           profit_distribution: row.profit_distribution,
+          bonus: row.bonus,
           cost_aid: row.cost_aid,
           transport: row.transport,
           meal: row.meal,
+          basic_basket: row.basic_basket,
           lodging: row.lodging,
           insurance: row.insurance,
           health_plan: row.health_plan
@@ -480,10 +501,10 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
           <tr>
             <th rowSpan={2}>Colaborador</th>
             <th rowSpan={2}>Centro de resultado</th>
-            <th colSpan={5} className="group-head group-earnings">Composições</th>
+            <th colSpan={6} className="group-head group-earnings">Composições</th>
             <th colSpan={5} className="group-head group-charges">Encargos</th>
             <th colSpan={10} className="group-head group-provisions">Provisões</th>
-            <th colSpan={5} className="group-head group-earnings">Benefícios</th>
+            <th colSpan={6} className="group-head group-earnings">Benefícios</th>
             <th rowSpan={2} className="group-head group-total">Total Geral</th>
             <th rowSpan={2}>Memória</th>
           </tr>
@@ -491,6 +512,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <th className="group-earnings">Salário</th>
             <th className="group-earnings">Prolabore</th>
             <th className="group-earnings">Distribuição de Lucro</th>
+            <th className="group-earnings">Premiação</th>
             <th className="group-earnings">Ajuda de Custo</th>
             <th className="group-earnings">Subtotal</th>
             <th className="group-charges">INSS</th>
@@ -510,6 +532,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <th className="group-provisions">Total Provisões</th>
             <th className="group-earnings">Vale transporte</th>
             <th className="group-earnings">Alimentação</th>
+            <th className="group-earnings">Cesta básica</th>
             <th className="group-earnings">Hospedagem</th>
             <th className="group-earnings">Seguro</th>
             <th className="group-earnings">Plano de Saúde</th>
@@ -573,6 +596,18 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
                 className="group-earnings"
               />
               <EditablePayrollCell
+                value={item.bonus}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "bonus", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
+                value={item.basic_basket}
+                editing={editMode}
+                onChange={value => updateRowField(item.employee_id, "basic_basket", value)}
+                className="group-earnings"
+              />
+              <EditablePayrollCell
                 value={item.lodging}
                 editing={editMode}
                 onChange={value => updateRowField(item.employee_id, "lodging", value)}
@@ -600,6 +635,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
               <td className="group-earnings strong subtotal-cell">{money.format(totals.salary)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.proLabore)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.profit)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.bonus)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.costAid)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.subtotal)}</td>
               <td className="group-charges strong">{money.format(totals.inss)}</td>
@@ -619,6 +655,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
               <td className="group-provisions strong">{money.format(totals.totalProvisions)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.transport)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.meal)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.basicBasket)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.lodging)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.insurance)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.healthPlan)}</td>
@@ -1823,6 +1860,9 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
   });
   const [companiesLoading, setCompaniesLoading] = useState(false);
   const [companyLookupLoading, setCompanyLookupLoading] = useState(false);
+  const [companyDeleteTarget, setCompanyDeleteTarget] = useState<Company | null>(null);
+  const [companyDeleteBusy, setCompanyDeleteBusy] = useState(false);
+  const [companyDeleteError, setCompanyDeleteError] = useState("");
   const [jobTitles, setJobTitles] = useState<string[]>(demoSettings.job_titles);
   const [payrollRates, setPayrollRates] = useState<DemoSettings["payroll_rates"]>(demoSettings.payroll_rates);
   const [jobTitleDraft, setJobTitleDraft] = useState("");
@@ -2025,6 +2065,30 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
     }
   }
 
+  async function deleteCompany(item: Company, password: string) {
+    if (restricted(user, fb.fail)) return;
+    setCompanyDeleteBusy(true);
+    setCompanyDeleteError("");
+    try {
+      await api(`/companies/${item.id}`, {
+        method: "DELETE",
+        body: JSON.stringify({ password })
+      }, token);
+      const remaining = companies.filter(company => company.id !== item.id);
+      setCompanies(sortCompaniesForDisplay(remaining));
+      if (editingCompanyId === item.id) resetCompanyDraft();
+      const fallback = remaining.find(company => company.is_primary) ?? remaining[0];
+      if (fallback) localStorage.setItem("indicadores-selected-company-id", String(fallback.id));
+      window.dispatchEvent(new Event("nexo:companies-changed"));
+      setCompanyDeleteTarget(null);
+      fb.notify(`Empresa ${item.name} excluída com sucesso.`);
+    } catch (err) {
+      setCompanyDeleteError(err instanceof Error ? err.message : "Erro ao excluir empresa");
+    } finally {
+      setCompanyDeleteBusy(false);
+    }
+  }
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (restricted(user, fb.fail)) return;
@@ -2143,6 +2207,15 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
       <button className={section === "backup" ? "active" : ""} onClick={() => setSection("backup")}>Backup</button>
       <button className={section === "import" ? "active" : ""} onClick={() => setSection("import")}>Importação</button>
     </div>
+    {companyDeleteTarget && <DeleteConfirmationModal
+      title="Excluir empresa"
+      itemName={companyDeleteTarget.name}
+      description="Esta ação é definitiva e só será concluída se a empresa não for a principal e não possuir colaboradores, movimentações ou outros registros vinculados. Caso exista histórico, inative a empresa."
+      busy={companyDeleteBusy}
+      error={companyDeleteError}
+      onCancel={() => { setCompanyDeleteTarget(null); setCompanyDeleteError(""); }}
+      onConfirm={password => deleteCompany(companyDeleteTarget, password)}
+    />}
     {section === "companies" && <section className="panel report-saved-panel">
       <div className="report-saved-head">
         <div>
@@ -2186,6 +2259,7 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
           <span className={item.active ? "status-pill status-active" : "status-pill status-inactive"}>{item.is_primary ? "Principal" : item.active ? "Ativa" : "Inativa"}</span>
           {user.role === "ADMIN" && <button className="secondary compact-button" type="button" onClick={() => editCompany(item)}>Editar</button>}
           {user.role === "ADMIN" && <button className="secondary compact-button" type="button" onClick={() => void toggleCompanyActive(item)}>{item.active ? "Inativar" : "Ativar"}</button>}
+          {user.role === "ADMIN" && <button className="danger compact-button" type="button" onClick={() => { setCompanyDeleteError(""); setCompanyDeleteTarget(item); }}>Excluir</button>}
         </div>)}
         {!companies.length && !companiesLoading && <Empty>Nenhuma empresa cadastrada.</Empty>}
         {companiesLoading && <div className="inline-loading">Carregando empresas...</div>}
@@ -2761,7 +2835,7 @@ function EditablePayrollCell({ value, editing, onChange, className }: { value: n
 }
 
 const payrollNumericFields = [
-  "salary", "pro_labore", "profit_distribution", "cost_aid", "transport", "meal", "lodging", "insurance", "health_plan",
+  "salary", "pro_labore", "profit_distribution", "bonus", "cost_aid", "transport", "meal", "basic_basket", "lodging", "insurance", "health_plan",
   "subtotal_earnings", "inss", "rat", "terceiros", "fgts", "charges", "vacation", "vacation_third", "fgts_vacation",
   "thirteenth_salary", "fgts_thirteenth_salary", "notice_indemnity", "fgts_notice", "fgts_fine", "employer_contribution",
   "total_provisions", "gross_payroll", "net_payroll", "total_cost", "grand_total"
@@ -2776,16 +2850,16 @@ function normalizePayrollRow(row: PayrollRow) {
 }
 
 function PayrollCalculationMemory({ row, rates, onClose }: { row: PayrollRow; rates: DemoSettings["payroll_rates"]; onClose: () => void }) {
-  const benefits = row.transport + row.meal + row.lodging + row.insurance + row.health_plan;
+  const benefits = row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan;
   const lines = [
-    ["Base dos encargos", "Salário + pró-labore + distribuição de lucro + ajuda de custo", row.subtotal_earnings],
+    ["Base dos encargos", "Salário + pró-labore + distribuição de lucro + premiação + ajuda de custo", row.subtotal_earnings],
     ["INSS", `${money.format(row.subtotal_earnings)} x ${rates.inss}%`, row.inss],
     ["RAT", `${money.format(row.subtotal_earnings)} x ${rates.rat}%`, row.rat],
     ["Terceiros", `${money.format(row.subtotal_earnings)} x ${rates.terceiros}%`, row.terceiros],
     ["FGTS", `${money.format(row.subtotal_earnings)} x ${rates.fgts}%`, row.fgts],
     ["Total de encargos", "INSS + RAT + Terceiros + FGTS", row.charges],
     ["Total de provisões", "Férias + 1/3 + FGTS férias + 13º + aviso + FGTS + multa + patronal", row.total_provisions],
-    ["Total de benefícios", "VT + alimentação + hospedagem + seguro + plano de saúde (fora da base de encargos)", benefits],
+    ["Total de benefícios", "VT + alimentação + cesta básica + hospedagem + seguro + plano de saúde (fora da base de encargos)", benefits],
     ["Total geral", "Composições + encargos + provisões + benefícios", row.grand_total]
   ] as const;
   return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer wide" onClick={event => event.stopPropagation()}>
@@ -2807,17 +2881,19 @@ function InfoLine({ label, value }: { label: string; value: string }) {
 
 function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: string }, competency: string) {
   const headers = [
-    "Colaborador", "Centro", "Salario", "Prolabore", "DistribuicaoLucro", "AjudaCusto",
+    "Colaborador", "Centro", "Salario", "Prolabore", "DistribuicaoLucro", "Premiacao", "AjudaCusto",
     "Subtotal", "INSS", "RAT", "Terceiros", "FGTS", "TotalEncargos", "Ferias", "1_3Ferias", "FGTSFerias", "13Salario", "FGTS13",
-    "AvisoPrevio", "FGTSAviso", "MultaFGTS", "Patronal", "TotalProvisoes", "ValeTransporte", "Alimentacao", "Hospedagem", "Seguro", "PlanoSaude", "TotalGeral"
+    "AvisoPrevio", "FGTSAviso", "MultaFGTS", "Patronal", "TotalProvisoes", "ValeTransporte", "Alimentacao", "CestaBasica", "Hospedagem", "Seguro", "PlanoSaude", "TotalGeral"
   ];
   const totals = rows.reduce((acc, row) => ({
     salary: acc.salary + row.salary,
     pro_labore: acc.pro_labore + row.pro_labore,
     profit_distribution: acc.profit_distribution + row.profit_distribution,
+    bonus: acc.bonus + row.bonus,
     cost_aid: acc.cost_aid + row.cost_aid,
     transport: acc.transport + row.transport,
     meal: acc.meal + row.meal,
+    basic_basket: acc.basic_basket + row.basic_basket,
     lodging: acc.lodging + row.lodging,
     insurance: acc.insurance + row.insurance,
     health_plan: acc.health_plan + row.health_plan,
@@ -2839,7 +2915,7 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
     total_provisions: acc.total_provisions + row.total_provisions,
     grand_total: acc.grand_total + row.grand_total
   }), {
-    salary: 0, pro_labore: 0, profit_distribution: 0, cost_aid: 0, transport: 0, meal: 0, lodging: 0, insurance: 0, health_plan: 0,
+    salary: 0, pro_labore: 0, profit_distribution: 0, bonus: 0, cost_aid: 0, transport: 0, meal: 0, basic_basket: 0, lodging: 0, insurance: 0, health_plan: 0,
     subtotal_earnings: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacation_third: 0,
     fgts_vacation: 0, thirteenth_salary: 0, fgts_thirteenth_salary: 0, notice_indemnity: 0, fgts_notice: 0, fgts_fine: 0,
     employer_contribution: 0, total_provisions: 0, grand_total: 0
@@ -2852,13 +2928,13 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
     ...rows.map(row => [
       row.employee_name,
       row.result_center.code,
-      row.salary, row.pro_labore, row.profit_distribution, row.cost_aid,
+      row.salary, row.pro_labore, row.profit_distribution, row.bonus, row.cost_aid,
       row.subtotal_earnings, row.inss, row.rat, row.terceiros, row.fgts, row.charges, row.vacation, row.vacation_third, row.fgts_vacation,
       row.thirteenth_salary, row.fgts_thirteenth_salary, row.notice_indemnity, row.fgts_notice, row.fgts_fine, row.employer_contribution,
-      row.total_provisions, row.transport, row.meal, row.lodging, row.insurance, row.health_plan, row.grand_total
+      row.total_provisions, row.transport, row.meal, row.basic_basket, row.lodging, row.insurance, row.health_plan, row.grand_total
     ]),
     [],
-    ["Totais", "", totals.salary, totals.pro_labore, totals.profit_distribution, totals.cost_aid, totals.subtotal_earnings, totals.inss, totals.rat, totals.terceiros, totals.fgts, totals.charges, totals.vacation, totals.vacation_third, totals.fgts_vacation, totals.thirteenth_salary, totals.fgts_thirteenth_salary, totals.notice_indemnity, totals.fgts_notice, totals.fgts_fine, totals.employer_contribution, totals.total_provisions, totals.transport, totals.meal, totals.lodging, totals.insurance, totals.health_plan, totals.grand_total]
+    ["Totais", "", totals.salary, totals.pro_labore, totals.profit_distribution, totals.bonus, totals.cost_aid, totals.subtotal_earnings, totals.inss, totals.rat, totals.terceiros, totals.fgts, totals.charges, totals.vacation, totals.vacation_third, totals.fgts_vacation, totals.thirteenth_salary, totals.fgts_thirteenth_salary, totals.notice_indemnity, totals.fgts_notice, totals.fgts_fine, totals.employer_contribution, totals.total_provisions, totals.transport, totals.meal, totals.basic_basket, totals.lodging, totals.insurance, totals.health_plan, totals.grand_total]
   ];
   downloadCsv(`custo-folha-${slugify(competency)}.csv`, lines);
 }

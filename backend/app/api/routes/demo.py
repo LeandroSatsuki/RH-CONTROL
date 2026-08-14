@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import calendar
+import unicodedata
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -18,6 +19,7 @@ from app.models.company import Company
 from app.models.employment import Employment
 from app.models.enums import EmploymentStatus
 from app.models.mei_contract import MeiContract
+from app.models.launch import LaunchBatch, LaunchItem
 from app.models.movement import Movement
 from app.models.monthly_closing import MonthlyClosing
 from app.models.payroll_override import PayrollOverride
@@ -68,6 +70,7 @@ DEFAULT_BENEFITS = [
     ("SV", "Seguro de vida", "MONTHLY", "Valor mensal recorrente por colaborador."),
 ]
 PERIOD_MOVEMENT_TYPES = {"atestado", "afastamento", "férias"}
+LAUNCH_KINDS = {"MEI", "BASIC_BASKET", "BONUS"}
 
 
 def money(value: Decimal | float | int) -> Decimal:
@@ -76,6 +79,67 @@ def money(value: Decimal | float | int) -> Decimal:
 
 def as_float(value: Decimal | float | int) -> float:
     return float(money(value))
+
+
+def normalized(value: str) -> str:
+    return "".join(
+        char for char in unicodedata.normalize("NFD", value or "")
+        if unicodedata.category(char) != "Mn"
+    ).strip().upper()
+
+
+def launch_eligible(
+    employment: Employment, kind: str, valid_mei_ids: set[int] | None = None
+) -> bool:
+    if employment.status == EmploymentStatus.INACTIVE:
+        return False
+    if kind == "MEI":
+        return (
+            normalized(employment.employment_type.name) == "MEI"
+            and employment.id in (valid_mei_ids or set())
+        )
+    if kind == "BASIC_BASKET":
+        return any(normalized(value) == "CESTA BASICA" for value in (employment.benefits or []))
+    return kind == "BONUS"
+
+
+def launch_batch_to_dict(
+    batch: LaunchBatch, employments: list[Employment], valid_mei_ids: set[int]
+) -> dict[str, Any]:
+    stored = {item.employment_id: item for item in batch.items}
+    eligible = [
+        item for item in employments
+        if launch_eligible(item, batch.kind, valid_mei_ids)
+    ]
+    return {
+        "id": batch.id,
+        "company_id": batch.company_id,
+        "competency": batch.competency,
+        "kind": batch.kind,
+        "status": batch.status,
+        "filters": batch.filters or {},
+        "created_by": batch.created_by,
+        "updated_by": batch.updated_by,
+        "created_at": batch.created_at.isoformat() if batch.created_at else "",
+        "updated_at": batch.updated_at.isoformat() if batch.updated_at else "",
+        "confirmed_at": batch.confirmed_at.isoformat() if batch.confirmed_at else None,
+        "total": as_float(sum((item.amount for item in batch.items), Decimal("0.00"))),
+        "filled_count": sum(1 for item in batch.items if item.amount > 0),
+        "eligible_count": len(eligible),
+        "employees": [
+            {
+                "employment_id": employment.id,
+                "employee_name": employment.employee.full_name,
+                "employee_code": employment.employee_code,
+                "supervisor_name": employment.supervisor_name,
+                "employment_type": employment.employment_type.name,
+                "result_center": result_center_to_dict(employment),
+                "amount": as_float(stored[employment.id].amount) if employment.id in stored else 0,
+                "note": stored[employment.id].note if employment.id in stored else "",
+            }
+            for employment in eligible
+        ],
+    }
 
 
 def movement_period_values(
@@ -1333,6 +1397,292 @@ def list_cost_allocations(
     return []
 
 
+def launch_employments(db: DbSession, company_id: int) -> list[Employment]:
+    return list(
+        db.scalars(
+            select(Employment)
+            .options(
+                joinedload(Employment.employee),
+                joinedload(Employment.result_center),
+                joinedload(Employment.employment_type),
+            )
+            .where(Employment.company_id == company_id)
+            .order_by(Employment.employee_id)
+        )
+    )
+
+
+def valid_mei_contract_ids(
+    db: DbSession, company_id: int, competency: str
+) -> set[int]:
+    try:
+        year, month = (int(value) for value in competency.split("-"))
+        period_start = date(year, month, 1)
+        period_end = date(year, month, calendar.monthrange(year, month)[1])
+    except (TypeError, ValueError):
+        return set()
+    return set(
+        db.scalars(
+            select(MeiContract.employee_id).where(
+                MeiContract.company_id == company_id,
+                MeiContract.status == "Ativo",
+                MeiContract.signed_at.is_not(None),
+                MeiContract.start_date <= period_end,
+                MeiContract.end_date >= period_start,
+            )
+        )
+    )
+
+
+def launch_response(db: DbSession, batch: LaunchBatch) -> dict[str, Any]:
+    return launch_batch_to_dict(
+        batch,
+        launch_employments(db, batch.company_id),
+        valid_mei_contract_ids(db, batch.company_id, batch.competency),
+    )
+
+
+def load_launch_batch(db: DbSession, batch_id: int, company_id: int) -> LaunchBatch:
+    batch = db.scalar(
+        select(LaunchBatch)
+        .options(selectinload(LaunchBatch.items))
+        .where(LaunchBatch.id == batch_id, LaunchBatch.company_id == company_id)
+    )
+    if not batch:
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    return batch
+
+
+@router.get("/launches")
+def list_launches(
+    db: DbSession, _: CurrentUser, company_id: int = 1, competency: str = "2026-06"
+) -> list[dict[str, Any]]:
+    ensure_company(db, company_id)
+    batches = list(
+        db.scalars(
+            select(LaunchBatch)
+            .options(selectinload(LaunchBatch.items))
+            .where(
+                LaunchBatch.company_id == company_id,
+                LaunchBatch.competency == competency,
+            )
+            .order_by(LaunchBatch.updated_at.desc(), LaunchBatch.id.desc())
+        )
+    )
+    return [launch_response(db, batch) for batch in batches]
+
+
+@router.post("/launches")
+def create_launch(
+    payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1
+) -> dict[str, Any]:
+    ensure_company(db, company_id)
+    competency = str(payload.get("competency") or "")
+    kind = str(payload.get("kind") or "").upper()
+    if kind not in LAUNCH_KINDS:
+        raise HTTPException(status_code=422, detail="Tipo de lançamento inválido")
+    if len(competency) != 7:
+        raise HTTPException(status_code=422, detail="Competência inválida")
+    if is_competency_closed(db, company_id, competency):
+        raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para lançar valores.")
+    batch = db.scalar(
+        select(LaunchBatch)
+        .options(selectinload(LaunchBatch.items))
+        .where(
+            LaunchBatch.company_id == company_id,
+            LaunchBatch.competency == competency,
+            LaunchBatch.kind == kind,
+        )
+    )
+    if not batch:
+        batch = LaunchBatch(
+            company_id=company_id,
+            competency=competency,
+            kind=kind,
+            status="PENDING",
+            filters=payload.get("filters") or {},
+            created_by=user.full_name,
+            updated_by=user.full_name,
+        )
+        db.add(batch)
+        db.commit()
+        db.refresh(batch)
+    return launch_response(db, batch)
+
+
+@router.get("/launches/{batch_id}")
+def get_launch(
+    batch_id: int, db: DbSession, _: CurrentUser, company_id: int = 1
+) -> dict[str, Any]:
+    batch = load_launch_batch(db, batch_id, company_id)
+    return launch_response(db, batch)
+
+
+@router.patch("/launches/{batch_id}")
+def save_launch_draft(
+    batch_id: int,
+    payload: dict[str, Any],
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> dict[str, Any]:
+    batch = load_launch_batch(db, batch_id, company_id)
+    if batch.status != "PENDING":
+        raise HTTPException(status_code=409, detail="Lançamento já confirmado e bloqueado para edição.")
+    if is_competency_closed(db, company_id, batch.competency):
+        raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para editar.")
+    employments = launch_employments(db, company_id)
+    valid_mei_ids = valid_mei_contract_ids(db, company_id, batch.competency)
+    eligible_ids = {
+        item.id for item in employments
+        if launch_eligible(item, batch.kind, valid_mei_ids)
+    }
+    incoming: dict[int, tuple[Decimal, str]] = {}
+    for raw in payload.get("items") or []:
+        employment_id = int(raw.get("employment_id") or 0)
+        amount = money(raw.get("amount") or 0)
+        if employment_id not in eligible_ids:
+            raise HTTPException(status_code=422, detail="Há colaborador inelegível neste lançamento.")
+        if amount < 0:
+            raise HTTPException(status_code=422, detail="O valor não pode ser negativo.")
+        if amount > 0:
+            incoming[employment_id] = (amount, str(raw.get("note") or "")[:240])
+    for item in list(batch.items):
+        db.delete(item)
+    db.flush()
+    for employment_id, (amount, note) in incoming.items():
+        db.add(LaunchItem(batch_id=batch.id, employment_id=employment_id, amount=amount, note=note))
+    batch.filters = payload.get("filters") or {}
+    batch.updated_by = user.full_name
+    db.commit()
+    batch = load_launch_batch(db, batch.id, company_id)
+    return launch_response(db, batch)
+
+
+@router.post("/launches/{batch_id}/confirm")
+def confirm_launch(
+    batch_id: int, db: DbSession, user: AdminUser, company_id: int = 1
+) -> dict[str, Any]:
+    batch = load_launch_batch(db, batch_id, company_id)
+    if batch.status != "PENDING":
+        raise HTTPException(status_code=409, detail="Este lançamento já foi confirmado.")
+    if is_competency_closed(db, company_id, batch.competency):
+        raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para confirmar.")
+    employments = {item.id: item for item in launch_employments(db, company_id)}
+    valid_mei_ids = valid_mei_contract_ids(db, company_id, batch.competency)
+    valid_items = [
+        item for item in batch.items
+        if item.amount > 0 and item.employment_id in employments
+        and launch_eligible(
+            employments[item.employment_id], batch.kind, valid_mei_ids
+        )
+    ]
+    if not valid_items:
+        raise HTTPException(status_code=422, detail="Informe ao menos um valor antes de confirmar.")
+    if len(valid_items) != len(batch.items):
+        raise HTTPException(status_code=409, detail="A lista de elegíveis mudou. Salve o rascunho novamente.")
+    if batch.kind in {"MEI", "BONUS"}:
+        field = "pro_labore" if batch.kind == "MEI" else "bonus"
+        existing_overrides = {
+            item.employment_id: item
+            for item in db.scalars(
+                select(PayrollOverride).where(
+                    PayrollOverride.company_id == company_id,
+                    PayrollOverride.competency == batch.competency,
+                    PayrollOverride.employment_id.in_([item.employment_id for item in valid_items]),
+                )
+            )
+        }
+        conflicts = [
+            employments[item.employment_id].employee.full_name
+            for item in valid_items
+            if item.employment_id in existing_overrides
+            and field in (existing_overrides[item.employment_id].values or {})
+            and money(existing_overrides[item.employment_id].values[field]) != Decimal("0.00")
+        ]
+        if conflicts:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Já existe valor no Custo/Folha para: {', '.join(conflicts[:5])}. Remova o ajuste anterior antes de confirmar.",
+            )
+        for item in valid_items:
+            override = existing_overrides.get(item.employment_id)
+            if not override:
+                override = PayrollOverride(
+                    company_id=company_id,
+                    competency=batch.competency,
+                    employment_id=item.employment_id,
+                    values={},
+                    updated_by=user.full_name,
+                )
+                db.add(override)
+            override.values = {**(override.values or {}), field: as_float(item.amount)}
+            override.updated_by = user.full_name
+    else:
+        existing_baskets = set(
+            db.scalars(
+                select(BenefitDistribution.employee_id).where(
+                    BenefitDistribution.company_id == company_id,
+                    BenefitDistribution.competency == batch.competency,
+                    BenefitDistribution.benefit_code == "CB",
+                    BenefitDistribution.employee_id.in_([item.employment_id for item in valid_items]),
+                )
+            )
+        )
+        if existing_baskets:
+            names = [employments[item_id].employee.full_name for item_id in existing_baskets]
+            raise HTTPException(
+                status_code=409,
+                detail=f"Já existe Cesta básica lançada para: {', '.join(names[:5])}. Remova o lançamento anterior antes de confirmar.",
+            )
+        for item in valid_items:
+            db.add(
+                BenefitDistribution(
+                    company_id=company_id,
+                    competency=batch.competency,
+                    benefit_code="CB",
+                    benefit_name="Cesta básica",
+                    employee_id=item.employment_id,
+                    monthly_value=item.amount,
+                    amount=item.amount,
+                    source="Lançamentos",
+                    description="Lançamento mensal confirmado",
+                    created_by=user.full_name,
+                )
+            )
+    batch.status = "CONFIRMED"
+    batch.updated_by = user.full_name
+    batch.confirmed_at = datetime.now(timezone.utc)
+    total = sum((item.amount for item in valid_items), Decimal("0.00"))
+    db.add(
+        AuditEntry(
+            company_id=company_id,
+            module="Lançamentos",
+            action="Lançamento confirmado",
+            employee_name=None,
+            result_center=None,
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"{batch.kind} | {batch.competency} | {len(valid_items)} colaborador(es) | Total R$ {total:.2f}",
+        )
+    )
+    db.commit()
+    batch = load_launch_batch(db, batch.id, company_id)
+    return launch_response(db, batch)
+
+
+@router.delete("/launches/{batch_id}")
+def delete_launch_draft(
+    batch_id: int, db: DbSession, _: AdminUser, company_id: int = 1
+) -> dict[str, bool]:
+    batch = load_launch_batch(db, batch_id, company_id)
+    if batch.status != "PENDING":
+        raise HTTPException(status_code=409, detail="Somente rascunhos podem ser excluídos.")
+    db.delete(batch)
+    db.commit()
+    return {"deleted": True}
+
+
 @router.get("/payroll")
 def payroll(
     db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1
@@ -1423,9 +1773,11 @@ def save_payroll_override(
         "salary",
         "pro_labore",
         "profit_distribution",
+        "bonus",
         "cost_aid",
         "transport",
         "meal",
+        "basic_basket",
         "lodging",
         "insurance",
         "health_plan",
@@ -2067,6 +2419,7 @@ def build_indicator_sheet(
         "Salário": "salary",
         "Prolabore": "pro_labore",
         "Dist. Lucro": "profit_distribution",
+        "Premiação": "bonus",
         "Benefício": "benefits_total",
         "Patronal": "employer_contribution",
         "FGTS": "fgts",
@@ -2301,12 +2654,14 @@ def payroll_row(
     cost_aid = money(values.get("cost_aid", employment.cost_aid))
     transport = money(values.get("transport", benefits.get("VT", Decimal("0.00"))))
     meal = money(values.get("meal", benefits.get("AL", Decimal("0.00"))))
+    basic_basket = money(values.get("basic_basket", benefits.get("CB", Decimal("0.00"))))
     health_plan = money(values.get("health_plan", benefits.get("PS", Decimal("0.00"))))
     insurance = money(values.get("insurance", benefits.get("SV", Decimal("0.00"))))
     profit_distribution = money(values.get("profit_distribution", 0))
+    bonus = money(values.get("bonus", 0))
     lodging = money(values.get("lodging", 0))
-    subtotal = money(salary + pro_labore + profit_distribution + cost_aid)
-    benefit_total = money(transport + meal + lodging + insurance + health_plan)
+    subtotal = money(salary + pro_labore + profit_distribution + bonus + cost_aid)
+    benefit_total = money(transport + meal + basic_basket + lodging + insurance + health_plan)
     inss = money(subtotal * Decimal(str(rates["inss"])) / 100)
     rat = money(subtotal * Decimal(str(rates["rat"])) / 100)
     terceiros = money(subtotal * Decimal(str(rates["terceiros"])) / 100)
@@ -2351,9 +2706,11 @@ def payroll_row(
         "salary": as_float(salary),
         "pro_labore": as_float(pro_labore),
         "profit_distribution": as_float(profit_distribution),
+        "bonus": as_float(bonus),
         "cost_aid": as_float(cost_aid),
         "transport": as_float(transport),
         "meal": as_float(meal),
+        "basic_basket": as_float(basic_basket),
         "lodging": as_float(lodging),
         "insurance": as_float(insurance),
         "health_plan": as_float(health_plan),

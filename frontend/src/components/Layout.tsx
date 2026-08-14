@@ -11,6 +11,7 @@ export type Page =
   | "audit"
   | "employees"
   | "movements"
+  | "launches"
   | "mei-contracts"
   | "benefits"
   | "payroll"
@@ -40,6 +41,7 @@ const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] =
   { page: "dashboard", label: "Dashboard", icon: "▦" },
   { page: "employees", label: "Colaboradores", icon: "ID" },
   { page: "movements", label: "Movimentações", icon: "MV" },
+  { page: "launches", label: "Lançamentos", icon: "LÇ" },
   { page: "mei-contracts", label: "Contratos MEI", icon: "ME" },
   { page: "benefits", label: "Benefícios", icon: "BF" },
   { page: "payroll", label: "Custo / Folha", icon: "CF" },

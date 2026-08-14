@@ -44,6 +44,281 @@ def auth_header(client: TestClient, username: str, password: str) -> dict[str, s
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
+def test_delete_empty_employee_and_company_with_safety_guards(
+    client: TestClient,
+) -> None:
+    setup = client.post(
+        "/api/setup",
+        json={
+            "company_name": "Empresa Principal",
+            "backup_directory": "",
+            "auto_backup_on_start": True,
+            "include_saturdays": False,
+            "include_sundays": False,
+            "default_daily_hours": 8.8,
+            "admin_username": "admin",
+            "admin_full_name": "Administrador",
+            "admin_password": "SenhaForte123",
+        },
+    )
+    assert setup.status_code == 201
+    admin = auth_header(client, "admin", "SenhaForte123")
+    center = client.post(
+        "/api/result-centers",
+        headers=admin,
+        json={"code": "ADM", "name": "Administrativo", "active": True},
+    ).json()
+    employment_type = client.post(
+        "/api/employment-types",
+        headers=admin,
+        json={"name": "CLT", "has_charges": True, "active": True},
+    ).json()
+
+    def employee_payload(cpf: str, code: str, name: str) -> dict[str, object]:
+        return {
+            "cpf": cpf,
+            "full_name": name,
+            "employee_code": code,
+            "company_id": 1,
+            "employment_type_id": employment_type["id"],
+            "result_center_id": center["id"],
+            "job_title": "Analista",
+            "admission_date": "2026-08-01",
+            "salary_base": 3000,
+            "pix_key_type": "CPF",
+            "pix_key": cpf,
+        }
+
+    removable = client.post(
+        "/api/employees",
+        headers=admin,
+        json=employee_payload("52998224725", "ADM-001", "Cadastro sem movimento"),
+    )
+    assert removable.status_code == 201
+    removable_id = removable.json()["id"]
+    assert client.request(
+        "DELETE",
+        f"/api/employees/{removable_id}",
+        headers=admin,
+        json={"password": "senha-errada"},
+    ).status_code == 403
+    removed = client.request(
+        "DELETE",
+        f"/api/employees/{removable_id}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert removed.status_code == 200
+    assert removed.json() == {"deleted": True}
+
+    protected = client.post(
+        "/api/employees",
+        headers=admin,
+        json=employee_payload("11144477735", "ADM-002", "Cadastro com movimento"),
+    )
+    assert protected.status_code == 201
+    protected_id = protected.json()["id"]
+    assert client.post(
+        "/api/demo/movements",
+        headers=admin,
+        json={
+            "competency": "2026-08",
+            "employee_id": protected_id,
+            "type": "falta",
+            "start_date": "2026-08-05",
+            "days": 1,
+            "observation": "Movimento de proteção",
+        },
+    ).status_code == 201
+    blocked_employee = client.request(
+        "DELETE",
+        f"/api/employees/{protected_id}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert blocked_employee.status_code == 409
+    assert "movimenta" in blocked_employee.json()["detail"].lower()
+
+    empty_company = client.post(
+        "/api/companies",
+        headers=admin,
+        json={"code": "TEMP", "name": "Empresa temporária"},
+    )
+    assert empty_company.status_code == 201
+    company_id = empty_company.json()["id"]
+    assert client.request(
+        "DELETE",
+        f"/api/companies/{company_id}",
+        headers=admin,
+        json={"password": "senha-errada"},
+    ).status_code == 403
+    removed_company = client.request(
+        "DELETE",
+        f"/api/companies/{company_id}",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    )
+    assert removed_company.status_code == 200
+    assert removed_company.json() == {"deleted": True}
+    assert client.request(
+        "DELETE",
+        "/api/companies/1",
+        headers=admin,
+        json={"password": "SenhaForte123"},
+    ).status_code == 409
+
+
+def test_monthly_launches_resume_confirm_and_feed_payroll(client: TestClient) -> None:
+    assert client.post(
+        "/api/setup",
+        json={
+            "company_name": "Empresa Principal",
+            "backup_directory": "",
+            "auto_backup_on_start": True,
+            "include_saturdays": False,
+            "include_sundays": False,
+            "default_daily_hours": 8.8,
+            "admin_username": "admin",
+            "admin_full_name": "Administrador",
+            "admin_password": "SenhaForte123",
+        },
+    ).status_code == 201
+    admin = auth_header(client, "admin", "SenhaForte123")
+    center = client.post(
+        "/api/result-centers", headers=admin,
+        json={"code": "COM", "name": "Comercial", "active": True},
+    ).json()
+    mei_type = client.post(
+        "/api/employment-types", headers=admin,
+        json={"name": "MEI", "has_charges": False, "active": True},
+    ).json()
+    employee = client.post(
+        "/api/employees",
+        headers=admin,
+        json={
+            "cpf": "52998224725",
+            "full_name": "Promotor MEI",
+            "employee_code": "MEI-001",
+            "company_id": 1,
+            "employment_type_id": mei_type["id"],
+            "result_center_id": center["id"],
+            "job_title": "Promotor",
+            "admission_date": "2026-08-01",
+            "salary_base": 1,
+            "supervisor_name": "Supervisora A",
+            "benefits": ["Cesta básica"],
+            "pix_key_type": "CPF",
+            "pix_key": "52998224725",
+        },
+    )
+    assert employee.status_code == 201
+    employment_id = employee.json()["id"]
+
+    without_contract = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2026-08", "kind": "MEI"},
+    )
+    assert without_contract.status_code == 200
+    assert without_contract.json()["eligible_count"] == 0
+    contract = client.post(
+        "/api/demo/mei-contracts", headers=admin,
+        json={
+            "employee_id": employment_id,
+            "start_date": "2026-08-01",
+            "end_date": "2027-07-31",
+        },
+    )
+    assert contract.status_code == 201
+    assert client.patch(
+        f"/api/demo/mei-contracts/{contract.json()['id']}/sign",
+        headers=admin,
+        json={
+            "attachment_name": "contrato-assinado.pdf",
+            "attachment_data_url": "data:application/pdf;base64,JVBERi0xLjQ=",
+        },
+    ).status_code == 200
+    expired_period = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2027-08", "kind": "MEI"},
+    )
+    assert expired_period.status_code == 200
+    assert expired_period.json()["eligible_count"] == 0
+
+    created = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2026-08", "kind": "MEI"},
+    )
+    assert created.status_code == 200
+    batch = created.json()
+    assert batch["status"] == "PENDING"
+    assert batch["eligible_count"] == 1
+    assert client.patch(
+        f"/api/demo/launches/{batch['id']}", headers=admin,
+        json={"filters": {}, "items": [{"employment_id": employment_id, "amount": 1800, "note": "NF agosto"}]},
+    ).status_code == 200
+    resumed = client.get(
+        "/api/demo/launches?competency=2026-08", headers=admin
+    ).json()[0]
+    assert resumed["total"] == 1800
+    assert resumed["employees"][0]["note"] == "NF agosto"
+    confirmed = client.post(
+        f"/api/demo/launches/{batch['id']}/confirm", headers=admin
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "CONFIRMED"
+    assert client.post(
+        f"/api/demo/launches/{batch['id']}/confirm", headers=admin
+    ).status_code == 409
+    payroll = client.get(
+        "/api/demo/payroll?competency=2026-08", headers=admin
+    ).json()[0]
+    assert payroll["pro_labore"] == 1800
+
+    basket = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2026-08", "kind": "BASIC_BASKET"},
+    ).json()
+    assert basket["eligible_count"] == 1
+    client.patch(
+        f"/api/demo/launches/{basket['id']}", headers=admin,
+        json={"filters": {}, "items": [{"employment_id": employment_id, "amount": 250}]},
+    )
+    assert client.post(
+        f"/api/demo/launches/{basket['id']}/confirm", headers=admin
+    ).status_code == 200
+    payroll = client.get(
+        "/api/demo/payroll?competency=2026-08", headers=admin
+    ).json()[0]
+    assert payroll["basic_basket"] == 250
+    assert payroll["grand_total"] > payroll["pro_labore"] + payroll["basic_basket"]
+
+    bonus = client.post(
+        "/api/demo/launches", headers=admin,
+        json={"competency": "2026-08", "kind": "BONUS"},
+    ).json()
+    saved_bonus = client.patch(
+        f"/api/demo/launches/{bonus['id']}", headers=admin,
+        json={
+            "filters": {"supervisor": "Supervisora A", "modality": "MEI", "center": "COM"},
+            "items": [{"employment_id": employment_id, "amount": 400}],
+        },
+    )
+    assert saved_bonus.status_code == 200
+    assert saved_bonus.json()["filters"]["supervisor"] == "Supervisora A"
+    assert client.post(
+        f"/api/demo/launches/{bonus['id']}/confirm", headers=admin
+    ).status_code == 200
+    payroll = client.get(
+        "/api/demo/payroll?competency=2026-08", headers=admin
+    ).json()[0]
+    assert payroll["bonus"] == 400
+
+    audit = client.get(
+        "/api/demo/audit-logs?module=Lançamentos", headers=admin
+    ).json()
+    assert len(audit) == 3
+
+
 def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     setup = client.post(
         "/api/setup",
@@ -714,6 +989,27 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
             f"/api/employees?company_id={company_id}", headers=admin
         ).json()
     )
+
+    primary_dashboard = client.get(
+        "/api/dashboard?company_id=1&competency=2026-06", headers=admin
+    ).json()
+    beta_dashboard = client.get(
+        f"/api/dashboard?company_id={company_id}&competency=2026-06", headers=admin
+    ).json()
+    consolidated_dashboard = client.get(
+        "/api/dashboard?company_id=0&competency=2026-06", headers=admin
+    ).json()
+    primary_codes = [card["code"] for card in primary_dashboard["cards"]]
+    beta_codes = [card["code"] for card in beta_dashboard["cards"]]
+    consolidated_codes = [card["code"] for card in consolidated_dashboard["cards"]]
+    assert primary_codes == beta_codes == consolidated_codes
+    assert len(consolidated_codes) == 5
+    assert next(
+        card for card in consolidated_dashboard["cards"] if card["code"] == "BETA"
+    )["active_employees"] == 1
+    assert next(
+        card for card in primary_dashboard["cards"] if card["code"] == "BETA"
+    )["active_employees"] == 0
 
     with next(app.dependency_overrides[get_db]()) as db:
         db.add(

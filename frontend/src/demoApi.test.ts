@@ -27,6 +27,7 @@ describe("modo local multiempresa", () => {
       "/demo/mei-contracts?company_id=1",
       "/demo/benefits/catalog?company_id=1",
       "/demo/benefit-distributions?company_id=1&competency=2026-07",
+      "/demo/launches?company_id=1&competency=2026-07",
       "/demo/payroll?company_id=1&competency=2026-07",
       "/demo/indicators?company_id=1&competency=2026-07",
       "/demo/indicators/sheets?company_id=1&competency=2026-07",
@@ -302,6 +303,116 @@ describe("modo local multiempresa", () => {
     }, adminToken);
     const rows = await demoApi<any[]>("/demo/payroll?company_id=1&competency=2026-08", {}, adminToken);
     expect(rows.find(row => row.employee_id === employee.id)?.cost_aid).toBe(175);
+  });
+
+  it("retoma e confirma lançamentos integrados ao custo folha", async () => {
+    const types = await demoApi<EmploymentType[]>("/employment-types?company_id=1", {}, adminToken);
+    const mei = types.find(item => item.name === "MEI")!;
+    const employee = await demoApi<DemoEmployee>("/employees?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({
+        full_name: "PROMOTOR MEI LANÇAMENTO",
+        cpf: "52998224725",
+        employee_code: "MEI-001",
+        admission_date: "2026-08-01",
+        job_title: "PROMOTOR",
+        employment_type_id: mei.id,
+        result_center_id: 1,
+        salary_base: 1,
+        supervisor_name: "SUPERVISORA A",
+        pix_key_type: "CPF",
+        pix_key: "52998224725",
+        benefits: ["Cesta básica"]
+      })
+    }, adminToken);
+    const batch = await demoApi<any>("/demo/launches?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({ competency: "2026-08", kind: "MEI" })
+    }, adminToken);
+    expect(batch.eligible_count).toBe(0);
+    const contract = await demoApi<any>("/demo/mei-contracts?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({ employee_id: employee.id, start_date: "2026-08-01", end_date: "2027-07-31" })
+    }, adminToken);
+    await demoApi(`/demo/mei-contracts/${contract.id}/sign?company_id=1`, {
+      method: "PATCH",
+      body: JSON.stringify({ attachment_name: "contrato-assinado.pdf", attachment_data_url: "data:application/pdf;base64,JVBERi0xLjQ=" })
+    }, adminToken);
+    const eligibleBatch = (await demoApi<any[]>("/demo/launches?company_id=1&competency=2026-08", {}, adminToken))[0];
+    expect(eligibleBatch.eligible_count).toBe(1);
+    await demoApi(`/demo/launches/${batch.id}?company_id=1`, {
+      method: "PATCH",
+      body: JSON.stringify({ filters: {}, items: [{ employment_id: employee.id, amount: 1800, note: "NF agosto" }] })
+    }, adminToken);
+    const resumed = await demoApi<any[]>("/demo/launches?company_id=1&competency=2026-08", {}, adminToken);
+    expect(resumed[0].employees[0].note).toBe("NF agosto");
+    await demoApi(`/demo/launches/${batch.id}/confirm?company_id=1`, { method: "POST" }, adminToken);
+    const payroll = await demoApi<any[]>("/demo/payroll?company_id=1&competency=2026-08", {}, adminToken);
+    expect(payroll[0].pro_labore).toBe(1800);
+    await expect(demoApi(`/demo/launches/${batch.id}/confirm?company_id=1`, { method: "POST" }, adminToken)).rejects.toThrow("já foi confirmado");
+  });
+
+  it("exclui somente colaboradores e empresas sem registros vinculados", async () => {
+    const employee = await demoApi<DemoEmployee>("/employees?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({
+        full_name: "CADASTRO TEMPORÁRIO",
+        cpf: "52998224725",
+        employee_code: "ADM-001",
+        admission_date: "2026-08-01",
+        job_title: "ANALISTA",
+        employment_type_id: 1,
+        result_center_id: 1,
+        salary_base: 3000,
+        pix_key_type: "CPF",
+        pix_key: "52998224725"
+      })
+    }, adminToken);
+    await expect(demoApi(`/employees/${employee.id}?company_id=1`, {
+      method: "DELETE",
+      body: JSON.stringify({ password: "senha-errada" })
+    }, adminToken)).rejects.toThrow("Senha de confirmação inválida");
+    await expect(demoApi(`/employees/${employee.id}?company_id=1`, {
+      method: "DELETE",
+      body: JSON.stringify({ password: "admin" })
+    }, adminToken)).resolves.toEqual({ deleted: true });
+
+    const protectedEmployee = await demoApi<DemoEmployee>("/employees?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({
+        full_name: "CADASTRO COM MOVIMENTO",
+        cpf: "11144477735",
+        employee_code: "ADM-002",
+        admission_date: "2026-08-01",
+        job_title: "ANALISTA",
+        employment_type_id: 1,
+        result_center_id: 1,
+        salary_base: 3000,
+        pix_key_type: "CPF",
+        pix_key: "11144477735"
+      })
+    }, adminToken);
+    await demoApi("/demo/movements?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({ employee_id: protectedEmployee.id, type: "falta", start_date: "2026-08-05" })
+    }, adminToken);
+    await expect(demoApi(`/employees/${protectedEmployee.id}?company_id=1`, {
+      method: "DELETE",
+      body: JSON.stringify({ password: "admin" })
+    }, adminToken)).rejects.toThrow("movimentações");
+
+    const company = await demoApi<Company>("/companies", {
+      method: "POST",
+      body: JSON.stringify({ code: "TEMP", name: "EMPRESA TEMPORÁRIA", active: true })
+    }, adminToken);
+    await expect(demoApi(`/companies/${company.id}`, {
+      method: "DELETE",
+      body: JSON.stringify({ password: "admin" })
+    }, adminToken)).resolves.toEqual({ deleted: true });
+    await expect(demoApi("/companies/1", {
+      method: "DELETE",
+      body: JSON.stringify({ password: "admin" })
+    }, adminToken)).rejects.toThrow("empresa principal");
   });
 
   it("lê planilhas XLSX de importação sem perder documento e valores", async () => {

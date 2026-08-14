@@ -9,6 +9,13 @@ const LOCAL_MODE_STORAGE_KEY = "nexo-local-mode";
 const PRESENTATION_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 const ALL_COMPANIES_ID = 0;
 
+interface DemoLaunchItem { employment_id: number; amount: number; note: string }
+interface DemoLaunchBatch {
+  id: number; company_id: number; competency: string; kind: "MEI" | "BASIC_BASKET" | "BONUS";
+  status: "PENDING" | "CONFIRMED"; filters: Record<string, string>; items: DemoLaunchItem[];
+  created_by: string; updated_by: string; created_at: string; updated_at: string; confirmed_at: string | null;
+}
+
 interface DemoState {
   companies: DemoCompany[];
   closings: Record<string, DemoClosing>;
@@ -25,6 +32,7 @@ interface DemoState {
   reportTemplates: Record<string, unknown[]>;
   indicatorRevenue: Record<string, Record<string, number>>;
   payrollOverrides: Record<string, Partial<Record<string, number>>>;
+  launchBatches: DemoLaunchBatch[];
 }
 
 function isOperationalLocalMode() {
@@ -97,6 +105,7 @@ function localDefaultState(): DemoState {
     reportTemplates: {},
     indicatorRevenue: {},
     payrollOverrides: {},
+    launchBatches: [],
     auditLogs: [
       {
         id: 1,
@@ -133,6 +142,7 @@ function presentationDemoDefaultState(): DemoState {
     reportTemplates: {},
     indicatorRevenue: {},
     payrollOverrides: {},
+    launchBatches: [],
     auditLogs: [
       {
         id: 1,
@@ -163,6 +173,7 @@ function loadState(): DemoState {
     parsed.reportTemplates = parsed.reportTemplates ?? {};
     parsed.indicatorRevenue = parsed.indicatorRevenue ?? {};
     parsed.payrollOverrides = parsed.payrollOverrides ?? {};
+    parsed.launchBatches = parsed.launchBatches ?? [];
     const fallbackRates = demoCompanies[0].settings.payroll_rates;
     parsed.companies = parsed.companies.map(company => ({
       ...company,
@@ -375,6 +386,52 @@ function normalizeText(value: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function localLaunchEligible(
+  state: DemoState,
+  employee: DemoEmployee,
+  kind: DemoLaunchBatch["kind"],
+  competency: string
+) {
+  if (employee.status === "INACTIVE") return false;
+  if (kind === "MEI") {
+    const [year, month] = competency.split("-").map(Number);
+    const periodStart = `${competency}-01`;
+    const periodEnd = new Date(year, month, 0).toISOString().slice(0, 10);
+    const hasSignedCurrentContract = state.meiContracts.some(contract =>
+      contract.company_id === employee.company_id
+      && contract.employee_id === employee.id
+      && contract.status === "Ativo"
+      && Boolean(contract.signed_at)
+      && contract.start_date <= periodEnd
+      && contract.end_date >= periodStart
+    );
+    return normalizeText(employee.employment_type.name) === "mei" && hasSignedCurrentContract;
+  }
+  if (kind === "BASIC_BASKET") return employee.benefits.some(value => normalizeText(value) === "cesta basica");
+  return true;
+}
+
+function localLaunchResponse(state: DemoState, batch: DemoLaunchBatch) {
+  const stored = new Map(batch.items.map(item => [item.employment_id, item]));
+  const eligible = state.employees.filter(item => item.company_id === batch.company_id && localLaunchEligible(state, item, batch.kind, batch.competency));
+  return {
+    ...batch,
+    total: roundMoney(batch.items.reduce((sum, item) => sum + item.amount, 0)),
+    filled_count: batch.items.filter(item => item.amount > 0).length,
+    eligible_count: eligible.length,
+    employees: eligible.map(employee => ({
+      employment_id: employee.id,
+      employee_name: employee.employee.full_name,
+      employee_code: employee.employee_code,
+      supervisor_name: employee.supervisor_name,
+      employment_type: employee.employment_type.name,
+      result_center: employee.result_center,
+      amount: stored.get(employee.id)?.amount ?? 0,
+      note: stored.get(employee.id)?.note ?? ""
+    }))
+  };
 }
 
 function isValidCpfCnpj(value: string) {
@@ -802,7 +859,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
       const card = cards.find(item => item.code === center.code) ?? null;
       const plannedHours = Math.max(card?.active_employees ?? 0, 0) * 22 * 8;
       const nonProductiveHours = plannedHours * (card?.absenteeism ?? 0);
-      const benefit = sumRows(rows, "transport") + sumRows(rows, "meal") + sumRows(rows, "lodging") + sumRows(rows, "insurance") + sumRows(rows, "health_plan");
+      const benefit = sumRows(rows, "transport") + sumRows(rows, "meal") + sumRows(rows, "basic_basket") + sumRows(rows, "lodging") + sumRows(rows, "insurance") + sumRows(rows, "health_plan");
 
       return {
         monthLabel,
@@ -812,6 +869,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
         salary: sumRows(rows, "salary"),
         proLabore: sumRows(rows, "pro_labore"),
         profit: sumRows(rows, "profit_distribution"),
+        bonus: sumRows(rows, "bonus"),
         benefit,
         patronal: sumRows(rows, "employer_contribution"),
         fgts: sumRows(rows, "fgts"),
@@ -827,6 +885,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
       { label: "Salário", values: costValues("salary"), total: costValues("salary").reduce((a, b) => a + b, 0) },
       { label: "Prolabore", values: costValues("proLabore"), total: costValues("proLabore").reduce((a, b) => a + b, 0) },
       { label: "Dist. Lucro", values: costValues("profit"), total: costValues("profit").reduce((a, b) => a + b, 0) },
+      { label: "Premiação", values: costValues("bonus"), total: costValues("bonus").reduce((a, b) => a + b, 0) },
       { label: "Benefício", values: costValues("benefit"), total: costValues("benefit").reduce((a, b) => a + b, 0) },
       { label: "Patronal", values: costValues("patronal"), total: costValues("patronal").reduce((a, b) => a + b, 0) },
       { label: "FGTS", values: costValues("fgts"), total: costValues("fgts").reduce((a, b) => a + b, 0) },
@@ -1061,6 +1120,41 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     } : company);
     saveState(state);
     return cleanCompany(state.companies.find(item => item.id === id) ?? current) as T;
+  }
+  if (route.startsWith("/companies/") && method === "DELETE") {
+    assertAdmin(token);
+    const id = Number(route.split("/")[2]);
+    const payload = body<{ password?: string }>(options);
+    const storedUser = state.users.find(user => user.token === token);
+    if (!storedUser || payload.password !== storedUser.password) throw new Error("Senha de confirmação inválida.");
+    const company = state.companies.find(item => item.id === id);
+    if (!company) throw new Error("Empresa não encontrada.");
+    if (company.is_primary) throw new Error("A empresa principal não pode ser excluída. Defina outra empresa como principal primeiro.");
+    if (state.companies.some(item => item.parent_company_id === id)) throw new Error("Esta empresa possui filiais vinculadas. Remova ou transfira as filiais primeiro.");
+    const blockers = [
+      state.employees.some(item => item.company_id === id) && "colaboradores",
+      state.movements.some(item => item.company_id === id) && "movimentações",
+      state.meiContracts.some(item => item.company_id === id) && "contratos MEI",
+      state.benefitDistributions.some(item => item.company_id === id) && "benefícios lançados",
+      state.allocations.some(item => item.company_id === id) && "custos alocados",
+      state.auditLogs.some(item => item.company_id === id) && "registros de auditoria"
+    ].filter(Boolean);
+    if (blockers.length) throw new Error(`Esta empresa possui registros vinculados: ${blockers.join(", ")}. Inative-a para preservar o histórico.`);
+    const auditCompany = state.companies.find(item => item.id !== id && item.is_primary) ?? state.companies.find(item => item.id !== id);
+    if (!auditCompany) throw new Error("A última empresa do sistema não pode ser excluída.");
+    state.companies = state.companies.filter(item => item.id !== id);
+    state.resultCenters = state.resultCenters.filter(item => item.company_id !== id);
+    state.employmentTypes = state.employmentTypes.filter(item => item.company_id !== id);
+    appendAudit(state, {
+      company_id: auditCompany.id,
+      module: "Empresas",
+      action: "Empresa excluída",
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${company.code} | ${company.name} | cadastro sem movimentações ou registros operacionais`
+    });
+    saveState(state);
+    return { deleted: true } as T;
   }
 
   if (route === "/demo/alerts" && method === "GET") return buildAlerts(state, companyId) as T;
@@ -1680,6 +1774,37 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     saveState(state);
     return item as T;
   }
+  if (route.startsWith("/employees/") && method === "DELETE") {
+    assertAdmin(token);
+    const employmentId = Number(route.split("/")[2]);
+    const payload = body<{ password?: string }>(options);
+    const storedUser = state.users.find(user => user.token === token);
+    if (!storedUser || payload.password !== storedUser.password) throw new Error("Senha de confirmação inválida.");
+    const item = companyId === ALL_COMPANIES_ID
+      ? state.employees.find(employee => employee.id === employmentId)
+      : state.employees.find(employee => employee.id === employmentId && employee.company_id === companyId);
+    if (!item) throw new Error("Vínculo não encontrado");
+    const blockers = [
+      state.movements.some(movement => movement.employee_id === employmentId) && "movimentações",
+      state.meiContracts.some(contract => contract.employee_id === employmentId) && "contratos MEI",
+      state.benefitDistributions.some(distribution => distribution.employee_id === employmentId) && "benefícios lançados",
+      Object.keys(state.payrollOverrides).some(key => key.endsWith(`:${employmentId}`)) && "ajustes de folha"
+    ].filter(Boolean);
+    if (blockers.length) throw new Error(`Este colaborador possui registros vinculados: ${blockers.join(", ")}. Inative-o para preservar o histórico.`);
+    state.employees = state.employees.filter(employee => employee.id !== employmentId);
+    appendAudit(state, {
+      company_id: item.company_id,
+      module: "Colaboradores",
+      action: "Colaborador excluído",
+      employee_name: item.employee.full_name,
+      result_center: item.result_center,
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `Matrícula ${item.employee_code} | cadastro sem movimentações ou registros operacionais`
+    });
+    saveState(state);
+    return { deleted: true } as T;
+  }
 
   if (route === "/demo/movements" && method === "GET") return scopeMovements(state, companyId).filter(item => !params.get("competency") || item.competency === params.get("competency")) as T;
   if (route === "/demo/movements" && method === "POST") {
@@ -1828,6 +1953,80 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     });
     saveState(state);
     return item as T;
+  }
+
+  if (route === "/demo/launches" && method === "GET") {
+    const competency = params.get("competency") ?? "2026-06";
+    return state.launchBatches
+      .filter(item => item.company_id === companyId && item.competency === competency)
+      .map(item => localLaunchResponse(state, item)) as T;
+  }
+  if (route === "/demo/launches" && method === "POST") {
+    assertAdmin(token);
+    if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para realizar lançamentos.");
+    const payload = body<{ competency: string; kind: DemoLaunchBatch["kind"] }>(options);
+    let batch = state.launchBatches.find(item => item.company_id === companyId && item.competency === payload.competency && item.kind === payload.kind);
+    if (!batch) {
+      const now = new Date().toISOString();
+      batch = { id: nextId(state.launchBatches), company_id: companyId, competency: payload.competency, kind: payload.kind, status: "PENDING", filters: {}, items: [], created_by: currentUser.full_name, updated_by: currentUser.full_name, created_at: now, updated_at: now, confirmed_at: null };
+      state.launchBatches.push(batch);
+      saveState(state);
+    }
+    return localLaunchResponse(state, batch) as T;
+  }
+  const launchMatch = route.match(/^\/demo\/launches\/(\d+)$/);
+  if (launchMatch && method === "GET") {
+    const batch = state.launchBatches.find(item => item.id === Number(launchMatch[1]) && item.company_id === companyId);
+    if (!batch) throw new Error("Lançamento não encontrado.");
+    return localLaunchResponse(state, batch) as T;
+  }
+  if (launchMatch && method === "PATCH") {
+    assertAdmin(token);
+    const batch = state.launchBatches.find(item => item.id === Number(launchMatch[1]) && item.company_id === companyId);
+    if (!batch) throw new Error("Lançamento não encontrado.");
+    if (batch.status !== "PENDING") throw new Error("Lançamento já confirmado e bloqueado para edição.");
+    const payload = body<{ filters?: Record<string, string>; items?: DemoLaunchItem[] }>(options);
+    const eligible = new Set(state.employees.filter(item => item.company_id === companyId && localLaunchEligible(state, item, batch.kind, batch.competency)).map(item => item.id));
+    batch.filters = payload.filters ?? {};
+    batch.items = (payload.items ?? []).filter(item => eligible.has(item.employment_id) && Number(item.amount) > 0).map(item => ({ ...item, amount: roundMoney(Number(item.amount)) }));
+    batch.updated_by = currentUser.full_name;
+    batch.updated_at = new Date().toISOString();
+    saveState(state);
+    return localLaunchResponse(state, batch) as T;
+  }
+  const confirmLaunchMatch = route.match(/^\/demo\/launches\/(\d+)\/confirm$/);
+  if (confirmLaunchMatch && method === "POST") {
+    assertAdmin(token);
+    const batch = state.launchBatches.find(item => item.id === Number(confirmLaunchMatch[1]) && item.company_id === companyId);
+    if (!batch) throw new Error("Lançamento não encontrado.");
+    if (batch.status !== "PENDING") throw new Error("Este lançamento já foi confirmado.");
+    if (!batch.items.length) throw new Error("Informe ao menos um valor antes de confirmar.");
+    if (batch.kind === "BASIC_BASKET") {
+      for (const item of batch.items) {
+        const employee = state.employees.find(value => value.id === item.employment_id)!;
+        state.benefitDistributions.push({
+          id: nextId(state.benefitDistributions), company_id: companyId, competency: batch.competency,
+          benefit_code: "CB", benefit_name: "Cesta básica", employee_id: employee.id,
+          employee_name: employee.employee.full_name, result_center: employee.result_center,
+          supervisor_name: employee.supervisor_name, employment_type: employee.employment_type.name,
+          state: employee.state, days_worked: 0, value_per_day: 0, monthly_value: item.amount,
+          amount: item.amount, source: "Lançamentos", description: "Lançamento mensal confirmado",
+          created_at: new Date().toLocaleString("pt-BR"), created_by: currentUser.full_name
+        });
+      }
+    } else {
+      const field = batch.kind === "MEI" ? "pro_labore" : "bonus";
+      for (const item of batch.items) {
+        const key = `${companyId}:${batch.competency}:${item.employment_id}`;
+        state.payrollOverrides[key] = { ...(state.payrollOverrides[key] ?? {}), [field]: item.amount };
+      }
+    }
+    batch.status = "CONFIRMED";
+    batch.confirmed_at = new Date().toISOString();
+    batch.updated_at = batch.confirmed_at;
+    appendAudit(state, { company_id: companyId, module: "Lançamentos", action: "Lançamento confirmado", performed_by: currentUser.full_name, performed_role: currentUser.role, details: `${batch.kind} | ${batch.competency} | ${batch.items.length} colaborador(es)` });
+    saveState(state);
+    return localLaunchResponse(state, batch) as T;
   }
 
   if (route === "/demo/payroll" && method === "GET") {
