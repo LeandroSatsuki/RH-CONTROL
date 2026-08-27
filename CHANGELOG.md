@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.9 - 2026-08-27
+
+### Cadastro e importação de colaboradores
+
+- trata acentos e caracteres especiais retornados pelas consultas automáticas de CNPJ e CEP sem bloquear o cadastro;
+- preserva caracteres legítimos e normaliza textos incompatíveis antes de preencher o formulário;
+- atualiza e unifica o modelo de importação disponível em Colaboradores e em Ajustes do sistema;
+- inclui admissão, gratificação, ajuda de custo, observações, nome e código do banco, dígito da conta e demais informações atuais do cadastro;
+- mantém os dados bancários opcionais durante a importação;
+- não altera o servidor, as migrations ou a estrutura da base de dados.
+
 ## 1.0.8 - 2026-08-14
 
 ### Troca de empresa e matrículas

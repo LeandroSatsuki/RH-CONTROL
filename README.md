@@ -4,7 +4,7 @@ Sistema de controle de custos e pessoas com operação multiempresa, histórico 
 
 ## Versão de produção
 
-A versão `1.0.8` utiliza uma arquitetura cliente-servidor:
+A produção utiliza o cliente `1.0.9` com o servidor `1.0.8`, em uma arquitetura cliente-servidor:
 
 - **Servidor principal:** FastAPI, PostgreSQL, migrations, backup e API compartilhada.
 - **Estações clientes:** aplicativo Windows Electron com frontend React.
@@ -39,14 +39,14 @@ Os artefatos finais ficam em `entregas/`:
 
 - `Nexo-Servidor-Setup-1.0.8.exe` para primeira instalação;
 - `Nexo-Servidor-Atualizador-1.0.8.exe` para servidor já instalado;
-- `Nexo-Cliente-Setup-1.0.8.exe` para instalação manual do cliente.
+- `Nexo-Cliente-Setup-1.0.9.exe` para instalação manual do cliente.
 
 ### Computador principal
 
 1. Execute `Nexo-Servidor-Setup-1.0.8.exe` como Administrador na primeira instalação.
 2. Informe uma senha para o PostgreSQL e uma senha inicial para o usuário `admin`.
 3. Aguarde a confirmação de que banco, migrations, seed, API, firewall e backup foram configurados.
-4. Execute também `Nexo-Cliente-Setup-1.0.8.exe` para usar o Nexo no computador principal.
+4. Execute também `Nexo-Cliente-Setup-1.0.9.exe` para usar o Nexo no computador principal.
 5. Clique duas vezes no atalho de diagnóstico; ele solicitará permissão de Administrador:
 
 ```text
@@ -57,7 +57,7 @@ O resultado deve mostrar `PostgreSQL 5432: True`, `API 8000: True` e `Saude da A
 
 ### Outros computadores
 
-1. Instale somente `Nexo-Cliente-Setup-1.0.8.exe`.
+1. Instale somente `Nexo-Cliente-Setup-1.0.9.exe`.
 2. Na primeira abertura, informe o endereço privado mostrado pelo diagnóstico, por exemplo `http://192.168.0.10:8000`.
 3. Entre com o usuário criado pelo Administrador.
 
@@ -97,7 +97,7 @@ Boas práticas:
 
 ## Atualizações
 
-O cliente Electron consulta versões publicadas em GitHub Releases, baixa a nova versão em segundo plano e oferece a reinicialização. Se o usuário escolher “Depois”, a versão baixada será aplicada quando o Nexo for fechado.
+O cliente Electron consulta versões publicadas em GitHub Releases, baixa a nova versão em segundo plano e oferece a reinicialização. Se o usuário escolher “Depois”, a versão baixada será aplicada quando o Nexo for fechado. Atualizações exclusivas do cliente, como a `1.0.9`, não exigem a reinstalação do servidor.
 
 Em um servidor já instalado, execute `Nexo-Servidor-Atualizador-1.0.8.exe` como Administrador. Esse entregável não faz instalação inicial: ele exige `C:\Nexo\.env`, cria e valida o backup, atualiza os arquivos, aplica migrations e só conclui depois que a API responder pela tarefa automática. Use `Nexo-Servidor-Setup-1.0.8.exe` apenas para uma máquina sem servidor ou para reparo assistido.
 
