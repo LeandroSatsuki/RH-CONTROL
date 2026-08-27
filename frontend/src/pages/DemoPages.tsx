@@ -11,7 +11,8 @@ import { DemoAlert, DemoAppUser, DemoAuditEntry, DemoBackup, DemoBenefitDistribu
 import { recalculatePayrollRow } from "../mocks/demoCalculations";
 import { CentersPage, TypesPage } from "./CatalogPages";
 import { Company, EmploymentType, ResultCenter, User } from "../types";
-import { buildEmployeeImportTemplateRow, normalizeEmployeeText } from "../employeeImport";
+import { buildEmployeeImportTemplateRow, createEmployeeImportApiIssue, EmployeeImportRowResult, validateEmployeeImportRows } from "../employeeImport";
+import { EmployeeImportReport } from "../components/EmployeeImportReport";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
@@ -2529,8 +2530,7 @@ export function ClosingPage({ token, user }: { token: string; user: User }) {
 
 export function ImportPage({ token, user, embedded = false }: { token: string; user: User; embedded?: boolean }) {
   const { selectedCompany } = useDemoScope();
-  const [preview, setPreview] = useState<{ rows: number; valid: number; errors: string[] } | null>(null);
-  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [validationRows, setValidationRows] = useState<EmployeeImportRowResult[]>([]);
   const [employees, setEmployees] = useState<DemoEmployee[]>([]);
   const [centers, setCenters] = useState<ResultCenter[]>([]);
   const [types, setTypes] = useState<EmploymentType[]>([]);
@@ -2574,14 +2574,19 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
     fb.setError("");
     try {
       const parsedRows = await readFirstExcelSheet(await file.arrayBuffer());
-      const errors = validateImportRows(parsedRows, centers, types, employees);
-      setRows(parsedRows);
-      setPreview({ rows: parsedRows.length, valid: parsedRows.length - errors.length, errors });
-      if (errors.length) fb.fail("A planilha possui inconsistências. Corrija as linhas indicadas antes de importar.");
-      else fb.notify("Planilha validada e pronta para importação.");
+      if (!parsedRows.length) throw new Error("A planilha não possui colaboradores para importar.");
+      const validated = validateEmployeeImportRows(parsedRows, {
+        centers,
+        types,
+        existingDocuments: employees.map(item => item.employee.cpf)
+      });
+      const valid = validated.filter(item => !item.issues.length).length;
+      const inconsistent = validated.length - valid;
+      setValidationRows(validated);
+      if (valid) fb.notify(`Planilha carregada: ${valid} linha(s) pronta(s) para importar${inconsistent ? ` e ${inconsistent} com correções sugeridas abaixo` : ""}.`);
+      else fb.fail("A planilha foi carregada, mas nenhuma linha está pronta para importação. Consulte as correções sugeridas abaixo.");
     } catch (err) {
-      setRows([]);
-      setPreview(null);
+      setValidationRows([]);
       fb.fail(err instanceof Error ? err.message : "Não foi possível ler a planilha.");
     } finally {
       setLoading(false);
@@ -2590,10 +2595,13 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
 
   async function confirmImport() {
     if (restricted(user, fb.fail)) return;
-    if (!preview || !rows.length || preview.errors.length) return fb.fail("Selecione e valide uma planilha sem inconsistências.");
+    const validRows = validationRows.filter(item => !item.issues.length);
+    if (!validRows.length) return fb.fail("Não há linhas válidas para importar. Corrija as linhas indicadas e selecione a planilha novamente.");
     setLoading(true);
     fb.setError("");
     try {
+      let imported = 0;
+      const failedRows: EmployeeImportRowResult[] = [];
       const nextCodeByCenter = new Map<string, number>();
       for (const center of centers) {
         const last = employees
@@ -2602,136 +2610,76 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
           .reduce((max, value) => Math.max(max, Number.isFinite(value) ? value : 0), 0);
         nextCodeByCenter.set(center.code, last + 1);
       }
-      for (const raw of rows) {
-        const row = normalizeSheetImportRow(raw);
+      for (const validated of validRows) {
+        const row = validated.data;
         const center = centers.find(item => item.code.toUpperCase() === row.center);
-        const type = types.find(item => item.name.toUpperCase() === row.type);
-        if (!center || !type) throw new Error(`Centro ou modalidade não encontrado para ${row.name}.`);
+        const type = types.find(item => normalizeReportText(item.name) === normalizeReportText(row.type));
+        if (!center || !type) continue;
         const sequence = nextCodeByCenter.get(center.code) ?? 1;
-        nextCodeByCenter.set(center.code, sequence + 1);
-        await api("/employees", {
-          method: "POST",
-          body: JSON.stringify({
-            company_id: selectedCompany.id,
-            full_name: row.name,
-            cpf: row.document,
-            employee_code: `${center.code}-${String(sequence).padStart(3, "0")}`,
-            admission_date: row.admission,
-            email: row.email,
-            phone: row.phone,
-            supervisor_name: row.supervisor,
-            job_title: row.jobTitle,
-            employment_type_id: type.id,
-            result_center_id: center.id,
-            salary_base: row.salary,
-            gratification: row.gratification,
-            cost_aid: row.costAid,
-            cep: row.cep,
-            street: row.street,
-            address_number: row.number,
-            address_complement: row.complement,
-            neighborhood: row.neighborhood,
-            city: row.city,
-            state: row.state,
-            bank_code: row.bankCode,
-            bank_name: row.bankName,
-            bank_agency: row.agency,
-            bank_account: row.account,
-            bank_account_digit: row.accountDigit,
-            pix_key_type: row.pixType,
-            pix_key: row.pix,
-            benefits: row.benefits,
-            notes: row.notes
-          })
-        }, token);
+        try {
+          await api("/employees", {
+            method: "POST",
+            body: JSON.stringify({
+              company_id: selectedCompany.id,
+              full_name: row.name,
+              cpf: row.document,
+              employee_code: `${center.code}-${String(sequence).padStart(3, "0")}`,
+              admission_date: row.admission,
+              email: row.email,
+              phone: row.phone,
+              supervisor_name: row.supervisor,
+              job_title: row.jobTitle,
+              employment_type_id: type.id,
+              result_center_id: center.id,
+              salary_base: row.salary,
+              gratification: row.gratification,
+              cost_aid: row.costAid,
+              cep: row.cep,
+              street: row.street,
+              address_number: row.number,
+              address_complement: row.complement,
+              neighborhood: row.neighborhood,
+              city: row.city,
+              state: row.state,
+              bank_code: row.bankCode,
+              bank_name: row.bankName,
+              bank_agency: row.agency,
+              bank_account: row.account,
+              bank_account_digit: row.accountDigit,
+              pix_key_type: row.pixType,
+              pix_key: row.pix,
+              benefits: row.benefits,
+              notes: row.notes
+            })
+          }, token);
+          nextCodeByCenter.set(center.code, sequence + 1);
+          imported += 1;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "O servidor recusou esta linha.";
+          failedRows.push({ ...validated, issues: [createEmployeeImportApiIssue(validated.rowNumber, row, message)] });
+        }
       }
-      fb.notify(`${rows.length} colaborador(es) importado(s) para ${selectedCompany.name}.`);
-      setRows([]);
-      setPreview(null);
+      const remaining = [...validationRows.filter(item => item.issues.length), ...failedRows];
+      setValidationRows(remaining);
+      if (imported) fb.notify(`${imported} colaborador(es) importado(s) para ${selectedCompany.name}${remaining.length ? `. ${remaining.length} linha(s) não importada(s), com orientação abaixo` : ""}.`);
+      else fb.fail("Nenhuma linha foi importada. Consulte abaixo a resposta do servidor e a correção sugerida.");
     } catch (err) {
       fb.fail(err instanceof Error ? err.message : "Erro ao importar colaboradores.");
     } finally {
       setLoading(false);
     }
   }
+  const validCount = validationRows.filter(item => !item.issues.length).length;
+  const importIssues = validationRows.flatMap(item => item.issues);
   const content = <>
     <ErrorMessage message={fb.error} />
     <SuccessMessage message={fb.success} />
-    <div className="panel import-panel"><strong>Cadastro de colaboradores</strong><button className="secondary" type="button" onClick={() => void downloadTemplate()}>Baixar modelo</button><button className="upload-box" type="button" onClick={() => fileInputRef.current?.click()}>Selecionar planilha XLSX</button><input ref={fileInputRef} type="file" accept=".xlsx" hidden onChange={event => void selectFile(event)} /><button className="primary" type="button" onClick={() => void confirmImport()} disabled={loading || !preview || Boolean(preview.errors.length)}>{loading ? "Processando..." : "Confirmar importação"}</button></div>
-    {preview && <div className="panel"><h2>Prévia dos dados</h2><div className="summary-grid"><Summary label="Linhas" value={preview.rows} /><Summary label="Válidas" value={preview.valid} /><Summary label="Inconsistências" value={preview.errors.length} strong /></div><ul className="validation-list">{preview.errors.map((item: string) => <li key={item}>{item}</li>)}</ul></div>}
+    <div className="panel import-panel"><strong>Cadastro de colaboradores</strong><button className="secondary" type="button" onClick={() => void downloadTemplate()}>Baixar modelo</button><button className="upload-box" type="button" onClick={() => fileInputRef.current?.click()}>Selecionar planilha XLSX</button><input ref={fileInputRef} type="file" accept=".xlsx" hidden onChange={event => void selectFile(event)} /><button className="primary" type="button" onClick={() => void confirmImport()} disabled={loading || !validCount}>{loading ? "Processando..." : validCount ? `Importar ${validCount} linha(s) válida(s)` : "Confirmar importação"}</button></div>
+    {validationRows.length > 0 && <div className="panel"><h2>Prévia dos dados</h2><div className="summary-grid"><Summary label="Linhas pendentes" value={validationRows.length} /><Summary label="Prontas para importar" value={validCount} /><Summary label="Com inconsistência" value={validationRows.filter(item => item.issues.length).length} strong /></div></div>}
+    <EmployeeImportReport issues={importIssues} />
   </>;
   if (embedded) return content;
   return <PageShell title="Importação" subtitle="Fluxo visual para validar planilhas antes de confirmar dados." error={fb.error} success={fb.success}>{content}</PageShell>;
-}
-
-function normalizeSheetImportRow(row: Record<string, unknown>) {
-  const read = (...names: string[]) => {
-    const entry = Object.entries(row).find(([key]) => names.some(name => normalizeReportText(key) === normalizeReportText(name)));
-    return String(entry?.[1] ?? "").trim();
-  };
-  const salaryText = read("SALARIO", "SALÁRIO").replace(/\./g, "").replace(",", ".");
-  const gratificationText = read("GRATIFICACAO", "GRATIFICAÇÃO").replace(/\./g, "").replace(",", ".");
-  return {
-    name: normalizeEmployeeText(read("NOME", "NOME COMPLETO")),
-    document: onlyDigits(read("CPF/CNPJ", "CPF", "CNPJ")),
-    admission: read("ADMISSAO", "ADMISSÃO", "DATA DE ADMISSÃO") || new Date().toISOString().slice(0, 10),
-    email: read("EMAIL", "E-MAIL"),
-    phone: onlyDigits(read("TELEFONE", "CELULAR")),
-    center: read("CR", "CENTRO DE RESULTADO").toUpperCase(),
-    jobTitle: normalizeEmployeeText(read("CARGO", "FUNÇÃO", "CARGO/FUNÇÃO")),
-    supervisor: normalizeEmployeeText(read("SUPERVISOR")),
-    type: read("MODALIDADE", "TIPO DE CONTRATO").toUpperCase(),
-    salary: Number(salaryText) || 0,
-    gratification: Number(gratificationText) || 0,
-    costAid: Number(read("AJUDA DE CUSTO", "AJUDA CUSTO").replace(/\./g, "").replace(",", ".")) || 0,
-    cep: onlyDigits(read("CEP")),
-    street: normalizeEmployeeText(read("RUA", "LOGRADOURO")),
-    number: read("NUMERO", "NÚMERO"),
-    complement: normalizeEmployeeText(read("COMPLEMENTO")),
-    neighborhood: normalizeEmployeeText(read("BAIRRO")),
-    city: normalizeEmployeeText(read("CIDADE")),
-    state: read("UF", "ESTADO").toUpperCase(),
-    bankCode: onlyDigits(read("BANCO", "CODIGO BANCO", "CÓDIGO BANCO")).slice(0, 3),
-    bankName: normalizeEmployeeText(read("NOME BANCO", "BANCO NOME")),
-    agency: read("AGENCIA", "AGÊNCIA"),
-    account: read("CONTA"),
-    accountDigit: read("DIGITO", "DÍGITO"),
-    pixType: (read("PIX TIPO", "TIPO PIX") || "CPF").toUpperCase(),
-    pix: read("PIX", "CHAVE PIX"),
-    benefits: read("BENEFICIOS", "BENEFÍCIOS").split(",").map(item => item.trim()).filter(Boolean),
-    notes: normalizeEmployeeText(read("OBSERVACOES", "OBSERVAÇÕES", "OBSERVACAO", "OBSERVAÇÃO"))
-  };
-}
-
-function validateImportRows(rows: Record<string, unknown>[], centers: ResultCenter[], types: EmploymentType[], employees: DemoEmployee[]) {
-  const errors: string[] = [];
-  const documentsInFile = new Set<string>();
-  rows.forEach((raw, index) => {
-    const row = normalizeSheetImportRow(raw);
-    const missing: string[] = [];
-    if (!row.name) missing.push("nome");
-    if (!isValidCpfCnpjImport(row.document)) missing.push("CPF/CNPJ válido");
-    if (employees.some(item => onlyDigits(item.employee.cpf) === row.document) || documentsInFile.has(row.document)) missing.push("CPF/CNPJ não duplicado");
-    if (row.document) documentsInFile.add(row.document);
-    if (!centers.some(item => item.code.toUpperCase() === row.center)) missing.push("CR válido");
-    if (!types.some(item => item.name.toUpperCase() === row.type)) missing.push("modalidade válida");
-    if (!row.jobTitle) missing.push("cargo");
-    if (row.salary <= 0) missing.push("salário");
-    if (!row.pixType || !row.pix) missing.push("PIX");
-    if (missing.length) errors.push(`Linha ${index + 2}: corrigir ${missing.join(", ")}.`);
-  });
-  return errors;
-}
-
-function isValidCpfCnpjImport(value: string) {
-  if (value.length === 14) return isValidCnpj(value);
-  if (value.length !== 11 || /^(\d)\1+$/.test(value)) return false;
-  const digit = (size: number) => {
-    const sum = value.slice(0, size).split("").reduce((total, item, index) => total + Number(item) * (size + 1 - index), 0);
-    const result = (sum * 10) % 11;
-    return result === 10 ? 0 : result;
-  };
-  return digit(9) === Number(value[9]) && digit(10) === Number(value[10]);
 }
 
 const movementTypes = ["admissão", "desligamento", "falta", "atestado", "afastamento", "férias", "transferência de Centro de Resultado", "alteração salarial", "contrato não assinado", "contrato MEI a vencer"];

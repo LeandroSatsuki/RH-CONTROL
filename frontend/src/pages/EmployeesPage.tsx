@@ -4,10 +4,11 @@ import { downloadExcel, readFirstExcelSheet } from "../excel";
 import { useDemoScope } from "../context/DemoScope";
 import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { DeleteConfirmationModal } from "../components/DeleteConfirmationModal";
+import { EmployeeImportReport } from "../components/EmployeeImportReport";
 import { DemoEmployee, DemoSettings } from "../mocks/demoTypes";
 import { demoSettings } from "../mocks/demoData";
 import { Employment, EmploymentType, ResultCenter, User } from "../types";
-import { buildEmployeeImportTemplateRow, normalizeEmployeeText } from "../employeeImport";
+import { buildEmployeeImportTemplateRow, createEmployeeImportApiIssue, EmployeeImportIssue, normalizeEmployeeText, validateEmployeeImportRows } from "../employeeImport";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -96,6 +97,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
   const [statusFilter, setStatusFilter] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [importIssues, setImportIssues] = useState<EmployeeImportIssue[]>([]);
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState<EmployeeDraft>(() => createEmployeeDraft(selectedCompany.settings ?? demoSettings, [], [], defaultCompanyId));
   const [addressLocked, setAddressLocked] = useState(false);
@@ -473,60 +475,82 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     if (!file) return;
     setLoading(true);
     setError("");
+    setImportIssues([]);
     try {
       const rows = await readFirstExcelSheet(await file.arrayBuffer());
       if (!rows.length) throw new Error("A planilha não possui colaboradores para importar.");
       let imported = 0;
-      let ignored = 0;
       const importCenters = centers.filter(item => !item.company_id || item.company_id === selectedCompany.id);
       const importTypes = types.filter(item => !item.company_id || item.company_id === selectedCompany.id);
-      for (const row of rows) {
-        const normalized = normalizeImportRow(row);
-        const center = importCenters.find(item => item.code === normalized.cr) ?? importCenters[0];
-        const type = importTypes.find(item => normalizeText(item.name) === normalizeText(normalized.modalidade)) ?? importTypes[0];
-        if (!normalized.nome || !isValidCpfCnpj(normalized.documento) || !center || !type) {
-          ignored += 1;
-          continue;
+      const validated = validateEmployeeImportRows(rows, {
+        centers: importCenters,
+        types: importTypes,
+        existingDocuments: items.filter(item => item.company_id === selectedCompany.id).map(item => item.employee.cpf)
+      });
+      const issues = validated.flatMap(item => item.issues);
+      const nextCodeByCenter = new Map(importCenters.map(center => {
+        const last = items
+          .filter(item => item.company_id === selectedCompany.id && item.employee_code.startsWith(`${center.code}-`))
+          .map(item => Number(item.employee_code.split("-").pop() ?? 0))
+          .reduce((max, value) => Math.max(max, Number.isFinite(value) ? value : 0), 0);
+        return [center.code, last + 1] as const;
+      }));
+      for (const validatedRow of validated.filter(item => !item.issues.length)) {
+        const normalized = validatedRow.data;
+        const center = importCenters.find(item => normalizeText(item.code) === normalizeText(normalized.center));
+        const type = importTypes.find(item => normalizeText(item.name) === normalizeText(normalized.type));
+        if (!center || !type) continue;
+        const sequence = nextCodeByCenter.get(center.code) ?? 1;
+        try {
+          await api("/employees", {
+            method: "POST",
+            body: JSON.stringify({
+              full_name: normalized.name,
+              company_id: selectedCompany.id,
+              cpf: normalized.document,
+              employee_code: `${center.code}-${String(sequence).padStart(3, "0")}`,
+              admission_date: normalized.admission,
+              email: normalized.email,
+              phone: normalized.phone,
+              supervisor_name: normalized.supervisor,
+              job_title: normalized.jobTitle,
+              employment_type_id: type.id,
+              result_center_id: center.id,
+              salary_base: normalized.salary,
+              gratification: normalized.gratification,
+              cost_aid: normalized.costAid,
+              cep: normalized.cep,
+              street: normalized.street,
+              address_number: normalized.number,
+              address_complement: normalized.complement,
+              neighborhood: normalized.neighborhood,
+              city: normalized.city,
+              state: normalized.state,
+              bank_code: normalized.bankCode,
+              bank_name: normalized.bankName || bankNameByCode(normalized.bankCode),
+              bank_agency: normalized.agency,
+              bank_account: normalized.account,
+              bank_account_digit: normalized.accountDigit,
+              pix_key_type: normalized.pixType,
+              pix_key: normalized.pix,
+              benefits: normalized.benefits,
+              notes: normalized.notes
+            })
+          }, token);
+          nextCodeByCenter.set(center.code, sequence + 1);
+          imported += 1;
+        } catch (err) {
+          issues.push(createEmployeeImportApiIssue(validatedRow.rowNumber, normalized, err instanceof Error ? err.message : "O servidor recusou esta linha."));
         }
-        await api("/employees", {
-          method: "POST",
-          body: JSON.stringify({
-            full_name: normalized.nome,
-            company_id: selectedCompany.id,
-            cpf: normalized.documento,
-            employee_code: `${center.code}-${String(items.filter(item => item.company_id === selectedCompany.id && item.employee_code.startsWith(`${center.code}-`)).length + imported + 1).padStart(3, "0")}`,
-            admission_date: normalized.admissao || new Date().toISOString().slice(0, 10),
-            email: normalized.email,
-            phone: normalized.telefone,
-            supervisor_name: normalized.supervisor,
-            job_title: normalized.cargo || jobTitleOptions[0] || "COLABORADOR",
-            employment_type_id: type.id,
-            result_center_id: center.id,
-            salary_base: normalized.salario,
-            gratification: normalized.gratificacao,
-            cost_aid: normalized.ajudaCusto,
-            cep: normalized.cep,
-            street: normalized.rua,
-            address_number: normalized.numero,
-            address_complement: normalized.complemento,
-            neighborhood: normalized.bairro,
-            city: normalized.cidade,
-            state: normalized.uf,
-            bank_code: normalized.banco,
-            bank_name: normalized.nomeBanco || bankNameByCode(normalized.banco),
-            bank_agency: normalized.agencia,
-            bank_account: normalized.conta,
-            bank_account_digit: normalized.digito,
-            pix_key_type: normalized.pixTipo,
-            pix_key: normalized.pix || normalized.documento,
-            benefits: normalized.beneficios,
-            notes: normalized.observacoes
-          })
-        }, token);
-        imported += 1;
       }
-      setSuccess(`${imported} colaborador(es) importado(s)${ignored ? ` e ${ignored} linha(s) ignorada(s) por inconsistência` : ""}.`);
-      await load();
+      setImportIssues(issues);
+      const inconsistentRows = new Set(issues.map(issue => issue.rowNumber)).size;
+      if (imported) {
+        setSuccess(`${imported} colaborador(es) importado(s)${inconsistentRows ? `. ${inconsistentRows} linha(s) não importada(s), com orientação abaixo` : ""}.`);
+        await load();
+      } else {
+        setError("A planilha foi carregada, mas nenhuma linha pôde ser importada. Consulte as correções sugeridas abaixo.");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao importar colaboradores.");
     } finally {
@@ -547,6 +571,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
     </div>
     <ErrorMessage message={error} />
     <SuccessMessage message={success} />
+    <EmployeeImportReport issues={importIssues} />
 
     <div className="panel filters-panel">
       <input placeholder="Buscar por nome, CPF ou matrícula" value={query} onChange={event => setQuery(event.target.value)} />
@@ -1034,57 +1059,6 @@ function upperText(value: string) {
 
 function isAllowedCadastroText(value: string) {
   return /^[\p{L}\p{N} .,\/ºª&'()"-]*$/u.test(value);
-}
-
-function normalizeImportRow(row: Record<string, unknown>) {
-  const get = (...keys: string[]) => {
-    const found = Object.entries(row).find(([key]) => keys.some(expected => normalizeText(key) === normalizeText(expected)));
-    return String(found?.[1] ?? "").trim();
-  };
-  const beneficioText = get("BENEFICIOS", "BENEFÍCIOS", "BENEFICIO", "BENEFÍCIO");
-  const pixTipo = upperText(get("PIX TIPO", "TIPO PIX", "TIPO DE PIX") || "CPF") as DemoEmployee["pix_key_type"];
-  return {
-    nome: normalizeEmployeeText(get("NOME", "NOME COMPLETO")),
-    documento: get("CPF/CNPJ", "CPF", "CNPJ").replace(/\D/g, ""),
-    email: get("EMAIL", "E-MAIL"),
-    telefone: get("TELEFONE", "CELULAR").replace(/\D/g, ""),
-    cr: upperText(get("CR", "CENTRO", "CENTRO DE RESULTADO")),
-    cargo: normalizeEmployeeText(get("CARGO", "FUNCAO", "FUNÇÃO", "CARGO/FUNCAO", "CARGO/FUNÇÃO")),
-    supervisor: normalizeEmployeeText(get("SUPERVISOR")),
-    modalidade: get("MODALIDADE", "TIPO CONTRATO", "CONTRATO"),
-    salario: Number(String(get("SALARIO", "SALÁRIO")).replace(/\./g, "").replace(",", ".")) || 0,
-    gratificacao: Number(String(get("GRATIFICACAO", "GRATIFICAÇÃO")).replace(/\./g, "").replace(",", ".")) || 0,
-    admissao: get("ADMISSAO", "ADMISSÃO", "DATA ADMISSAO", "DATA ADMISSÃO"),
-    cep: get("CEP").replace(/\D/g, ""),
-    rua: normalizeEmployeeText(get("RUA", "LOGRADOURO")),
-    numero: get("NUMERO", "NÚMERO"),
-    complemento: normalizeEmployeeText(get("COMPLEMENTO")),
-    bairro: normalizeEmployeeText(get("BAIRRO")),
-    cidade: normalizeEmployeeText(get("CIDADE")),
-    uf: upperText(get("UF", "ESTADO")),
-    banco: get("BANCO", "CODIGO BANCO", "CÓDIGO BANCO").replace(/\D/g, "").slice(0, 3),
-    agencia: get("AGENCIA", "AGÊNCIA"),
-    conta: get("CONTA"),
-    digito: get("DIGITO", "DÍGITO"),
-    nomeBanco: normalizeEmployeeText(get("NOME BANCO", "BANCO NOME")),
-    pixTipo,
-    pix: sanitizePixKey(pixTipo, get("PIX", "CHAVE PIX")),
-    beneficios: beneficioText.split(",").map(item => normalizeBenefitName(item)).filter(Boolean),
-    ajudaCusto: Number(String(get("AJUDA DE CUSTO", "AJUDA CUSTO")).replace(/\./g, "").replace(",", ".")) || 0,
-    observacoes: normalizeEmployeeText(get("OBSERVACOES", "OBSERVAÇÕES", "OBSERVACAO", "OBSERVAÇÃO"))
-  };
-}
-
-function normalizeBenefitName(value: string) {
-  const normalized = normalizeText(value);
-  return ({
-    "vale transporte": "Vale transporte",
-    "alimentacao": "Alimentação",
-    "cesta basica": "Cesta básica",
-    "plano de saude": "Plano de saúde",
-    "seguro de vida": "Seguro de vida",
-    "ajuda de custo": "Ajuda de custo"
-  } as Record<string, string>)[normalized] ?? normalizeEmployeeText(value);
 }
 
 function validateEmployeeText(draft: EmployeeDraft) {
