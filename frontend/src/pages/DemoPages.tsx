@@ -11,6 +11,7 @@ import { DemoAlert, DemoAppUser, DemoAuditEntry, DemoBackup, DemoBenefitDistribu
 import { recalculatePayrollRow } from "../mocks/demoCalculations";
 import { CentersPage, TypesPage } from "./CatalogPages";
 import { Company, EmploymentType, ResultCenter, User } from "../types";
+import { buildEmployeeImportTemplateRow, normalizeEmployeeText } from "../employeeImport";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
@@ -2558,33 +2559,11 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
   }, [selectedCompany.id, token]);
 
   async function downloadTemplate() {
-    await downloadExcel([{
-      NOME: "NOME COMPLETO",
-      "CPF/CNPJ": "52998224725",
-      ADMISSAO: "2026-07-01",
-      EMAIL: "NOME@EMPRESA.COM.BR",
-      TELEFONE: "27999990000",
-      CR: centers[0]?.code ?? "ADM",
-      CARGO: "ANALISTA",
-      SUPERVISOR: "",
-      MODALIDADE: types[0]?.name ?? "CLT",
-      SALARIO: 3000,
-      CEP: "29000000",
-      RUA: "RUA EXEMPLO",
-      NUMERO: "100",
-      COMPLEMENTO: "SALA 1",
-      BAIRRO: "CENTRO",
-      CIDADE: "VITORIA",
-      UF: "ES",
-      BANCO: "001",
-      "NOME BANCO": "BANCO DO BRASIL",
-      AGENCIA: "0001",
-      CONTA: "12345",
-      DIGITO: "0",
-      "PIX TIPO": "CPF",
-      PIX: "52998224725",
-      BENEFICIOS: "VALE TRANSPORTE, ALIMENTAÇÃO"
-    }], "Colaboradores", `modelo-colaboradores-${slugify(selectedCompany.code)}.xlsx`);
+    await downloadExcel([buildEmployeeImportTemplateRow({
+      centerCode: centers[0]?.code,
+      jobTitle: "ANALISTA",
+      employmentType: types[0]?.name
+    })], "Colaboradores", `modelo-colaboradores-${slugify(selectedCompany.code)}.xlsx`);
   }
 
   async function selectFile(event: ChangeEvent<HTMLInputElement>) {
@@ -2646,6 +2625,7 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
             result_center_id: center.id,
             salary_base: row.salary,
             gratification: row.gratification,
+            cost_aid: row.costAid,
             cep: row.cep,
             street: row.street,
             address_number: row.number,
@@ -2660,7 +2640,8 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
             bank_account_digit: row.accountDigit,
             pix_key_type: row.pixType,
             pix_key: row.pix,
-            benefits: row.benefits
+            benefits: row.benefits,
+            notes: row.notes
           })
         }, token);
       }
@@ -2691,32 +2672,34 @@ function normalizeSheetImportRow(row: Record<string, unknown>) {
   const salaryText = read("SALARIO", "SALÁRIO").replace(/\./g, "").replace(",", ".");
   const gratificationText = read("GRATIFICACAO", "GRATIFICAÇÃO").replace(/\./g, "").replace(",", ".");
   return {
-    name: read("NOME", "NOME COMPLETO").toUpperCase(),
+    name: normalizeEmployeeText(read("NOME", "NOME COMPLETO")),
     document: onlyDigits(read("CPF/CNPJ", "CPF", "CNPJ")),
     admission: read("ADMISSAO", "ADMISSÃO", "DATA DE ADMISSÃO") || new Date().toISOString().slice(0, 10),
     email: read("EMAIL", "E-MAIL"),
     phone: onlyDigits(read("TELEFONE", "CELULAR")),
     center: read("CR", "CENTRO DE RESULTADO").toUpperCase(),
-    jobTitle: read("CARGO", "FUNÇÃO", "CARGO/FUNÇÃO").toUpperCase(),
-    supervisor: read("SUPERVISOR").toUpperCase(),
+    jobTitle: normalizeEmployeeText(read("CARGO", "FUNÇÃO", "CARGO/FUNÇÃO")),
+    supervisor: normalizeEmployeeText(read("SUPERVISOR")),
     type: read("MODALIDADE", "TIPO DE CONTRATO").toUpperCase(),
     salary: Number(salaryText) || 0,
     gratification: Number(gratificationText) || 0,
+    costAid: Number(read("AJUDA DE CUSTO", "AJUDA CUSTO").replace(/\./g, "").replace(",", ".")) || 0,
     cep: onlyDigits(read("CEP")),
-    street: read("RUA", "LOGRADOURO").toUpperCase(),
+    street: normalizeEmployeeText(read("RUA", "LOGRADOURO")),
     number: read("NUMERO", "NÚMERO"),
-    complement: read("COMPLEMENTO").toUpperCase(),
-    neighborhood: read("BAIRRO").toUpperCase(),
-    city: read("CIDADE").toUpperCase(),
+    complement: normalizeEmployeeText(read("COMPLEMENTO")),
+    neighborhood: normalizeEmployeeText(read("BAIRRO")),
+    city: normalizeEmployeeText(read("CIDADE")),
     state: read("UF", "ESTADO").toUpperCase(),
     bankCode: onlyDigits(read("BANCO", "CODIGO BANCO", "CÓDIGO BANCO")).slice(0, 3),
-    bankName: read("NOME BANCO", "BANCO NOME").toUpperCase(),
+    bankName: normalizeEmployeeText(read("NOME BANCO", "BANCO NOME")),
     agency: read("AGENCIA", "AGÊNCIA"),
     account: read("CONTA"),
     accountDigit: read("DIGITO", "DÍGITO"),
     pixType: (read("PIX TIPO", "TIPO PIX") || "CPF").toUpperCase(),
     pix: read("PIX", "CHAVE PIX"),
-    benefits: read("BENEFICIOS", "BENEFÍCIOS").split(",").map(item => item.trim()).filter(Boolean)
+    benefits: read("BENEFICIOS", "BENEFÍCIOS").split(",").map(item => item.trim()).filter(Boolean),
+    notes: normalizeEmployeeText(read("OBSERVACOES", "OBSERVAÇÕES", "OBSERVACAO", "OBSERVAÇÃO"))
   };
 }
 
@@ -2734,7 +2717,6 @@ function validateImportRows(rows: Record<string, unknown>[], centers: ResultCent
     if (!types.some(item => item.name.toUpperCase() === row.type)) missing.push("modalidade válida");
     if (!row.jobTitle) missing.push("cargo");
     if (row.salary <= 0) missing.push("salário");
-    if (!row.bankName || !row.agency || !row.account || !row.accountDigit) missing.push("dados bancários");
     if (!row.pixType || !row.pix) missing.push("PIX");
     if (missing.length) errors.push(`Linha ${index + 2}: corrigir ${missing.join(", ")}.`);
   });

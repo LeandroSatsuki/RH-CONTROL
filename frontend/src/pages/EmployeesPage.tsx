@@ -7,6 +7,7 @@ import { DeleteConfirmationModal } from "../components/DeleteConfirmationModal";
 import { DemoEmployee, DemoSettings } from "../mocks/demoTypes";
 import { demoSettings } from "../mocks/demoData";
 import { Employment, EmploymentType, ResultCenter, User } from "../types";
+import { buildEmployeeImportTemplateRow, normalizeEmployeeText } from "../employeeImport";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -250,9 +251,9 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
         setDraft(current => ({
           ...current,
           cep: cepDigits,
-          street: upperText(data.logradouro ?? current.street),
-          neighborhood: upperText(data.bairro ?? current.neighborhood),
-          city: upperText(data.localidade ?? current.city),
+          street: normalizeEmployeeText(data.logradouro ?? current.street),
+          neighborhood: normalizeEmployeeText(data.bairro ?? current.neighborhood),
+          city: normalizeEmployeeText(data.localidade ?? current.city),
           state: upperText(data.uf ?? current.state)
         }));
         setAddressLocked(true);
@@ -281,13 +282,13 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       };
       setDraft(current => ({
         ...current,
-        full_name: data.razao_social || current.full_name,
+        full_name: normalizeEmployeeText(data.razao_social || current.full_name),
         cep: (data.cep || current.cep).replace(/\D/g, ""),
-        street: data.logradouro || current.street,
+        street: normalizeEmployeeText(data.logradouro || current.street),
         address_number: data.numero || current.address_number,
-        address_complement: data.complemento || current.address_complement,
-        neighborhood: data.bairro || current.neighborhood,
-        city: data.municipio || current.city,
+        address_complement: normalizeEmployeeText(data.complemento || current.address_complement),
+        neighborhood: normalizeEmployeeText(data.bairro || current.neighborhood),
+        city: normalizeEmployeeText(data.municipio || current.city),
         state: (data.uf || current.state).toUpperCase().slice(0, 2)
       }));
       setAddressLocked(Boolean(data.logradouro || data.municipio));
@@ -425,6 +426,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       "MODALIDADE": item.employment_type.name,
       "SALARIO": item.salary_base,
       "GRATIFICACAO": item.gratification,
+      "ADMISSAO": item.admission_date,
       "CEP": item.cep,
       "RUA": item.street,
       "NUMERO": item.address_number,
@@ -432,18 +434,32 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       "BAIRRO": item.neighborhood,
       "CIDADE": item.city,
       "UF": item.state,
-      "BANCO": item.bank_code,
+      "CODIGO BANCO": item.bank_code,
+      "NOME BANCO": item.bank_name,
       "AGENCIA": item.bank_agency,
       "CONTA": item.bank_account,
+      "DIGITO": item.bank_account_digit,
       "PIX TIPO": item.pix_key_type,
       "PIX": item.pix_key,
-      "BENEFICIOS": (item.benefits ?? []).join(", ")
+      "BENEFICIOS": (item.benefits ?? []).join(", "),
+      "AJUDA DE CUSTO": item.cost_aid,
+      "OBSERVACOES": item.notes
       }));
       await downloadExcel(rows, "Colaboradores", `colaboradores-${selectedCompany.id === 0 ? "todas" : selectedCompany.name.toLowerCase().replace(/\W+/g, "-")}.xlsx`);
       setSuccess("Exportação de colaboradores gerada.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao exportar colaboradores.");
     }
+  }
+
+  async function downloadImportTemplate() {
+    await downloadExcel([
+      buildEmployeeImportTemplateRow({
+        centerCode: companyCenters[0]?.code,
+        jobTitle: jobTitleOptions[0],
+        employmentType: companyTypes[0]?.name
+      })
+    ], "Colaboradores", `modelo-importacao-colaboradores-${selectedCompany.code.toLowerCase()}.xlsx`);
   }
 
   async function importEmployees(event: ChangeEvent<HTMLInputElement>) {
@@ -476,6 +492,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
           method: "POST",
           body: JSON.stringify({
             full_name: normalized.nome,
+            company_id: selectedCompany.id,
             cpf: normalized.documento,
             employee_code: `${center.code}-${String(items.filter(item => item.company_id === selectedCompany.id && item.employee_code.startsWith(`${center.code}-`)).length + imported + 1).padStart(3, "0")}`,
             admission_date: normalized.admissao || new Date().toISOString().slice(0, 10),
@@ -487,6 +504,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
             result_center_id: center.id,
             salary_base: normalized.salario,
             gratification: normalized.gratificacao,
+            cost_aid: normalized.ajudaCusto,
             cep: normalized.cep,
             street: normalized.rua,
             address_number: normalized.numero,
@@ -495,12 +513,14 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
             city: normalized.cidade,
             state: normalized.uf,
             bank_code: normalized.banco,
-            bank_name: bankNameByCode(normalized.banco),
+            bank_name: normalized.nomeBanco || bankNameByCode(normalized.banco),
             bank_agency: normalized.agencia,
             bank_account: normalized.conta,
+            bank_account_digit: normalized.digito,
             pix_key_type: normalized.pixTipo,
             pix_key: normalized.pix || normalized.documento,
-            benefits: normalized.beneficios
+            benefits: normalized.beneficios,
+            notes: normalized.observacoes
           })
         }, token);
         imported += 1;
@@ -519,6 +539,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <div><span className="eyebrow">Pessoas</span><h1>Colaboradores</h1><p>Base completa de pessoas, vínculos e custos estimados.</p></div>
       <div className="actions">
         {user.role === "ADMIN" && <button className="primary" onClick={() => setOpen(!open)} disabled={!selectableCompanies.length}>{open ? "Cancelar" : "Novo colaborador"}</button>}
+        {user.role === "ADMIN" && <button className="secondary" onClick={() => void downloadImportTemplate()}>Baixar modelo</button>}
         {user.role === "ADMIN" && <button className="secondary" onClick={() => importInputRef.current?.click()}>Importar Excel</button>}
         <button className="secondary" onClick={() => void exportEmployees()}>Exportar</button>
         <input ref={importInputRef} type="file" accept=".xlsx" hidden onChange={event => void importEmployees(event)} />
@@ -1012,7 +1033,7 @@ function upperText(value: string) {
 }
 
 function isAllowedCadastroText(value: string) {
-  return /^[0-9A-ZÀ-ÖØ-ÞÇÃÕÁÉÍÓÚÂÊÔÜ .,\/ºª-]*$/u.test(value);
+  return /^[\p{L}\p{N} .,\/ºª&'()"-]*$/u.test(value);
 }
 
 function normalizeImportRow(row: Record<string, unknown>) {
@@ -1023,31 +1044,47 @@ function normalizeImportRow(row: Record<string, unknown>) {
   const beneficioText = get("BENEFICIOS", "BENEFÍCIOS", "BENEFICIO", "BENEFÍCIO");
   const pixTipo = upperText(get("PIX TIPO", "TIPO PIX", "TIPO DE PIX") || "CPF") as DemoEmployee["pix_key_type"];
   return {
-    nome: upperText(get("NOME", "NOME COMPLETO")),
+    nome: normalizeEmployeeText(get("NOME", "NOME COMPLETO")),
     documento: get("CPF/CNPJ", "CPF", "CNPJ").replace(/\D/g, ""),
     email: get("EMAIL", "E-MAIL"),
     telefone: get("TELEFONE", "CELULAR").replace(/\D/g, ""),
     cr: upperText(get("CR", "CENTRO", "CENTRO DE RESULTADO")),
-    cargo: upperText(get("CARGO", "FUNCAO", "FUNÇÃO", "CARGO/FUNCAO", "CARGO/FUNÇÃO")),
-    supervisor: upperText(get("SUPERVISOR")),
+    cargo: normalizeEmployeeText(get("CARGO", "FUNCAO", "FUNÇÃO", "CARGO/FUNCAO", "CARGO/FUNÇÃO")),
+    supervisor: normalizeEmployeeText(get("SUPERVISOR")),
     modalidade: get("MODALIDADE", "TIPO CONTRATO", "CONTRATO"),
     salario: Number(String(get("SALARIO", "SALÁRIO")).replace(/\./g, "").replace(",", ".")) || 0,
     gratificacao: Number(String(get("GRATIFICACAO", "GRATIFICAÇÃO")).replace(/\./g, "").replace(",", ".")) || 0,
     admissao: get("ADMISSAO", "ADMISSÃO", "DATA ADMISSAO", "DATA ADMISSÃO"),
     cep: get("CEP").replace(/\D/g, ""),
-    rua: upperText(get("RUA", "LOGRADOURO")),
+    rua: normalizeEmployeeText(get("RUA", "LOGRADOURO")),
     numero: get("NUMERO", "NÚMERO"),
-    complemento: upperText(get("COMPLEMENTO")),
-    bairro: upperText(get("BAIRRO")),
-    cidade: upperText(get("CIDADE")),
+    complemento: normalizeEmployeeText(get("COMPLEMENTO")),
+    bairro: normalizeEmployeeText(get("BAIRRO")),
+    cidade: normalizeEmployeeText(get("CIDADE")),
     uf: upperText(get("UF", "ESTADO")),
     banco: get("BANCO", "CODIGO BANCO", "CÓDIGO BANCO").replace(/\D/g, "").slice(0, 3),
     agencia: get("AGENCIA", "AGÊNCIA"),
     conta: get("CONTA"),
+    digito: get("DIGITO", "DÍGITO"),
+    nomeBanco: normalizeEmployeeText(get("NOME BANCO", "BANCO NOME")),
     pixTipo,
     pix: sanitizePixKey(pixTipo, get("PIX", "CHAVE PIX")),
-    beneficios: beneficioText.split(",").map(item => upperText(item.trim())).filter(Boolean)
+    beneficios: beneficioText.split(",").map(item => normalizeBenefitName(item)).filter(Boolean),
+    ajudaCusto: Number(String(get("AJUDA DE CUSTO", "AJUDA CUSTO")).replace(/\./g, "").replace(",", ".")) || 0,
+    observacoes: normalizeEmployeeText(get("OBSERVACOES", "OBSERVAÇÕES", "OBSERVACAO", "OBSERVAÇÃO"))
   };
+}
+
+function normalizeBenefitName(value: string) {
+  const normalized = normalizeText(value);
+  return ({
+    "vale transporte": "Vale transporte",
+    "alimentacao": "Alimentação",
+    "cesta basica": "Cesta básica",
+    "plano de saude": "Plano de saúde",
+    "seguro de vida": "Seguro de vida",
+    "ajuda de custo": "Ajuda de custo"
+  } as Record<string, string>)[normalized] ?? normalizeEmployeeText(value);
 }
 
 function validateEmployeeText(draft: EmployeeDraft) {
