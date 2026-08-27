@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.10 - 2026-08-27
+
+### Importação assistida de colaboradores
+
+- aceita a planilha mesmo quando algumas linhas possuem inconsistências;
+- importa as linhas válidas sem ser interrompida pelas linhas que precisam de correção;
+- informa linha, campo, valor encontrado, motivo e sugestão para cada inconsistência;
+- continua o processamento quando o servidor rejeita uma linha isolada e apresenta a resposta no relatório;
+- identifica documentos já cadastrados ou repetidos na planilha;
+- interpreta valores monetários nos formatos numéricos mais comuns do Excel;
+- unifica a validação da importação feita por Colaboradores e por Ajustes do sistema;
+- não altera o servidor, as migrations ou a estrutura da base de dados.
+
 ## 1.0.9 - 2026-08-27
 
 ### Cadastro e importação de colaboradores
