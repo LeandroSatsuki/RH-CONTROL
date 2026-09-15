@@ -435,8 +435,13 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
         headers=admin,
         json={"name": "MEI", "has_charges": False, "active": True},
     )
+    freelancer_type = client.post(
+        "/api/employment-types",
+        headers=admin,
+        json={"name": "FREELANCER", "has_charges": False, "active": True},
+    )
     assert (
-        center.status_code == employment_type.status_code == mei_type.status_code == 201
+        center.status_code == employment_type.status_code == mei_type.status_code == freelancer_type.status_code == 201
     )
     edited_center = client.patch(
         f"/api/result-centers/{center.json()['id']}?company_id=1",
@@ -499,6 +504,113 @@ def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:
     missing_pix.pop("pix_key")
     response = client.post("/api/employees", headers=admin, json=missing_pix)
     assert response.status_code == 422
+
+    freelancer_payload = {
+        **employee,
+        "cpf": "390.533.447-05",
+        "full_name": "Pessoa com transição",
+        "employee_code": "0004",
+        "employment_type_id": freelancer_type.json()["id"],
+        "admission_date": "2026-08-01",
+        "salary_base": 2000,
+        "gratification": 0,
+        "pix_key": "39053344705",
+    }
+    freelancer = client.post("/api/employees", headers=admin, json=freelancer_payload)
+    assert freelancer.status_code == 201
+    freelancer_id = freelancer.json()["id"]
+    overwritten_type = client.patch(
+        f"/api/employees/{freelancer_id}",
+        headers=admin,
+        json={"employment_type_id": employment_type.json()["id"]},
+    )
+    assert overwritten_type.status_code == 409
+    transitioned = client.post(
+        f"/api/employees/{freelancer_id}/transition",
+        headers=admin,
+        json={
+            "effective_date": "2026-08-16",
+            "employment_type_id": employment_type.json()["id"],
+            "result_center_id": center.json()["id"],
+            "job_title": "Analista",
+            "supervisor_name": "",
+            "daily_hours": 8.8,
+            "salary_base": 6000,
+            "gratification": 310,
+            "cost_aid": 0,
+            "benefits": ["Vale transporte"],
+            "notes": "Contratação após período freelancer",
+        },
+    )
+    assert transitioned.status_code == 201
+    current_link = transitioned.json()
+    assert current_link["employee"]["id"] == freelancer.json()["employee"]["id"]
+    assert current_link["employment_type"]["name"] == "CLT"
+    assert current_link["admission_date"] == "2026-08-16"
+    link_history = client.get(
+        f"/api/employees/{current_link['id']}/history", headers=admin
+    )
+    assert link_history.status_code == 200
+    assert len(link_history.json()) == 2
+    assert link_history.json()[1]["termination_date"] == "2026-08-15"
+    assert link_history.json()[1]["status"] == "INACTIVE"
+    current_people = client.get("/api/employees", headers=admin).json()
+    transitioned_people = [
+        item for item in current_people
+        if item["employee"]["id"] == current_link["employee"]["id"]
+    ]
+    assert len(transitioned_people) == 1
+    assert transitioned_people[0]["id"] == current_link["id"]
+    historical_people = client.get(
+        "/api/employees?reference_date=2026-08-10", headers=admin
+    ).json()
+    assert any(item["id"] == freelancer_id for item in historical_people)
+    historical_movement = client.post(
+        "/api/demo/movements",
+        headers=admin,
+        json={
+            "competency": "2026-08",
+            "employee_id": current_link["id"],
+            "type": "falta",
+            "start_date": "2026-08-10",
+            "days": 1,
+            "hour_impact": 8.8,
+            "observation": "Movimento no período Freelancer",
+        },
+    )
+    assert historical_movement.status_code == 201
+    assert historical_movement.json()["employee_id"] == freelancer_id
+    august_payroll = client.get(
+        "/api/demo/payroll?competency=2026-08", headers=admin
+    )
+    assert august_payroll.status_code == 200
+    person_rows = [
+        row for row in august_payroll.json()
+        if row["person_id"] == current_link["employee"]["id"]
+    ]
+    assert len(person_rows) == 2
+    clt_row = next(row for row in person_rows if row["employment_type"]["name"] == "CLT")
+    assert Decimal(str(clt_row["salary"])) == Decimal("3096.77")
+    transition_movements = client.get(
+        "/api/demo/movements?competency=2026-08", headers=admin
+    )
+    assert transition_movements.status_code == 200
+    assert any(
+        item["employee_id"] == current_link["id"]
+        and item["type"] == "alteração de vínculo"
+        and item["status"] == "Aplicada"
+        for item in transition_movements.json()
+    )
+    august_dashboard = client.get(
+        "/api/dashboard?competency=2026-08", headers=admin
+    )
+    assert august_dashboard.status_code == 200
+    adm_card = next(
+        card for card in august_dashboard.json()["cards"] if card["code"] == "ADM"
+    )
+    assert adm_card["active_employees"] == 2
+    assert adm_card["admissions"] == 1
+    assert adm_card["terminations"] == 0
 
     updated_employee = client.patch(
         f"/api/employees/{created_employee['id']}",

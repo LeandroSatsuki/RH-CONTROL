@@ -132,7 +132,68 @@ describe("modo local multiempresa", () => {
         pix_key_type: "CPF",
         pix_key: "52998224725"
       })
-    }, adminToken)).rejects.toThrow("Reative ou transfira");
+    }, adminToken)).rejects.toThrow("Alterar vínculo/modalidade");
+  });
+
+  it("mantém uma pessoa única ao transicionar de Freelancer para CLT", async () => {
+    const types = await demoApi<EmploymentType[]>("/employment-types?company_id=1", {}, adminToken);
+    const freelancer = types.find(item => item.name === "Freelancer")!;
+    const clt = types.find(item => item.name === "CLT")!;
+    const employee = await demoApi<DemoEmployee>("/employees?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({
+        full_name: "PROMOTOR EM TRANSIÇÃO",
+        cpf: "52998224725",
+        employee_code: "COM-001",
+        admission_date: "2026-08-01",
+        job_title: "PROMOTOR",
+        employment_type_id: freelancer.id,
+        result_center_id: 3,
+        salary_base: 2000,
+        pix_key_type: "CPF",
+        pix_key: "52998224725"
+      })
+    }, adminToken);
+    await expect(demoApi(`/employees/${employee.id}?company_id=1`, {
+      method: "PATCH",
+      body: JSON.stringify({ employment_type_id: clt.id })
+    }, adminToken)).rejects.toThrow("Alterar vínculo/modalidade");
+    const transitioned = await demoApi<DemoEmployee>(`/employees/${employee.id}/transition?company_id=1`, {
+      method: "POST",
+      body: JSON.stringify({
+        effective_date: "2026-08-16",
+        employment_type_id: clt.id,
+        result_center_id: 3,
+        job_title: "PROMOTOR",
+        salary_base: 6200,
+        benefits: ["Cesta básica"]
+      })
+    }, adminToken);
+    expect(transitioned.employee.id).toBe(employee.employee.id);
+    expect(transitioned.id).not.toBe(employee.id);
+    const directory = await demoApi<DemoEmployee[]>("/employees?company_id=1", {}, adminToken);
+    expect(directory.filter(item => item.employee.id === employee.employee.id)).toEqual([expect.objectContaining({ id: transitioned.id })]);
+    const history = await demoApi<DemoEmployee[]>(`/employees/${transitioned.id}/history?company_id=1`, {}, adminToken);
+    expect(history).toHaveLength(2);
+    expect(history[1]).toMatchObject({ id: employee.id, termination_date: "2026-08-15", status: "INACTIVE" });
+    const historicalDirectory = await demoApi<DemoEmployee[]>("/employees?company_id=1&reference_date=2026-08-10", {}, adminToken);
+    expect(historicalDirectory.find(item => item.employee.id === employee.employee.id)?.id).toBe(employee.id);
+    const historicalMovement = await demoApi<any>("/demo/movements?company_id=1", {
+      method: "POST",
+      body: JSON.stringify({
+        competency: "2026-08",
+        employee_id: transitioned.id,
+        type: "falta",
+        start_date: "2026-08-10",
+        days: 1,
+        hour_impact: 8.8
+      })
+    }, adminToken);
+    expect(historicalMovement.employee_id).toBe(employee.id);
+    const payroll = await demoApi<any[]>("/demo/payroll?company_id=1&competency=2026-08", {}, adminToken);
+    const personRows = payroll.filter(item => item.person_id === employee.employee.id);
+    expect(personRows).toHaveLength(2);
+    expect(personRows.find(item => item.employment_type.name === "CLT")?.salary).toBeCloseTo(3200, 2);
   });
 
   it("mantém Centros de Resultado, modalidades e cargos globais", async () => {

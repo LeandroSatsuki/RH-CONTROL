@@ -8,7 +8,6 @@ from sqlalchemy.orm import joinedload
 from app.api.dependencies import CurrentUser, DbSession
 from app.models.company import Company
 from app.models.employment import Employment
-from app.models.enums import EmploymentStatus
 from app.models.movement import Movement
 from app.models.result_center import ResultCenter
 from app.schemas.dashboard import DashboardCard, DashboardCompany, DashboardConsolidated, DashboardResponse
@@ -24,6 +23,12 @@ def month_bounds(year: int, month: int) -> tuple[date, date]:
 def active_in_period(item: Employment, start: date, end: date) -> bool:
     return item.admission_date <= end and (
         item.termination_date is None or item.termination_date >= start
+    )
+
+
+def active_on(item: Employment, target: date) -> bool:
+    return item.admission_date <= target and (
+        item.termination_date is None or item.termination_date >= target
     )
 
 
@@ -50,7 +55,6 @@ def get_dashboard(
     year = year or today.year
     start, end = month_bounds(year, month)
     previous_end = start.fromordinal(start.toordinal() - 1)
-    previous_start = previous_end.replace(day=1)
 
     company = db.get(Company, company_id) if company_id != 0 else None
     if company_id != 0 and not company:
@@ -108,12 +112,34 @@ def get_dashboard(
         active = [
             item
             for item in scoped
-            if active_in_period(item, start, end) and item.status != EmploymentStatus.INACTIVE
+            if active_on(item, end)
         ]
-        previous_active = [item for item in scoped if active_in_period(item, previous_start, previous_end)]
-        admissions = sum(start <= item.admission_date <= end for item in scoped)
+        previous_active = [item for item in scoped if active_on(item, previous_end)]
+        person_employments = {}
+        for item in employments:
+            person_employments.setdefault(item.employee_id, []).append(item)
+        admissions = sum(
+            start <= item.admission_date <= end
+            and not any(
+                other.id != item.id
+                and other.employee_id == item.employee_id
+                and other.termination_date == item.admission_date.fromordinal(item.admission_date.toordinal() - 1)
+                for other in person_employments.get(item.employee_id, [])
+            )
+            for item in scoped
+        )
         terminations = sum(
-            bool(item.termination_date and start <= item.termination_date <= end) for item in scoped
+            bool(
+                item.termination_date
+                and start <= item.termination_date <= end
+                and not any(
+                    other.id != item.id
+                    and other.employee_id == item.employee_id
+                    and other.admission_date == item.termination_date.fromordinal(item.termination_date.toordinal() + 1)
+                    for other in person_employments.get(item.employee_id, [])
+                )
+            )
+            for item in scoped
         )
         by_type: dict[str, int] = {}
         for item in active:
@@ -140,7 +166,7 @@ def get_dashboard(
                 code=center.code,
                 name=center.name,
                 color=center.color,
-                active_employees=len(active),
+                active_employees=len({item.employee_id for item in active}),
                 by_employment_type=by_type,
                 admissions=admissions,
                 terminations=terminations,
@@ -149,7 +175,7 @@ def get_dashboard(
                 gross_payroll=sum(float(row["gross_payroll"]) for row in payroll_rows),
                 net_payroll=sum(float(row["net_payroll"]) for row in payroll_rows),
                 total_cost=sum(float(row["total_cost"]) for row in payroll_rows),
-                previous_active_employees=len(previous_active),
+                previous_active_employees=len({item.employee_id for item in previous_active}),
             )
         )
     consolidated = DashboardConsolidated(

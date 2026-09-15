@@ -9,7 +9,10 @@ export function payrollRows(
   settingsByCompany: Record<number, DemoSettings> = {}
 ): PayrollRow[] {
   const [year, month] = competency.split("-").map(Number);
-  return employees.filter(item => item.status !== "INACTIVE").map(employee => {
+  const periodStart = `${competency}-01`;
+  const periodEnd = new Date(year, month, 0).toISOString().slice(0, 10);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  return employees.filter(item => item.admission_date <= periodEnd && (!item.termination_date || item.termination_date >= periodStart)).map(employee => {
     const company = demoCompanies.find(item => item.id === employee.company_id) ?? demoCompanies[0];
     const rates = settingsByCompany[employee.company_id]?.payroll_rates ?? company.settings.payroll_rates;
     const benefitMap = benefitDistributions
@@ -19,10 +22,14 @@ export function payrollRows(
         acc[key] = [...(acc[key] ?? []), item];
         return acc;
       }, {});
-    const salary = employee.employment_type.name === "CLT" ? employee.salary_base : 0;
+    const activeStart = employee.admission_date > periodStart ? employee.admission_date : periodStart;
+    const activeEnd = employee.termination_date && employee.termination_date < periodEnd ? employee.termination_date : periodEnd;
+    const activeDays = Math.max(Math.round((new Date(`${activeEnd}T12:00:00`).getTime() - new Date(`${activeStart}T12:00:00`).getTime()) / 86400000) + 1, 0);
+    const allocationFactor = activeDays / daysInMonth;
+    const salary = employee.employment_type.name === "CLT" ? roundMoney(employee.salary_base * allocationFactor) : 0;
     const proLabore = employee.employment_type.name === "Pró-labore" ? employee.salary_base : 0;
     const profitDistribution = employee.result_center.code === "DIR" ? 2500 : employee.result_center.code === "COM" ? 650 : 0;
-    const costAid = Number(employee.cost_aid ?? 0);
+    const costAid = roundMoney(Number(employee.cost_aid ?? 0) * allocationFactor);
     const transport = sumBenefit(benefitMap["vale transporte"] ?? []);
     const meal = sumBenefit(benefitMap["alimentacao"] ?? []);
     const basicBasket = sumBenefit(benefitMap["cesta basica"] ?? []);
@@ -31,11 +38,15 @@ export function payrollRows(
     const healthPlan = sumBenefit(benefitMap["plano de saude"] ?? []);
     return recalculatePayrollRow({
       employee_id: employee.id,
+      person_id: employee.employee.id,
       employee_name: employee.employee.full_name,
+      period_start: activeStart,
+      period_end: activeEnd,
+      allocation_factor: allocationFactor,
       result_center: employee.result_center,
       employment_type: employee.employment_type,
       salary,
-      gratification: Number(employee.gratification ?? 0),
+      gratification: roundMoney(Number(employee.gratification ?? 0) * allocationFactor),
       pro_labore: proLabore,
       profit_distribution: profitDistribution,
       bonus: 0,

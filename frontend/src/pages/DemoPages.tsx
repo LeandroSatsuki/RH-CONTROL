@@ -30,6 +30,11 @@ function distinctBy<T>(items: T[], key: (item: T) => string) {
   return items.filter((item, index) => items.findIndex(candidate => key(candidate) === key(item)) === index);
 }
 
+function initialDateForCompetency(competency: string) {
+  const today = new Date().toISOString().slice(0, 10);
+  return today.startsWith(`${competency}-`) ? today : `${competency}-01`;
+}
+
 function restricted(user: User, fail: (message: string) => void) {
   if (user.role !== "ADMIN") {
     fail("Seu perfil possui acesso somente para consulta.");
@@ -459,7 +464,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     }
   >
     <div className="summary-grid payroll-summary">
-      <Summary label="Colaboradores" value={String(filtered.length)} />
+      <Summary label="Colaboradores" value={String(new Set(filtered.map(item => item.person_id ?? item.employee_id)).size)} />
       <Summary label="Subtotal" value={money.format(totals.subtotal)} />
       <Summary label="Benefícios" value={money.format(benefitsTotal)} />
       <Summary label="Encargos" value={money.format(totals.charges)} />
@@ -546,7 +551,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
         <tbody>
           {filtered.map(item => (
             <tr key={item.employee_id}>
-              <td>{item.employee_name}<small>{item.employment_type.name}</small></td>
+              <td>{item.employee_name}<small>{item.employment_type.name}{item.period_start ? ` · ${date(item.period_start)} a ${item.period_end ? date(item.period_end) : "atual"}` : ""}</small></td>
               <td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td>
               <EditablePayrollCell
                 value={item.salary}
@@ -914,8 +919,11 @@ function MovementCreateModal({
   const [employmentType, setEmploymentType] = useState("");
   const [center, setCenter] = useState("");
   const [employeeId, setEmployeeId] = useState("");
+  const [datedEmployees, setDatedEmployees] = useState(employees);
+  const selectedPersonId = useRef<number | null>(null);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [movementType, setMovementType] = useState("falta");
-  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [startDate, setStartDate] = useState(() => initialDateForCompetency(competency));
   const [endDate, setEndDate] = useState("");
   const [days, setDays] = useState(1);
   const [hours, setHours] = useState(8.8);
@@ -927,12 +935,39 @@ function MovementCreateModal({
   const basicsSelected = Boolean(employmentType && center);
   const eligibleEmployees = useMemo(() => {
     if (!basicsSelected) return [];
-    return employees
-      .filter(employee => employee.status === "ACTIVE")
+    return datedEmployees
       .filter(employee => employee.employment_type.name === employmentType)
       .filter(employee => employee.result_center.code === center)
       .sort((a, b) => a.employee.full_name.localeCompare(b.employee.full_name, "pt-BR"));
-  }, [basicsSelected, center, employees, employmentType]);
+  }, [basicsSelected, center, datedEmployees, employmentType]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadEmployeesForDate() {
+      setLoadingEmployees(true);
+      try {
+        const response = await api<DemoEmployee[]>(`/employees?reference_date=${startDate}`, {}, token);
+        if (!active) return;
+        setDatedEmployees(response);
+        if (selectedPersonId.current) {
+          const matchingEmployment = response.find(item => item.employee.id === selectedPersonId.current);
+          if (matchingEmployment) {
+            setEmployeeId(String(matchingEmployment.id));
+            setEmploymentType(matchingEmployment.employment_type.name);
+            setCenter(matchingEmployment.result_center.code);
+          } else {
+            setEmployeeId("");
+          }
+        }
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : "Erro ao buscar vínculos vigentes na data.");
+      } finally {
+        if (active) setLoadingEmployees(false);
+      }
+    }
+    if (startDate) void loadEmployeesForDate();
+    return () => { active = false; };
+  }, [startDate, token]);
 
   useEffect(() => {
     const key = movementDraftKey(companyId, competency);
@@ -942,6 +977,7 @@ function MovementCreateModal({
         setEmploymentType(saved.employmentType ?? "");
         setCenter(saved.center ?? "");
         setEmployeeId(saved.employeeId ?? "");
+        selectedPersonId.current = employees.find(item => item.id === Number(saved.employeeId))?.employee.id ?? null;
         setMovementType(saved.movementType ?? "falta");
         setStartDate(saved.startDate ?? new Date().toISOString().slice(0, 10));
         setEndDate(saved.endDate ?? "");
@@ -1015,24 +1051,28 @@ function MovementCreateModal({
         </div>
         <div className="presentation-modal-body movement-modal-body">
           <div className="movement-form-grid">
-            <label>Modalidade<select value={employmentType} onChange={event => { setEmploymentType(event.target.value); setEmployeeId(""); }} required autoFocus>
+            <label>Modalidade<select value={employmentType} onChange={event => { setEmploymentType(event.target.value); setEmployeeId(""); selectedPersonId.current = null; }} required autoFocus>
               <option value="">Selecione</option>
               {types.filter(item => item.active).map(item => <option key={item.id} value={item.name}>{item.name}</option>)}
             </select></label>
-            <label>Centro de Resultado<select value={center} onChange={event => { setCenter(event.target.value); setEmployeeId(""); }} required>
+            <label>Centro de Resultado<select value={center} onChange={event => { setCenter(event.target.value); setEmployeeId(""); selectedPersonId.current = null; }} required>
               <option value="">Selecione</option>
               {centers.filter(item => item.active).map(item => <option key={item.id} value={item.code}>{item.code} - {item.name}</option>)}
             </select></label>
-            <label className="span-2">Colaborador<select value={employeeId} onChange={event => setEmployeeId(event.target.value)} disabled={!basicsSelected} required>
-              <option value="">{basicsSelected ? "Selecione o colaborador" : "Selecione modalidade e CR primeiro"}</option>
+            <label className="span-2">Colaborador<select value={employeeId} onChange={event => {
+              const nextId = event.target.value;
+              setEmployeeId(nextId);
+              selectedPersonId.current = datedEmployees.find(item => item.id === Number(nextId))?.employee.id ?? null;
+            }} disabled={!basicsSelected || loadingEmployees} required>
+              <option value="">{loadingEmployees ? "Buscando vínculos vigentes..." : basicsSelected ? "Selecione o colaborador" : "Selecione modalidade e CR primeiro"}</option>
               {eligibleEmployees.map(employee => <option key={employee.id} value={employee.id}>{employee.employee.full_name} • {employee.employee_code}</option>)}
             </select></label>
-            {basicsSelected && !eligibleEmployees.length && <p className="note span-2">Nenhum colaborador ativo encontrado para esta modalidade e Centro de Resultado.</p>}
+            {basicsSelected && !loadingEmployees && !eligibleEmployees.length && <p className="note span-2">Nenhum colaborador possuía este vínculo na data informada.</p>}
             <label>Tipo<select value={movementType} onChange={event => setMovementType(event.target.value)} disabled={!basicsSelected} required>
               {movementTypes.map(option => <option key={option} value={option}>{option}</option>)}
             </select></label>
             <label>Competência<input value={competency} readOnly disabled={!basicsSelected} /></label>
-            <label>Início<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} disabled={!basicsSelected} required /></label>
+            <label>Início<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} disabled={!basicsSelected} required /><small>A modalidade e o CR válidos nesta data serão usados.</small></label>
             <label>Fim<input type="date" value={calculatedEndDate} onChange={event => setEndDate(event.target.value)} disabled={!basicsSelected} readOnly={periodMovement} /><small>{periodMovement ? "Calculado incluindo a data de inÃ­cio." : ""}</small></label>
             <label>Dias<input type="number" min="1" step="1" value={days} onChange={event => setDays(Number(event.target.value || 1))} disabled={!basicsSelected} required /></label>
             <label>Horas<input type="number" min="0" step="0.1" value={calculatedHours} onChange={event => setHours(Number(event.target.value || 0))} disabled={!basicsSelected} readOnly={periodMovement} required /><small>{periodMovement ? "Calculadas conforme a jornada diÃ¡ria do colaborador." : ""}</small></label>

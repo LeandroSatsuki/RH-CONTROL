@@ -388,6 +388,21 @@ function normalizeText(value: string) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function employmentForDate(employees: DemoEmployee[], selected: DemoEmployee, referenceDate: string) {
+  const match = employees
+    .filter(item => item.employee.id === selected.employee.id)
+    .filter(item => item.admission_date <= referenceDate && (!item.termination_date || item.termination_date >= referenceDate))
+    .sort((a, b) => `${b.admission_date}:${b.id}`.localeCompare(`${a.admission_date}:${a.id}`))[0];
+  if (!match) throw new Error("Não há vínculo vigente para este colaborador na data informada.");
+  return match;
+}
+
+function previousCalendarDate(value: string) {
+  const result = new Date(`${value}T12:00:00`);
+  result.setDate(result.getDate() - 1);
+  return result.toISOString().slice(0, 10);
+}
+
 function localLaunchEligible(
   state: DemoState,
   employee: DemoEmployee,
@@ -1171,7 +1186,17 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
   }
   if (route === "/result-centers" && method === "GET") return scopeResultCenters(state, companyId) as T;
   if (route === "/employment-types" && method === "GET") return scopeEmploymentTypes(state, companyId) as T;
-  if (route === "/employees" && method === "GET") return scopeEmployees(state, companyId) as T;
+  if (route === "/employees" && method === "GET") {
+    const latest = new Map<number, DemoEmployee>();
+    const referenceDate = params.get("reference_date");
+    scopeEmployees(state, companyId)
+      .filter(item => !referenceDate || (item.admission_date <= referenceDate && (!item.termination_date || item.termination_date >= referenceDate)))
+      .forEach(item => {
+      const current = latest.get(item.employee.id);
+      if (!current || `${item.admission_date}:${item.id}` > `${current.admission_date}:${current.id}`) latest.set(item.employee.id, item);
+      });
+    return [...latest.values()].sort((a, b) => a.employee.full_name.localeCompare(b.employee.full_name, "pt-BR")) as T;
+  }
   if (route === "/demo/benefits/catalog" && method === "GET") return state.benefitDefinitions as T;
   if (route === "/demo/benefit-distributions" && method === "GET") {
     const competency = params.get("competency") ?? "2026-06";
@@ -1571,7 +1596,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const cpf = String(payload.cpf ?? "").replace(/\D/g, "");
     if (!isValidCpfCnpj(cpf)) throw new Error("CPF/CNPJ inválido.");
     const duplicate = state.employees.find(item => String(item.employee.cpf ?? "").replace(/\D/g, "") === cpf);
-    if (duplicate) throw new Error(`CPF/CNPJ já cadastrado para ${duplicate.employee.full_name}. Reative ou transfira o cadastro existente.`);
+    if (duplicate) throw new Error(`CPF/CNPJ já cadastrado para ${duplicate.employee.full_name}. Abra a ficha existente e use Alterar vínculo/modalidade.`);
     const type = state.employmentTypes.find(item => item.id === Number(payload.employment_type_id) && item.company_id === companyId);
     const center = state.resultCenters.find(item => item.id === Number(payload.result_center_id) && item.company_id === companyId);
     if (!type) throw new Error("Modalidade não pertence à empresa selecionada.");
@@ -1632,6 +1657,93 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     });
     saveState(state);
     return item as T;
+  }
+
+  if (route.startsWith("/employees/") && route.endsWith("/history") && method === "GET") {
+    const employmentId = Number(route.split("/")[2]);
+    const source = state.employees.find(item => item.id === employmentId && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
+    if (!source) throw new Error("Vínculo não encontrado");
+    return state.employees
+      .filter(item => item.employee.id === source.employee.id)
+      .sort((a, b) => `${b.admission_date}:${b.id}`.localeCompare(`${a.admission_date}:${a.id}`)) as T;
+  }
+
+  if (route.startsWith("/employees/") && route.endsWith("/transition") && method === "POST") {
+    assertAdmin(token);
+    const employmentId = Number(route.split("/")[2]);
+    const source = state.employees.find(item => item.id === employmentId && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
+    if (!source) throw new Error("Vínculo não encontrado");
+    const personLinks = state.employees.filter(item => item.employee.id === source.employee.id);
+    const latest = [...personLinks].sort((a, b) => `${b.admission_date}:${b.id}`.localeCompare(`${a.admission_date}:${a.id}`))[0];
+    if (latest.id !== source.id) throw new Error("A transição só pode ser feita a partir do vínculo mais recente.");
+    const payload = body<Record<string, any>>(options);
+    const effectiveDate = String(payload.effective_date ?? "");
+    if (!effectiveDate || effectiveDate <= source.admission_date) throw new Error("A nova vigência deve começar depois do início do vínculo atual.");
+    if (isCompetencyClosed(state, source.company_id, effectiveDate.slice(0, 7))) throw new Error("Competência fechada. Reabra o mês antes de alterar o vínculo.");
+    const type = state.employmentTypes.find(item => item.id === Number(payload.employment_type_id) && item.company_id === source.company_id);
+    const center = state.resultCenters.find(item => item.id === Number(payload.result_center_id) && item.company_id === source.company_id);
+    if (!type) throw new Error("Modalidade não pertence à empresa selecionada.");
+    if (!center) throw new Error("Centro de Resultado não pertence à empresa selecionada.");
+    if (normalizeText(type.name) === normalizeText(source.employment_type.name) && source.status !== "INACTIVE") throw new Error("Selecione uma modalidade diferente da atual.");
+    const previousType = source.employment_type.name;
+    if (!source.termination_date || source.termination_date >= effectiveDate) source.termination_date = previousCalendarDate(effectiveDate);
+    source.status = "INACTIVE";
+    const lastNumber = state.employees
+      .filter(item => item.company_id === source.company_id && item.employee_code.startsWith(`${center.code}-`))
+      .map(item => Number(item.employee_code.split("-").at(-1) ?? 0))
+      .filter(Number.isFinite)
+      .reduce((max, value) => Math.max(max, value), 0);
+    const id = nextId(state.employees);
+    const next: DemoEmployee = {
+      ...source,
+      id,
+      employee_code: `${center.code}-${String(lastNumber + 1).padStart(3, "0")}`,
+      employment_type: type,
+      result_center: center,
+      job_title: String(payload.job_title ?? source.job_title).trim().toUpperCase(),
+      supervisor_name: String(payload.supervisor_name ?? "").trim().toUpperCase(),
+      admission_date: effectiveDate,
+      termination_date: null,
+      status: "ACTIVE",
+      daily_hours: String(payload.daily_hours ?? source.daily_hours),
+      salary_base: Number(payload.salary_base ?? source.salary_base),
+      gratification: Number(payload.gratification ?? 0),
+      cost_aid: Number(payload.cost_aid ?? 0),
+      benefits: Array.isArray(payload.benefits) ? payload.benefits.map(String) : [],
+      notes: String(payload.notes ?? "").trim().toUpperCase(),
+      salary_history: [{ date: effectiveDate, effective_date: effectiveDate, amount: Number(payload.salary_base ?? source.salary_base), family_allowance: 0, reason: `Início do vínculo ${type.name}` }],
+      movement_history: [{ date: effectiveDate, description: `Alteração de vínculo: ${previousType} para ${type.name}` }],
+      vacations: [],
+      leaves: []
+    };
+    state.employees.push(next);
+    state.movements.unshift({
+      id: nextId(state.movements),
+      company_id: source.company_id,
+      competency: effectiveDate.slice(0, 7),
+      employee_id: next.id,
+      employee_name: next.employee.full_name,
+      type: "alteração de vínculo",
+      start_date: effectiveDate,
+      end_date: null,
+      days: 0,
+      hour_impact: 0,
+      result_center: center,
+      observation: `TRANSIÇÃO DE ${previousType} PARA ${type.name} | VÍNCULO ANTERIOR ENCERRADO EM ${source.termination_date}`,
+      status: "Aplicada"
+    });
+    appendAudit(state, {
+      company_id: source.company_id,
+      module: "Colaboradores",
+      action: "Alteração de vínculo",
+      employee_name: next.employee.full_name,
+      result_center: center,
+      performed_by: currentUser.full_name,
+      performed_role: currentUser.role,
+      details: `${previousType} até ${source.termination_date} → ${type.name} desde ${effectiveDate} | ${next.employee_code}`
+    });
+    saveState(state);
+    return next as T;
   }
 
   if (route.startsWith("/employees/") && route.endsWith("/salary-history") && method === "POST") {
@@ -1706,6 +1818,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const center = payload.result_center_id ? state.resultCenters.find(centerItem => centerItem.id === Number(payload.result_center_id) && centerItem.company_id === targetCompanyId) : item.result_center;
     if (!type) throw new Error("Modalidade não encontrada.");
     if (!center) throw new Error("Centro de Resultado não encontrado.");
+    if (type.id !== item.employment_type.id && normalizeText(type.name) !== normalizeText(item.employment_type.name)) throw new Error("Use Alterar vínculo/modalidade para preservar o histórico da pessoa.");
     if (targetCompanyId !== previousCompanyId || center.id !== previousCenterId) {
       const lastNumber = state.employees
         .filter(employee => employee.id !== item.id && employee.company_id === targetCompanyId && employee.employee_code.startsWith(`${center.code}-`))
@@ -1825,7 +1938,14 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para lançar movimentações.");
     const payload = body<Partial<DemoMovement>>(options);
     const companyEmployees = scopeEmployees(state, companyId);
-    const employee = companyEmployees.find(item => item.id === Number(payload.employee_id)) ?? companyEmployees[0];
+    const selectedEmployee = companyEmployees.find(item => item.id === Number(payload.employee_id));
+    if (!selectedEmployee) throw new Error("Colaborador não encontrado na empresa selecionada.");
+    const startDate = payload.start_date ?? new Date().toISOString().slice(0, 10);
+    const employee = employmentForDate(companyEmployees, selectedEmployee, startDate);
+    const movementEndDate = payload.end_date ?? null;
+    if (employee.termination_date && (movementEndDate || startDate) > employee.termination_date) {
+      throw new Error("A movimentação ultrapassa o fim deste vínculo. Divida o lançamento entre os períodos de vínculo.");
+    }
     const item: DemoMovement = {
       id: nextId(state.movements),
       company_id: companyId,
@@ -1833,8 +1953,8 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       employee_id: employee.id,
       employee_name: employee.employee.full_name,
       type: payload.type ?? "falta",
-      start_date: payload.start_date ?? "2026-06-10",
-      end_date: payload.end_date ?? null,
+      start_date: startDate,
+      end_date: movementEndDate,
       days: payload.days ?? 1,
       hour_impact: payload.hour_impact ?? 8.8,
       result_center: employee.result_center,
@@ -1869,15 +1989,23 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       : state.movements.findIndex(item => item.id === movementId && item.company_id === companyId);
     if (index < 0) throw new Error("Movimentação não encontrada");
     const currentMovement = state.movements[index];
-    const employee = scopeEmployees(state, companyId).find(item => item.id === Number(payload.employee_id)) ?? scopeEmployees(state, companyId).find(item => item.id === currentMovement.employee_id) ?? scopeEmployees(state, companyId)[0];
+    const companyEmployees = scopeEmployees(state, companyId);
+    const selectedEmployee = companyEmployees.find(item => item.id === Number(payload.employee_id)) ?? companyEmployees.find(item => item.id === currentMovement.employee_id);
+    if (!selectedEmployee) throw new Error("Colaborador não encontrado na empresa selecionada.");
+    const startDate = payload.start_date ?? currentMovement.start_date;
+    const employee = employmentForDate(companyEmployees, selectedEmployee, startDate);
+    const movementEndDate = payload.end_date ?? currentMovement.end_date;
+    if (employee.termination_date && (movementEndDate || startDate) > employee.termination_date) {
+      throw new Error("A movimentação ultrapassa o fim deste vínculo. Divida o lançamento entre os períodos de vínculo.");
+    }
     const updated: DemoMovement = {
       ...currentMovement,
       competency: payload.competency ?? currentMovement.competency,
       employee_id: employee.id,
       employee_name: employee.employee.full_name,
       type: payload.type ?? currentMovement.type,
-      start_date: payload.start_date ?? currentMovement.start_date,
-      end_date: payload.end_date ?? currentMovement.end_date,
+      start_date: startDate,
+      end_date: movementEndDate,
       days: payload.days ?? currentMovement.days,
       hour_impact: payload.hour_impact ?? currentMovement.hour_impact,
       result_center: employee.result_center,

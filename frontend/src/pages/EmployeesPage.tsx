@@ -737,6 +737,8 @@ function EmployeeDrawer({
   const [error, setError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [transitionOpen, setTransitionOpen] = useState(false);
+  const [employmentHistory, setEmploymentHistory] = useState<DemoEmployee[]>([employee]);
   const history = [...(employee.salary_history ?? [])].sort((a, b) => salaryHistoryDate(b).localeCompare(salaryHistoryDate(a)));
   const estimatedCost = (employee.salary_base + Number(employee.gratification ?? 0)) * (employee.employment_type.has_charges ? 1.72 : 1.18);
   const salaryChanged = Number(draft.salary_base || 0) !== Number(employee.salary_base || 0);
@@ -748,6 +750,14 @@ function EmployeeDrawer({
   const editJobTitleOptions = jobTitleOptions.includes(draft.job_title)
     ? jobTitleOptions
     : [draft.job_title, ...jobTitleOptions].filter(Boolean);
+
+  useEffect(() => {
+    let active = true;
+    api<DemoEmployee[]>(`/employees/${employee.id}/history?company_id=${employee.company_id}`, {}, token)
+      .then(items => { if (active) setEmploymentHistory(items); })
+      .catch(() => { if (active) setEmploymentHistory([employee]); });
+    return () => { active = false; };
+  }, [employee, token]);
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -875,6 +885,7 @@ function EmployeeDrawer({
         }}>{editing ? "Cancelar edição" : "Editar"}</button>
         <button className="secondary" onClick={() => void inactivateEmployee()} disabled={saving}>{employee.status === "INACTIVE" ? "Reativar" : "Inativar"}</button>
         <button className="secondary" onClick={() => setEditing(true)}>Transferir CR</button>
+        <button className="primary" onClick={() => setTransitionOpen(true)} disabled={saving}>{employee.status === "INACTIVE" ? "Criar novo vínculo" : "Alterar vínculo/modalidade"}</button>
         <button className="danger" onClick={() => { setDeleteError(""); setDeleteOpen(true); }} disabled={saving}>Excluir</button>
       </> : <button className="secondary" onClick={() => onAction("Seu perfil possui acesso somente para consulta.")}>Solicitar alteração</button>}
     </div>
@@ -888,6 +899,19 @@ function EmployeeDrawer({
       onConfirm={deleteEmployee}
     />}
     {error && <ErrorMessage message={error} />}
+    {transitionOpen && <EmploymentTransitionModal
+      employee={employee}
+      token={token}
+      types={targetTypes}
+      centers={targetCenters}
+      jobTitles={jobTitleOptions}
+      supervisors={supervisorOptions.filter(name => name !== employee.employee.full_name)}
+      onClose={() => setTransitionOpen(false)}
+      onSaved={updated => {
+        setTransitionOpen(false);
+        onSaved(updated);
+      }}
+    />}
     {editing && <form className="panel form-grid compact" onSubmit={saveEdit}>
       <h3 className="span-2 form-section-title">Editar cadastro</h3>
       <label className="span-2">Empresa<select value={draft.company_id} onChange={event => {
@@ -903,7 +927,7 @@ function EmployeeDrawer({
       <label>Cargo / função<select value={draft.job_title} onChange={event => setDraft(current => ({ ...current, job_title: event.target.value }))} required><option value="">Selecione</option>{editJobTitleOptions.map(title => <option key={title} value={title}>{title}</option>)}</select></label>
       <label>Supervisor<select value={draft.supervisor_name} onChange={event => setDraft(current => ({ ...current, supervisor_name: event.target.value }))}><option value="">Selecione</option>{supervisorOptions.filter(name => name !== employee.employee.full_name).map(name => <option key={name} value={name}>{name}</option>)}</select></label>
       <label>Centro de Resultado<select value={draft.result_center_id} onChange={event => setDraft(current => ({ ...current, result_center_id: event.target.value }))} required>{targetCenters.map(item => <option key={item.id} value={item.id}>{item.code} - {item.name}</option>)}</select></label>
-      <label>Modalidade<select value={draft.employment_type_id} onChange={event => setDraft(current => ({ ...current, employment_type_id: event.target.value }))} required>{targetTypes.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label>Modalidade<select value={draft.employment_type_id} disabled required>{targetTypes.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><small>Para mudar a modalidade, use Alterar vínculo/modalidade.</small></label>
       <label>Data de admissão<input value={draft.admission_date} onChange={event => setDraft(current => ({ ...current, admission_date: event.target.value }))} type="date" required /></label>
       <label>Salário base<input value={draft.salary_base} onChange={event => setDraft(current => ({ ...current, salary_base: event.target.value }))} type="number" step="0.01" required /></label>
       <label>Gratificação<input value={draft.gratification} onChange={event => setDraft(current => ({ ...current, gratification: event.target.value }))} type="number" min="0" step="0.01" /></label>
@@ -956,8 +980,99 @@ function EmployeeDrawer({
     <Section title="Férias" items={(employee.vacations ?? []).length ? (employee.vacations ?? []).map(item => `${item.period} - ${item.status}`) : ["Nenhuma férias cadastrada"]} />
     <Section title="Afastamentos" items={(employee.leaves ?? []).length ? (employee.leaves ?? []).map(item => `${item.period} - ${item.reason} (${item.days} dias)`) : ["Nenhum afastamento ativo"]} />
     <Section title="Históricos Salariais" items={history.length ? history.map(item => `${date(salaryHistoryDate(item))} - ${money.format(item.amount)} (${item.reason})`) : ["Nenhum histórico salarial"]} />
+    <Section title="Histórico de vínculos" items={employmentHistory.map(item => `${item.employment_type.name} · ${date(item.admission_date)} até ${item.termination_date ? date(item.termination_date) : "atual"} · ${item.employee_code} · ${item.result_center.code}`)} />
     <Section title="Histórico de Movimentos" items={(employee.movement_history ?? []).length ? (employee.movement_history ?? []).map(item => `${date(item.date)} - ${item.description}`) : ["Consulte Movimentações para ver o histórico operacional"]} />
   </aside></div>;
+}
+
+function EmploymentTransitionModal({
+  employee,
+  token,
+  types,
+  centers,
+  jobTitles,
+  supervisors,
+  onClose,
+  onSaved
+}: {
+  employee: DemoEmployee;
+  token: string;
+  types: EmploymentType[];
+  centers: ResultCenter[];
+  jobTitles: string[];
+  supervisors: string[];
+  onClose: () => void;
+  onSaved: (employee: DemoEmployee) => void;
+}) {
+  const availableTypes = types.filter(item => item.active && (employee.status === "INACTIVE" || item.id !== employee.employment_type.id));
+  const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
+  const [typeId, setTypeId] = useState(String(availableTypes[0]?.id ?? ""));
+  const [centerId, setCenterId] = useState(String(employee.result_center.id));
+  const [jobTitle, setJobTitle] = useState(employee.job_title);
+  const [supervisor, setSupervisor] = useState(employee.supervisor_name ?? "");
+  const [salary, setSalary] = useState(String(employee.salary_base));
+  const [gratification, setGratification] = useState(String(employee.gratification ?? 0));
+  const [costAid, setCostAid] = useState(String(employee.cost_aid ?? 0));
+  const [benefits, setBenefits] = useState<string[]>(employee.benefits ?? []);
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await api<DemoEmployee>(`/employees/${employee.id}/transition?company_id=${employee.company_id}`, {
+        method: "POST",
+        body: JSON.stringify({
+          effective_date: effectiveDate,
+          employment_type_id: Number(typeId),
+          result_center_id: Number(centerId),
+          job_title: jobTitle,
+          supervisor_name: supervisor,
+          daily_hours: Number(employee.daily_hours || 8.8),
+          salary_base: Number(salary),
+          gratification: Number(gratification || 0),
+          cost_aid: Number(costAid || 0),
+          benefits,
+          notes
+        })
+      }, token);
+      onSaved(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível alterar o vínculo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="presentation-modal movement-modal-backdrop" onClick={onClose}>
+    <section className="presentation-modal-panel movement-modal quick-modal transition-modal" onClick={event => event.stopPropagation()}>
+      <div className="presentation-modal-header movement-modal-header"><div><span className="eyebrow">Histórico profissional</span><h2>Alterar vínculo/modalidade</h2><p>{employee.employee.full_name} · atualmente {employee.employment_type.name}</p></div><button className="icon-button" type="button" onClick={onClose}>×</button></div>
+      <form className="presentation-modal-body movement-modal-body form-grid compact" onSubmit={submit}>
+        <p className="note span-2">O vínculo atual será encerrado no dia anterior à nova vigência. A pessoa, o CPF e todo o histórico permanecerão os mesmos.</p>
+        {error && <div className="span-2"><ErrorMessage message={error} /></div>}
+        <label>Nova modalidade<select value={typeId} onChange={event => setTypeId(event.target.value)} required><option value="">Selecione</option>{availableTypes.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>Início da nova vigência<input type="date" min={addOneDay(employee.admission_date)} value={effectiveDate} onChange={event => setEffectiveDate(event.target.value)} required /></label>
+        <label>Centro de Resultado<select value={centerId} onChange={event => setCenterId(event.target.value)} required>{centers.filter(item => item.active || item.id === employee.result_center.id).map(item => <option key={item.id} value={item.id}>{item.code} - {item.name}</option>)}</select></label>
+        <label>Cargo<select value={jobTitle} onChange={event => setJobTitle(event.target.value)} required>{jobTitles.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label>Supervisor<select value={supervisor} onChange={event => setSupervisor(event.target.value)}><option value="">Selecione</option>{supervisors.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label>Salário/valor base<input type="number" min="0.01" step="0.01" value={salary} onChange={event => setSalary(event.target.value)} required /></label>
+        <label>Gratificação<input type="number" min="0" step="0.01" value={gratification} onChange={event => setGratification(event.target.value)} /></label>
+        <label>Ajuda de custo<input type="number" min="0" step="0.01" value={costAid} onChange={event => setCostAid(event.target.value)} /></label>
+        <fieldset className="span-2 benefits-fieldset"><legend>Benefícios do novo vínculo</legend>{["Vale transporte", "Alimentação", "Cesta básica", "Plano de saúde", "Seguro de vida", "Ajuda de custo"].map(benefit => <label className="check" key={benefit}><input type="checkbox" checked={benefits.includes(benefit)} onChange={event => setBenefits(current => event.target.checked ? [...current, benefit] : current.filter(item => item !== benefit))} /> {benefit}</label>)}</fieldset>
+        <label className="span-2">Observação da transição<textarea rows={2} value={notes} onChange={event => setNotes(upperText(event.target.value))} placeholder="Motivo ou referência da contratação" /></label>
+        <div className="actions span-2"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !availableTypes.length}>{saving ? "Alterando..." : "Confirmar novo vínculo"}</button></div>
+      </form>
+    </section>
+  </div>;
+}
+
+function addOneDay(value: string) {
+  const result = new Date(`${value}T12:00:00`);
+  result.setDate(result.getDate() + 1);
+  return result.toISOString().slice(0, 10);
 }
 
 function Info({ label, value }: { label: string; value: string }) {

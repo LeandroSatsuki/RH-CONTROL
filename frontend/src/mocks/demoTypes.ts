@@ -10,6 +10,7 @@ export type MovementType =
   | "férias"
   | "transferência de Centro de Resultado"
   | "alteração salarial"
+  | "alteração de vínculo"
   | "contrato não assinado"
   | "contrato MEI a vencer";
 
@@ -67,7 +68,11 @@ export interface DemoMovement {
 
 export interface PayrollRow {
   employee_id: number;
+  person_id?: number;
   employee_name: string;
+  period_start?: string;
+  period_end?: string | null;
+  allocation_factor?: number;
   result_center: ResultCenter;
   employment_type: EmploymentType;
   salary: number;

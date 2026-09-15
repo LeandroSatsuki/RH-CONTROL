@@ -161,6 +161,20 @@ class EmployeeUpdate(BaseModel):
     benefits: list[str] | None = None
 
 
+class EmploymentTransitionCreate(BaseModel):
+    effective_date: date
+    employment_type_id: int
+    result_center_id: int
+    job_title: str = Field(min_length=2, max_length=120)
+    supervisor_name: str = Field(default="", max_length=120)
+    daily_hours: Decimal = Field(default=Decimal("8.80"), gt=0, le=24)
+    salary_base: Decimal = Field(gt=0)
+    gratification: Decimal = Field(default=Decimal("0.00"), ge=0)
+    cost_aid: Decimal = Field(default=Decimal("0.00"), ge=0)
+    benefits: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
 class EmploymentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

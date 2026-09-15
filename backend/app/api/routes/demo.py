@@ -89,15 +89,20 @@ def normalized(value: str) -> str:
 
 
 def launch_eligible(
-    employment: Employment, kind: str, valid_mei_ids: set[int] | None = None
+    employment: Employment,
+    kind: str,
+    valid_mei_ids: set[int] | None = None,
+    competency: str = "",
 ) -> bool:
-    if employment.status == EmploymentStatus.INACTIVE:
-        return False
     if kind == "MEI":
+        _, _, period_start, period_end = parse_competency(competency)
         return (
             normalized(employment.employment_type.name) == "MEI"
             and employment.id in (valid_mei_ids or set())
+            and employment_active_in_period(employment, period_start, period_end)
         )
+    if employment.status == EmploymentStatus.INACTIVE:
+        return False
     if kind == "BASIC_BASKET":
         return any(normalized(value) == "CESTA BASICA" for value in (employment.benefits or []))
     return kind == "BONUS"
@@ -109,7 +114,7 @@ def launch_batch_to_dict(
     stored = {item.employment_id: item for item in batch.items}
     eligible = [
         item for item in employments
-        if launch_eligible(item, batch.kind, valid_mei_ids)
+        if launch_eligible(item, batch.kind, valid_mei_ids, batch.competency)
     ]
     return {
         "id": batch.id,
@@ -156,6 +161,31 @@ def movement_period_values(
             Decimal(str(daily_hours)) * days
         )
     return end_date, Decimal(str(hour_impact))
+
+
+def employment_for_movement_date(
+    db: DbSession, selected: Employment, movement_date: date, company_id: int
+) -> Employment:
+    """Resolve the person's relationship that was valid on the movement date."""
+    employment = db.scalar(
+        select(Employment)
+        .options(joinedload(Employment.employee), joinedload(Employment.result_center))
+        .where(
+            Employment.employee_id == selected.employee_id,
+            Employment.company_id == company_id,
+            Employment.admission_date <= movement_date,
+            (Employment.termination_date.is_(None))
+            | (Employment.termination_date >= movement_date),
+        )
+        .order_by(Employment.admission_date.desc(), Employment.id.desc())
+        .limit(1)
+    )
+    if not employment:
+        raise HTTPException(
+            status_code=422,
+            detail="Não há vínculo vigente para este colaborador na data informada.",
+        )
+    return employment
 
 
 def ensure_company(db: DbSession, company_id: int) -> Company:
@@ -690,24 +720,26 @@ def create_movement(
 ) -> dict[str, Any]:
     ensure_company(db, company_id)
     employee_id = payload.get("employee_id")
+    if not employee_id:
+        raise HTTPException(status_code=422, detail="Selecione um colaborador.")
+    start_date = parse_date(payload.get("start_date"), date.today())
     employment_query = (
         select(Employment)
         .options(joinedload(Employment.employee), joinedload(Employment.result_center))
         .where(
             Employment.company_id == company_id,
-            Employment.status == EmploymentStatus.ACTIVE,
+            Employment.id == int(employee_id),
         )
-        .order_by(Employment.id)
     )
-    if employee_id:
-        employment_query = employment_query.where(Employment.id == int(employee_id))
-    employment = db.scalar(employment_query)
-    if not employment:
+    selected_employment = db.scalar(employment_query)
+    if not selected_employment:
         raise HTTPException(
             status_code=422,
-            detail="Cadastre ao menos um colaborador ativo antes de lançar movimentações.",
+            detail="Colaborador não encontrado na empresa selecionada.",
         )
-    start_date = parse_date(payload.get("start_date"), date.today())
+    employment = employment_for_movement_date(
+        db, selected_employment, start_date, company_id
+    )
     movement_type = str(payload.get("type") or "falta")
     days = max(int(payload.get("days") or 1), 1)
     end_date, hour_impact = movement_period_values(
@@ -718,6 +750,14 @@ def create_movement(
         parse_date(payload.get("end_date")) if payload.get("end_date") else None,
         payload.get("hour_impact") or employment.daily_hours or 0,
     )
+    if employment.termination_date and (end_date or start_date) > employment.termination_date:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "A movimentação ultrapassa o fim deste vínculo. "
+                "Divida o lançamento entre os períodos de vínculo."
+            ),
+        )
     movement = Movement(
         company_id=company_id,
         competency=str(payload.get("competency") or start_date.strftime("%Y-%m")),
@@ -765,6 +805,10 @@ def update_movement(
     movement.competency = str(payload.get("competency") or movement.competency)
     movement.type = str(payload.get("type") or movement.type)
     movement.start_date = parse_date(payload.get("start_date"), movement.start_date)
+    movement.employment = employment_for_movement_date(
+        db, movement.employment, movement.start_date, movement.company_id
+    )
+    movement.employee_id = movement.employment.id
     movement.days = max(int(payload.get("days") or movement.days), 1)
     movement.end_date, movement.hour_impact = movement_period_values(
         movement.type,
@@ -774,6 +818,18 @@ def update_movement(
         parse_date(payload.get("end_date")) if payload.get("end_date") else None,
         payload.get("hour_impact") or movement.hour_impact,
     )
+    if (
+        movement.employment.termination_date
+        and (movement.end_date or movement.start_date)
+        > movement.employment.termination_date
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "A movimentação ultrapassa o fim deste vínculo. "
+                "Divida o lançamento entre os períodos de vínculo."
+            ),
+        )
     movement.observation = str(payload.get("observation") or movement.observation)
     movement.status = str(payload.get("status") or movement.status)
     db.add(
@@ -1535,7 +1591,7 @@ def save_launch_draft(
     valid_mei_ids = valid_mei_contract_ids(db, company_id, batch.competency)
     eligible_ids = {
         item.id for item in employments
-        if launch_eligible(item, batch.kind, valid_mei_ids)
+        if launch_eligible(item, batch.kind, valid_mei_ids, batch.competency)
     }
     incoming: dict[int, tuple[Decimal, str]] = {}
     for raw in payload.get("items") or []:
@@ -1574,7 +1630,7 @@ def confirm_launch(
         item for item in batch.items
         if item.amount > 0 and item.employment_id in employments
         and launch_eligible(
-            employments[item.employment_id], batch.kind, valid_mei_ids
+            employments[item.employment_id], batch.kind, valid_mei_ids, batch.competency
         )
     ]
     if not valid_items:
@@ -1687,6 +1743,7 @@ def delete_launch_draft(
 def payroll(
     db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1
 ) -> list[dict[str, Any]]:
+    _, _, period_start, period_end = parse_competency(competency)
     company = ensure_company(db, company_id) if company_id != 0 else None
     rates = (
         ensure_settings(db, company).payroll_rates if company else DEFAULT_PAYROLL_RATES
@@ -1699,12 +1756,14 @@ def payroll(
             joinedload(Employment.result_center),
             joinedload(Employment.employment_type),
         )
-        .where(Employment.status != EmploymentStatus.INACTIVE)
         .order_by(Employment.employee_id)
     )
     if company_id != 0:
         employment_query = employment_query.where(Employment.company_id == company_id)
-    employments = list(db.scalars(employment_query))
+    employments = [
+        item for item in db.scalars(employment_query)
+        if employment_active_in_period(item, period_start, period_end)
+    ]
     distributions = list(
         db.scalars(
             select(BenefitDistribution).where(
@@ -1747,6 +1806,8 @@ def payroll(
                 benefit_totals[employment.id],
                 employment_rates,
                 overrides.get(employment.id),
+                period_start,
+                period_end,
             )
         )
     return rows
@@ -2634,12 +2695,20 @@ def payroll_row(
     benefits: dict[str, Decimal],
     rates: dict[str, Any],
     override: dict[str, Any] | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
 ) -> dict[str, Any]:
     values = override or {}
+    allocation_factor = Decimal("1")
+    if period_start and period_end:
+        active_start = max(period_start, employment.admission_date)
+        active_end = min(period_end, employment.termination_date or period_end)
+        active_days = max((active_end - active_start).days + 1, 0)
+        allocation_factor = Decimal(active_days) / Decimal((period_end - period_start).days + 1)
     salary = money(
         values.get(
             "salary",
-            employment.salary_base
+            employment.salary_base * allocation_factor
             if employment.employment_type.name.upper() == "CLT"
             else 0,
         )
@@ -2653,8 +2722,8 @@ def payroll_row(
             else 0,
         )
     )
-    cost_aid = money(values.get("cost_aid", employment.cost_aid))
-    gratification = money(values.get("gratification", employment.gratification))
+    cost_aid = money(values.get("cost_aid", employment.cost_aid * allocation_factor))
+    gratification = money(values.get("gratification", employment.gratification * allocation_factor))
     transport = money(values.get("transport", benefits.get("VT", Decimal("0.00"))))
     meal = money(values.get("meal", benefits.get("AL", Decimal("0.00"))))
     basic_basket = money(values.get("basic_basket", benefits.get("CB", Decimal("0.00"))))
@@ -2705,7 +2774,11 @@ def payroll_row(
     total_cost = money(subtotal + charges + provisions + benefit_total)
     return {
         "employee_id": employment.id,
+        "person_id": employment.employee_id,
         "employee_name": employment.employee.full_name,
+        "period_start": max(period_start, employment.admission_date).isoformat() if period_start else employment.admission_date.isoformat(),
+        "period_end": min(period_end, employment.termination_date or period_end).isoformat() if period_end else (employment.termination_date.isoformat() if employment.termination_date else None),
+        "allocation_factor": as_float(allocation_factor),
         "result_center": result_center_to_dict(employment),
         "employment_type": employment_type_to_dict(employment),
         "salary": as_float(salary),

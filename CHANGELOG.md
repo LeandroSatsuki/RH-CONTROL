@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.0.11 - 2026-09-15
+
+### Histórico de vínculos do colaborador
+
+- mantém uma única pessoa por CPF/CNPJ, com vínculos profissionais sequenciais;
+- adiciona a ação de alteração de vínculo/modalidade sem sobrescrever o histórico anterior;
+- encerra o vínculo anterior no dia precedente e cria o novo vínculo na data efetiva;
+- permite recontratação a partir de um cadastro inativo;
+- apresenta o histórico completo de vínculos na ficha do colaborador;
+- impede alteração direta de modalidade que apagaria o histórico.
+
+### Movimentações, folha e indicadores
+
+- associa movimentações ao vínculo vigente na data informada, inclusive em competências com transição de Freelancer para CLT;
+- impede movimentações que atravessem dois vínculos e orienta a divisão dos períodos;
+- calcula salário, gratificação e ajuda de custo proporcionalmente aos dias de cada vínculo;
+- exibe os períodos separados no Custo/Folha, contando a pessoa apenas uma vez no resumo;
+- mantém o custo dos dois períodos e evita admissões ou desligamentos artificiais no Dashboard;
+- considera o vínculo MEI válido no período para lançamentos quando houver contrato assinado e vigente.
+
+### Compatibilidade e segurança
+
+- preserva movimentações, contratos, auditoria e demais históricos ligados ao vínculo original;
+- bloqueia transições em competências fechadas;
+- utiliza a estrutura existente da base, sem migration destrutiva ou exclusão de dados.
+
 ## 1.0.10 - 2026-08-27
 
 ### Importação assistida de colaboradores

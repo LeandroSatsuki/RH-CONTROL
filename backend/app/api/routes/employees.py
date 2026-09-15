@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
@@ -12,12 +12,14 @@ from app.models.benefit import BenefitDistribution
 from app.models.company import Company
 from app.models.employment import Employee, Employment, SalaryHistory
 from app.models.employment_type import EmploymentType
+from app.models.enums import EmploymentStatus
 from app.models.mei_contract import MeiContract
 from app.models.movement import Movement
 from app.models.payroll_override import PayrollOverride
 from app.models.launch import LaunchItem
+from app.models.monthly_closing import MonthlyClosing
 from app.models.result_center import ResultCenter
-from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmploymentRead, SalaryHistoryCreate
+from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmploymentRead, EmploymentTransitionCreate, SalaryHistoryCreate
 
 router = APIRouter()
 
@@ -60,12 +62,167 @@ def next_employee_code(
 
 @router.get("", response_model=list[EmploymentRead])
 def list_employees(
-    db: DbSession, _: CurrentUser, company_id: int = 1
+    db: DbSession,
+    _: CurrentUser,
+    company_id: int = 1,
+    reference_date: date | None = None,
 ) -> list[Employment]:
     query = employment_query()
     if company_id != 0:
         query = query.where(Employment.company_id == company_id)
-    return list(db.scalars(query))
+    if reference_date:
+        query = query.where(
+            Employment.admission_date <= reference_date,
+            (Employment.termination_date.is_(None))
+            | (Employment.termination_date >= reference_date),
+        )
+    employments = list(db.scalars(query))
+    latest_by_person: dict[int, Employment] = {}
+    for item in employments:
+        current = latest_by_person.get(item.employee_id)
+        if current is None or (item.admission_date, item.id) > (current.admission_date, current.id):
+            latest_by_person[item.employee_id] = item
+    return sorted(latest_by_person.values(), key=lambda item: item.employee.full_name)
+
+
+@router.get("/{employment_id}/history", response_model=list[EmploymentRead])
+def employment_history(
+    employment_id: int, db: DbSession, _: CurrentUser, company_id: int = 1
+) -> list[Employment]:
+    source = db.scalar(employment_query().where(Employment.id == employment_id))
+    if not source or (company_id != 0 and source.company_id != company_id):
+        raise HTTPException(status_code=404, detail="Vínculo não encontrado")
+    return list(
+        db.scalars(
+            employment_query()
+            .where(Employment.employee_id == source.employee_id)
+            .order_by(Employment.admission_date.desc(), Employment.id.desc())
+        )
+    )
+
+
+@router.post("/{employment_id}/transition", response_model=EmploymentRead, status_code=201)
+def transition_employment(
+    employment_id: int,
+    payload: EmploymentTransitionCreate,
+    db: DbSession,
+    user: AdminUser,
+    company_id: int = 1,
+) -> Employment:
+    source = db.scalar(employment_query().where(Employment.id == employment_id))
+    if not source or (company_id != 0 and source.company_id != company_id):
+        raise HTTPException(status_code=404, detail="Vínculo não encontrado")
+    latest = db.scalar(
+        select(Employment)
+        .where(Employment.employee_id == source.employee_id)
+        .order_by(Employment.admission_date.desc(), Employment.id.desc())
+        .limit(1)
+    )
+    if not latest or latest.id != source.id:
+        raise HTTPException(status_code=409, detail="A transição só pode ser feita a partir do vínculo mais recente.")
+    if payload.effective_date <= source.admission_date:
+        raise HTTPException(status_code=422, detail="A nova vigência deve começar depois do início do vínculo atual.")
+    competency = payload.effective_date.strftime("%Y-%m")
+    closed = db.scalar(
+        select(MonthlyClosing.id).where(
+            MonthlyClosing.company_id == source.company_id,
+            MonthlyClosing.competency == competency,
+            MonthlyClosing.status == "CLOSED",
+        )
+    )
+    if closed:
+        raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês antes de alterar o vínculo.")
+    employment_type = db.get(EmploymentType, payload.employment_type_id)
+    result_center = db.get(ResultCenter, payload.result_center_id)
+    if not employment_type or employment_type.company_id != source.company_id:
+        raise HTTPException(status_code=409, detail="Modalidade não pertence à empresa selecionada")
+    if not result_center or result_center.company_id != source.company_id:
+        raise HTTPException(status_code=409, detail="Centro de Resultado não pertence à empresa selecionada")
+    if employment_type.id == source.employment_type_id and source.status != EmploymentStatus.INACTIVE:
+        raise HTTPException(status_code=409, detail="Selecione uma modalidade diferente da atual.")
+
+    previous_type = source.employment_type.name
+    if source.termination_date is None or source.termination_date >= payload.effective_date:
+        source.termination_date = payload.effective_date - timedelta(days=1)
+    source.status = EmploymentStatus.INACTIVE
+    new_employment = Employment(
+        company_id=source.company_id,
+        employee=source.employee,
+        employee_code=next_employee_code(
+            db,
+            company_id=source.company_id,
+            center_code=result_center.code,
+            exclude_id=0,
+        ),
+        employment_type=employment_type,
+        result_center=result_center,
+        job_title=payload.job_title.strip().upper(),
+        department=source.department,
+        admission_date=payload.effective_date,
+        termination_date=None,
+        status=EmploymentStatus.ACTIVE,
+        daily_hours=payload.daily_hours,
+        salary_base=payload.salary_base,
+        gratification=payload.gratification,
+        cost_aid=payload.cost_aid,
+        notes=payload.notes.strip().upper(),
+        email=source.email,
+        phone=source.phone,
+        supervisor_name=payload.supervisor_name.strip().upper(),
+        cep=source.cep,
+        street=source.street,
+        address_number=source.address_number,
+        address_complement=source.address_complement,
+        neighborhood=source.neighborhood,
+        city=source.city,
+        state=source.state,
+        bank_code=source.bank_code,
+        bank_name=source.bank_name,
+        bank_agency=source.bank_agency,
+        bank_account=source.bank_account,
+        bank_account_digit=source.bank_account_digit,
+        pix_key_type=source.pix_key_type,
+        pix_key=source.pix_key,
+        benefits=payload.benefits,
+    )
+    new_employment.salary_history.append(
+        SalaryHistory(
+            effective_date=payload.effective_date,
+            amount=payload.salary_base,
+            family_allowance=0,
+            reason=f"Início do vínculo {employment_type.name}",
+        )
+    )
+    db.add(new_employment)
+    db.flush()
+    db.add(
+        Movement(
+            company_id=source.company_id,
+            competency=competency,
+            employee_id=new_employment.id,
+            type="alteração de vínculo",
+            start_date=payload.effective_date,
+            end_date=None,
+            days=0,
+            hour_impact=0,
+            observation=f"TRANSIÇÃO DE {previous_type} PARA {employment_type.name} | VÍNCULO ANTERIOR ENCERRADO EM {source.termination_date.isoformat()}",
+            status="Aplicada",
+        )
+    )
+    db.add(
+        AuditEntry(
+            company_id=source.company_id,
+            module="Colaboradores",
+            action="Alteração de vínculo",
+            employee_name=source.employee.full_name,
+            result_center={"code": result_center.code, "name": result_center.name, "color": result_center.color},
+            performed_by=user.full_name,
+            performed_role=user.role.value,
+            details=f"{previous_type} até {source.termination_date.isoformat()} → {employment_type.name} desde {payload.effective_date.isoformat()} | {new_employment.employee_code}",
+        )
+    )
+    db.commit()
+    return db.scalar(employment_query().where(Employment.id == new_employment.id))
 
 
 @router.post("", response_model=EmploymentRead, status_code=201)
@@ -82,7 +239,7 @@ def create_employee(
     if duplicate:
         raise HTTPException(
             status_code=409,
-            detail=f"CPF/CNPJ já cadastrado para {duplicate.full_name}. Reative ou transfira o cadastro existente.",
+            detail=f"CPF/CNPJ já cadastrado para {duplicate.full_name}. Abra a ficha existente e use Alterar vínculo/modalidade.",
         )
     employment_type = db.get(EmploymentType, payload.employment_type_id)
     if not employment_type:
@@ -153,6 +310,12 @@ def update_employee(
         employment_type = db.get(EmploymentType, employment_type_id)
         if not employment_type or employment_type.company_id != target_company_id:
             raise HTTPException(status_code=409, detail="Modalidade não pertence à empresa de destino")
+        if (
+            employment_type.id != employment.employment_type_id
+            and employment_type.name.strip().upper()
+            != employment.employment_type.name.strip().upper()
+        ):
+            raise HTTPException(status_code=409, detail="Use Alterar vínculo/modalidade para preservar o histórico da pessoa.")
         employment.employment_type = employment_type
     if result_center_id is not None:
         result_center = db.get(ResultCenter, result_center_id)
