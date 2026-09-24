@@ -1,4 +1,5 @@
 import { EmploymentType, ResultCenter, User } from "./types";
+import { activeDuring, businessDates, effectiveEmployees, monthDates, monthlyOperational, movementInMonth, shiftDay } from "./competencyCalculations";
 import { consolidatedIndicators, dashboardCards, payrollRows, recalculatePayrollRow } from "./mocks/demoCalculations";
 import { createDemoBenefitDistributions, createDemoCostAllocations, createDemoEmployees, createDemoMeiContracts, createDemoMovements, demoBenefitDefinitions, demoCompanies, demoCompetencies, demoEmploymentTypes, demoResultCenters } from "./mocks/demoData";
 import { DemoAlert, DemoAppUser, DemoAuditEntry, DemoBackup, DemoBenefitDefinition, DemoBenefitDistribution, DemoClosing, DemoCompany, DemoCostAllocation, DemoEmployee, DemoMeiContract, DemoMovement, DemoSettings } from "./mocks/demoTypes";
@@ -11,7 +12,7 @@ const ALL_COMPANIES_ID = 0;
 
 interface DemoLaunchItem { employment_id: number; amount: number; note: string }
 interface DemoLaunchBatch {
-  id: number; company_id: number; competency: string; kind: "MEI" | "BASIC_BASKET" | "BONUS";
+  id: number; company_id: number; competency: string; kind: "MEI" | "FREELANCER" | "BASIC_BASKET" | "BONUS" | "COST_AID" | "LODGING";
   status: "PENDING" | "CONFIRMED"; filters: Record<string, string>; items: DemoLaunchItem[];
   created_by: string; updated_by: string; created_at: string; updated_at: string; confirmed_at: string | null;
 }
@@ -226,6 +227,7 @@ function loadState(): DemoState {
       applies_to: item.applies_to ?? ["ADM", "IND", "COM", "DIR"],
       notes: item.notes ?? ""
     }));
+    if (!parsed.benefitDefinitions.some(item => item.code === "PO")) parsed.benefitDefinitions.push({ ...demoBenefitDefinitions.find(item => item.code === "PO")!, id: nextId(parsed.benefitDefinitions) });
     parsed.benefitDistributions = (parsed.benefitDistributions ?? createDemoBenefitDistributions(parsed.employees as DemoEmployee[])).map(item => ({
       ...item,
       source: item.source ?? "Lote",
@@ -403,13 +405,29 @@ function previousCalendarDate(value: string) {
   return result.toISOString().slice(0, 10);
 }
 
+function localPayrollRows(state: DemoState, employees: DemoEmployee[], competency: string, benefits: DemoBenefitDistribution[]) {
+  const settings = settingsByCompany(state);
+  return payrollRows(effectiveEmployees(employees, state.movements), competency, benefits, settings).map(row => {
+    const employee = employees.find(item => item.id === row.employee_id)!;
+    const override = state.payrollOverrides[`${employee.company_id}:${competency}:${employee.id}`];
+    return override ? recalculatePayrollRow({ ...row, ...override }, settings[employee.company_id].payroll_rates) : row;
+  });
+}
+
+function localDashboardCards(state: DemoState, ...args: Parameters<typeof dashboardCards>) {
+  const rows = localPayrollRows(state, args[0], args[2] ?? "2026-06", args[3] ?? []);
+  return dashboardCards(...args).map(card => {
+    const scoped = rows.filter(row => row.result_center.code === card.code);
+    return { ...card, gross_payroll: sumRows(scoped, "gross_payroll"), net_payroll: sumRows(scoped, "net_payroll"), total_cost: sumRows(scoped, "total_cost") };
+  });
+}
+
 function localLaunchEligible(
   state: DemoState,
   employee: DemoEmployee,
   kind: DemoLaunchBatch["kind"],
   competency: string
 ) {
-  if (employee.status === "INACTIVE") return false;
   if (kind === "MEI") {
     const [year, month] = competency.split("-").map(Number);
     const periodStart = `${competency}-01`;
@@ -417,20 +435,24 @@ function localLaunchEligible(
     const hasSignedCurrentContract = state.meiContracts.some(contract =>
       contract.company_id === employee.company_id
       && contract.employee_id === employee.id
-      && contract.status === "Ativo"
+      && ["Ativo", "Renovado", "Distratado"].includes(contract.status)
       && Boolean(contract.signed_at)
       && contract.start_date <= periodEnd
       && contract.end_date >= periodStart
+      && (!contract.terminated_on || contract.terminated_on >= periodStart)
     );
-    return normalizeText(employee.employment_type.name) === "mei" && hasSignedCurrentContract;
+    return normalizeText(employee.employment_type.name) === "mei" && hasSignedCurrentContract && activeDuring(employee, periodStart, periodEnd);
   }
+  const period = monthDates(competency);
+  if (!activeDuring(employee, period.start, period.end)) return false;
+  if (kind === "FREELANCER") return normalizeText(employee.employment_type.name) === "freelancer";
   if (kind === "BASIC_BASKET") return employee.benefits.some(value => normalizeText(value) === "cesta basica");
   return true;
 }
 
 function localLaunchResponse(state: DemoState, batch: DemoLaunchBatch) {
   const stored = new Map(batch.items.map(item => [item.employment_id, item]));
-  const eligible = state.employees.filter(item => item.company_id === batch.company_id && localLaunchEligible(state, item, batch.kind, batch.competency));
+  const eligible = state.employees.filter(item => item.company_id === batch.company_id && (batch.status === "CONFIRMED" ? stored.has(item.id) : localLaunchEligible(state, item, batch.kind, batch.competency)));
   return {
     ...batch,
     total: roundMoney(batch.items.reduce((sum, item) => sum + item.amount, 0)),
@@ -483,6 +505,7 @@ function benefitLabelFor(code: string) {
     AL: "Alimentação",
     CB: "Cesta básica",
     PS: "Plano de saúde",
+    PO: "Plano odontológico",
     SV: "Seguro de vida"
   }[normalizeBenefitCode(code)] ?? code;
 }
@@ -614,7 +637,7 @@ function missingBenefitDistributions(state: DemoState, companyId: number, compet
   return activeEmployees.flatMap(employee => {
     return (employee.benefits ?? []).flatMap(rawBenefit => {
       const label = normalizeText(String(rawBenefit));
-      const requiredCodes = label === "vale transporte" || label === "transporte" ? ["VT"] : label === "alimentação" ? ["AL"] : label === "cesta básica" || label === "cesta basica" ? ["CB"] : label === "plano de saúde" || label === "plano de saude" ? ["PS"] : label === "seguro de vida" || label === "seguro" ? ["SV"] : [];
+      const requiredCodes = label === "vale transporte" || label === "transporte" ? ["VT"] : label === "alimentação" ? ["AL"] : label === "cesta básica" || label === "cesta basica" ? ["CB"] : label === "plano de saúde" || label === "plano de saude" ? ["PS"] : normalizeText(label) === "plano odontologico" ? ["PO"] : label === "seguro de vida" || label === "seguro" ? ["SV"] : [];
       return requiredCodes.flatMap(code => {
         if (monthlyDistributions.some(item => item.employee_id === employee.id && normalizeBenefitCode(item.benefit_code) === code)) return [];
         return [{ employee_name: employee.employee.full_name, benefit: benefitLabelFor(code) }];
@@ -840,7 +863,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
   const centers = scopeResultCenters(state, companyId)
     .filter(center => center.active !== false)
     .filter((center, index, items) => items.findIndex(candidate => candidate.code === center.code) === index);
-  const scopedEmployees = scopeEmployees(state, companyId);
+  const scopedEmployees = effectiveEmployees(scopeEmployees(state, companyId), scopeMovements(state, companyId));
   const scopedMovements = scopeMovements(state, companyId);
 
   const sheets = centers.reduce<Record<string, any>>((acc, center) => {
@@ -869,18 +892,20 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
       const employees = scopedEmployees.filter(employee => closedIds.includes(employee.company_id) && employee.result_center.code === center.code);
       const monthMovements = scopedMovements.filter(item => closedIds.includes(item.company_id));
       const benefitDistributions = companyBenefitDistributionsFor(state, companyId, monthCompetence).filter(item => closedIds.includes(item.company_id) && item.result_center.code === center.code);
-      const rows = payrollRows(employees, monthCompetence, benefitDistributions, settingsByCompany(state));
-      const cards = dashboardCards(employees, monthMovements, monthCompetence, benefitDistributions, settingsByCompany(state), centers);
+      const rows = localPayrollRows(state, employees, monthCompetence, benefitDistributions);
+      const cards = localDashboardCards(state, employees, monthMovements, monthCompetence, benefitDistributions, settingsByCompany(state), centers);
       const card = cards.find(item => item.code === center.code) ?? null;
-      const plannedHours = Math.max(card?.active_employees ?? 0, 0) * 22 * 8;
-      const nonProductiveHours = plannedHours * (card?.absenteeism ?? 0);
-      const benefit = sumRows(rows, "transport") + sumRows(rows, "meal") + sumRows(rows, "basic_basket") + sumRows(rows, "lodging") + sumRows(rows, "insurance") + sumRows(rows, "health_plan");
+      const metrics = monthlyOperational(employees, monthMovements, monthCompetence, settingsByCompany(state));
+      const plannedHours = metrics.scheduled;
+      const nonProductiveHours = metrics.unproductive;
+      const benefit = sumRows(rows, "transport") + sumRows(rows, "meal") + sumRows(rows, "basic_basket") + sumRows(rows, "lodging") + sumRows(rows, "insurance") + sumRows(rows, "health_plan") + sumRows(rows, "dental_plan");
 
       return {
         monthLabel,
         rows,
         card,
         closed: true,
+        metrics,
         salary: sumRows(rows, "salary"),
         gratification: sumRows(rows, "gratification"),
         proLabore: sumRows(rows, "pro_labore"),
@@ -912,8 +937,8 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
 
     const admissions = monthly.map(item => item.card?.admissions ?? 0);
     const terminations = monthly.map(item => item.card?.terminations ?? 0);
-    const finalHeadcount = monthly.map(item => item.card?.active_employees ?? 0);
-    const initialHeadcount = monthly.map(item => Math.max((item.card?.previous_active_employees ?? item.card?.active_employees ?? 0), 0));
+    const finalHeadcount = monthly.map(item => item.metrics?.final ?? 0);
+    const initialHeadcount = monthly.map(item => item.metrics?.initial ?? 0);
     const averageHeadcount = monthly.map((item, index) => (initialHeadcount[index] + finalHeadcount[index]) / 2);
     const plannedHours = monthly.map(item => item.plannedHours);
     const nonProductiveHours = monthly.map(item => item.nonProductiveHours);
@@ -926,7 +951,7 @@ function buildIndicatorSheets(state: DemoState, companyId: number, competency: s
       costRows,
       operationalRows: [
         { label: "Efetivo Inicial (Un)", values: initialHeadcount, total: initialHeadcount.at(-1) ?? 0 },
-        { label: "Afastamentos", values: nonProductiveHours.map(value => value > 0 ? 1 : 0), total: nonProductiveHours.filter(value => value > 0).length },
+        { label: "Afastamentos", values: monthly.map(item => item.metrics?.absenceDays ?? 0), total: monthly.reduce((sum, item) => sum + (item.metrics?.absenceDays ?? 0), 0) },
         { label: "Novas Contratações (Un)", values: admissions, total: admissions.reduce((a, b) => a + b, 0) },
         { label: "Desligamentos (Un)", values: terminations, total: terminations.reduce((a, b) => a + b, 0) },
         { label: "Horas Programadas", values: plannedHours, total: plannedHours.reduce((a, b) => a + b, 0) },
@@ -1010,7 +1035,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const scopedEmployees = scopeEmployees(state, companyId);
     const scopedMovements = scopeMovements(state, companyId);
     const benefitDistributions = companyBenefitDistributionsFor(state, companyId, competency);
-    const cards = dashboardCards(scopedEmployees, scopedMovements, competency, benefitDistributions, settingsByCompany(state), scopeResultCenters(state, companyId).filter(item => item.active));
+    const cards = localDashboardCards(state, scopedEmployees, scopedMovements, competency, benefitDistributions, settingsByCompany(state), scopeResultCenters(state, companyId).filter(item => item.active));
     return {
       company: { id: company.id, code: company.code, name: company.name, kind: company.kind, group: company.group, group_name: company.group },
       month: Number(competency.slice(5, 7)),
@@ -1189,7 +1214,9 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
   if (route === "/employees" && method === "GET") {
     const latest = new Map<number, DemoEmployee>();
     const referenceDate = params.get("reference_date");
-    scopeEmployees(state, companyId)
+    const directory = effectiveEmployees(scopeEmployees(state, companyId), scopeMovements(state, companyId));
+    if (params.get("include_history") === "true") return directory as T;
+    directory
       .filter(item => !referenceDate || (item.admission_date <= referenceDate && (!item.termination_date || item.termination_date >= referenceDate)))
       .forEach(item => {
       const current = latest.get(item.employee.id);
@@ -1265,6 +1292,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       : state.meiContracts.findIndex(item => item.id === contractId && item.company_id === companyId);
     if (index < 0) throw new Error("Contrato MEI não encontrado");
     const current = state.meiContracts[index];
+    if (current.status !== "Pendente de assinatura") throw new Error("Somente contratos pendentes podem ser assinados.");
     if (!payload.attachment_name) throw new Error("Anexe o contrato para concluir a assinatura.");
     const updated: DemoMeiContract = {
       ...current,
@@ -1275,6 +1303,8 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       signed_by: currentUser.full_name
     };
     state.meiContracts[index] = updated;
+    const parent = state.meiContracts.find(item => item.id === current.renewed_from_id);
+    if (parent?.status === "Ativo") parent.status = "Renovado";
     state.movements.filter(item => item.observation.includes(`MEI#${contractId} - contrato pendente`)).forEach(item => { item.status = "Aplicada"; });
     syncMeiContracts(state);
     appendAudit(state, {
@@ -1301,13 +1331,31 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const payload = body<{ start_date?: string; end_date?: string }>(options);
     const startDate = String(payload.start_date ?? "");
     const endDate = String(payload.end_date ?? "");
-    if (!startDate || !endDate || endDate < startDate) throw new Error("Informe uma vigência válida.");
+    if (!startDate || !endDate || endDate < startDate || startDate <= source.end_date) throw new Error("A renovação deve começar após a vigência anterior.");
     const renewed: DemoMeiContract = { ...source, id: nextId(state.meiContracts), status: "Pendente de assinatura", start_date: startDate, end_date: endDate, attachment_name: null, attachment_data_url: null, created_at: new Date().toLocaleString("pt-BR"), signed_at: null, signed_by: null, notified_not_signed: false, notified_15: false, notified_10: false, notified_5: false, movement_created_5: false };
+    renewed.renewed_from_id = source.id;
     state.meiContracts = [renewed, ...state.meiContracts];
     syncMeiContracts(state);
     appendAudit(state, { company_id: source.company_id, module: "Contratos MEI", action: "Renovação de contrato criada", employee_name: source.employee_name, result_center: source.result_center, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Contrato anterior #${source.id} | nova vigência ${startDate} a ${endDate}` });
     saveState(state);
     return renewed as T;
+  }
+
+  if (route.startsWith("/demo/mei-contracts/") && route.endsWith("/terminate") && method === "POST") {
+    assertAdmin(token);
+    const current = state.meiContracts.find(item => item.id === Number(route.split("/")[3]) && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
+    if (!current) throw new Error("Contrato MEI não encontrado");
+    if (current.status !== "Ativo" || !current.signed_at) throw new Error("Somente contratos assinados ativos podem ser distratados.");
+    const payload = body<{ terminated_on: string; attachment_name: string; attachment_data_url: string }>(options);
+    if (!payload.terminated_on || payload.terminated_on < current.start_date || payload.terminated_on > current.end_date) throw new Error("Data do distrato fora da vigência.");
+    if (!payload.attachment_name || !/^data:(application\/pdf|image\/png|image\/jpeg);base64,/.test(payload.attachment_data_url ?? "") || payload.attachment_data_url.length > 14_000_000) throw new Error("Anexe um documento PDF, PNG ou JPEG de até 10 MB.");
+    current.status = "Distratado";
+    current.terminated_on = payload.terminated_on;
+    current.termination_attachment_name = payload.attachment_name;
+    current.termination_attachment_data_url = payload.attachment_data_url;
+    appendAudit(state, { company_id: current.company_id, module: "Contratos MEI", action: "Distrato registrado", employee_name: current.employee_name, result_center: current.result_center, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Contrato #${current.id} | ${payload.terminated_on}` });
+    saveState(state);
+    return current as T;
   }
 
   if (route.startsWith("/demo/mei-contracts/") && method === "PATCH") {
@@ -1336,12 +1384,13 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const index = state.meiContracts.findIndex(item => item.id === contractId && (companyId === ALL_COMPANIES_ID || item.company_id === companyId));
     if (index < 0) throw new Error("Contrato MEI não encontrado");
     const current = state.meiContracts[index];
-    if (current.status !== "Pendente de assinatura") throw new Error("Contrato assinado não pode ser excluído; ele deve permanecer no histórico.");
     const payload = body<{ password?: string }>(options);
     const currentPassword = state.users.find(item => item.username === currentUser.username)?.password;
     if (!payload.password || payload.password !== currentPassword) throw new Error("Senha de confirmação inválida.");
-    state.meiContracts.splice(index, 1);
-    state.movements = state.movements.filter(item => !item.observation.includes(`MEI#${contractId} - contrato pendente`));
+    current.status = "Cancelado";
+    const parent = state.meiContracts.find(item => item.id === current.renewed_from_id);
+    if (parent?.status === "Renovado" && !state.meiContracts.some(item => item.renewed_from_id === parent.id && item.status !== "Cancelado" && item.signed_at)) parent.status = "Ativo";
+    state.movements.filter(item => item.observation.includes(`MEI#${contractId} - contrato pendente`)).forEach(item => { item.status = "Aplicada"; });
     appendAudit(state, { company_id: current.company_id, module: "Contratos MEI", action: "Contrato pendente excluído", employee_name: current.employee_name, result_center: current.result_center, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Contrato #${current.id} | ${current.start_date} a ${current.end_date}` });
     saveState(state);
     return { deleted: true } as T;
@@ -1635,6 +1684,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       result_center: center,
       salary_base: salary,
       gratification: Number(payload.gratification || 0),
+      family_allowance_eligible: Boolean(payload.family_allowance_eligible),
       cost_aid: payload.benefits?.includes("Ajuda de custo") ? Number(payload.cost_aid || 0) : 0,
       email: String(payload.email ?? ""),
       phone: String(payload.phone ?? ""),
@@ -1708,6 +1758,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       daily_hours: String(payload.daily_hours ?? source.daily_hours),
       salary_base: Number(payload.salary_base ?? source.salary_base),
       gratification: Number(payload.gratification ?? 0),
+      family_allowance_eligible: source.family_allowance_eligible,
       cost_aid: Number(payload.cost_aid ?? 0),
       benefits: Array.isArray(payload.benefits) ? payload.benefits.map(String) : [],
       notes: String(payload.notes ?? "").trim().toUpperCase(),
@@ -1876,6 +1927,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     item.pix_key = String(payload.pix_key ?? item.pix_key);
     item.notes = String(payload.notes ?? item.notes).trim().toUpperCase();
     item.benefits = Array.isArray(payload.benefits) ? payload.benefits.map(String) : item.benefits;
+    if (typeof payload.family_allowance_eligible === "boolean") item.family_allowance_eligible = payload.family_allowance_eligible;
     state.meiContracts
       .filter(contract => contract.employee_id === item.id)
       .forEach(contract => {
@@ -1932,7 +1984,23 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     return { deleted: true } as T;
   }
 
-  if (route === "/demo/movements" && method === "GET") return scopeMovements(state, companyId).filter(item => !params.get("competency") || item.competency === params.get("competency")) as T;
+  if (route === "/demo/movements" && method === "GET") {
+    const competency = params.get("competency");
+    return scopeMovements(state, companyId).map(item => {
+      const value = competency ? movementInMonth(item, competency, getCompany(state, item.company_id).settings) : item;
+      return value ? { ...value, daily_hours: Number(state.employees.find(e => e.id === item.employee_id)?.daily_hours ?? 8.8) } : null;
+    }).filter(Boolean) as T;
+  }
+  if (route === "/demo/movement-preview" && method === "POST") {
+    const payload = body<{ employee_id: number; start_date: string; end_date?: string }>(options);
+    const selected = scopeEmployees(state, companyId).find(item => item.id === payload.employee_id);
+    if (!selected) throw new Error("Selecione um colaborador da empresa.");
+    const employee = employmentForDate(scopeEmployees(state, companyId), selected, payload.start_date);
+    const endDate = payload.end_date || monthDates(payload.start_date.slice(0, 7)).end;
+    if (endDate < payload.start_date) throw new Error("A data final deve ser igual ou posterior à data de saída.");
+    const days = businessDates(shiftDay(payload.start_date, 1), endDate, company.settings).length;
+    return { end_date: endDate, days, hour_impact: roundMoney(days * Number(employee.daily_hours)), daily_hours: Number(employee.daily_hours) } as T;
+  }
   if (route === "/demo/movements" && method === "POST") {
     assertAdmin(token);
     if (companyId === ALL_COMPANIES_ID) throw new Error("Selecione uma empresa específica para lançar movimentações.");
@@ -1942,8 +2010,8 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     if (!selectedEmployee) throw new Error("Colaborador não encontrado na empresa selecionada.");
     const startDate = payload.start_date ?? new Date().toISOString().slice(0, 10);
     const employee = employmentForDate(companyEmployees, selectedEmployee, startDate);
-    const movementEndDate = payload.end_date ?? null;
-    if (employee.termination_date && (movementEndDate || startDate) > employee.termination_date) {
+    const movementEndDate = payload.end_date ?? (payload.type === "desligamento" ? monthDates(startDate.slice(0, 7)).end : null);
+    if (payload.type !== "desligamento" && employee.termination_date && (movementEndDate || startDate) > employee.termination_date) {
       throw new Error("A movimentação ultrapassa o fim deste vínculo. Divida o lançamento entre os períodos de vínculo.");
     }
     const item: DemoMovement = {
@@ -1955,8 +2023,8 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       type: payload.type ?? "falta",
       start_date: startDate,
       end_date: movementEndDate,
-      days: payload.days ?? 1,
-      hour_impact: payload.hour_impact ?? 8.8,
+      days: payload.days ?? (payload.type === "desligamento" ? businessDates(shiftDay(startDate, 1), movementEndDate!, company.settings).length : 1),
+      hour_impact: payload.type === "desligamento" ? roundMoney(Number(payload.days ?? businessDates(shiftDay(startDate, 1), movementEndDate!, company.settings).length) * Number(employee.daily_hours)) : payload.hour_impact ?? 8.8,
       result_center: employee.result_center,
       observation: payload.observation ?? "Movimentação criada no sistema.",
       status: "Pendente"
@@ -1995,7 +2063,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const startDate = payload.start_date ?? currentMovement.start_date;
     const employee = employmentForDate(companyEmployees, selectedEmployee, startDate);
     const movementEndDate = payload.end_date ?? currentMovement.end_date;
-    if (employee.termination_date && (movementEndDate || startDate) > employee.termination_date) {
+    if ((payload.type ?? currentMovement.type) !== "desligamento" && employee.termination_date && (movementEndDate || startDate) > employee.termination_date) {
       throw new Error("A movimentação ultrapassa o fim deste vínculo. Divida o lançamento entre os períodos de vínculo.");
     }
     const updated: DemoMovement = {
@@ -2007,7 +2075,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
       start_date: startDate,
       end_date: movementEndDate,
       days: payload.days ?? currentMovement.days,
-      hour_impact: payload.hour_impact ?? currentMovement.hour_impact,
+      hour_impact: (payload.type ?? currentMovement.type) === "desligamento" ? roundMoney(Number(payload.days ?? currentMovement.days) * Number(employee.daily_hours)) : payload.hour_impact ?? currentMovement.hour_impact,
       result_center: employee.result_center,
       observation: payload.observation ?? currentMovement.observation,
       status: (payload.status as DemoMovement["status"]) ?? currentMovement.status
@@ -2141,6 +2209,8 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const batch = state.launchBatches.find(item => item.id === Number(confirmLaunchMatch[1]) && item.company_id === companyId);
     if (!batch) throw new Error("Lançamento não encontrado.");
     if (batch.status !== "PENDING") throw new Error("Este lançamento já foi confirmado.");
+    if (isCompetencyClosed(state, companyId, batch.competency)) throw new Error("Competência fechada. Reabra o mês para confirmar.");
+    if (batch.items.some(item => { const employee = state.employees.find(value => value.id === item.employment_id); return !employee || !localLaunchEligible(state, employee, batch.kind, batch.competency); })) throw new Error("A lista de elegíveis mudou. Salve o rascunho novamente.");
     if (!batch.items.length) throw new Error("Informe ao menos um valor antes de confirmar.");
     if (batch.kind === "BASIC_BASKET") {
       for (const item of batch.items) {
@@ -2156,7 +2226,11 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
         });
       }
     } else {
-      const field = batch.kind === "MEI" ? "pro_labore" : "bonus";
+      const field = ({ MEI: "salary", FREELANCER: "salary", BONUS: "bonus", COST_AID: "cost_aid", LODGING: "lodging" } as const)[batch.kind];
+      for (const item of batch.items) {
+        const values = state.payrollOverrides[`${companyId}:${batch.competency}:${item.employment_id}`] ?? {};
+        if (Number(values[field] ?? 0) !== 0 || (batch.kind === "MEI" && Number(values.pro_labore ?? 0) !== 0)) throw new Error("Já existe valor no Custo/Folha. Remova o ajuste anterior antes de confirmar.");
+      }
       for (const item of batch.items) {
         const key = `${companyId}:${batch.competency}:${item.employment_id}`;
         state.payrollOverrides[key] = { ...(state.payrollOverrides[key] ?? {}), [field]: item.amount };
@@ -2172,13 +2246,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
 
   if (route === "/demo/payroll" && method === "GET") {
     const competency = params.get("competency") ?? "2026-06";
-    const rows = payrollRows(scopeEmployees(state, companyId), competency, companyBenefitDistributionsFor(state, companyId, competency), settingsByCompany(state));
-    return rows.map(row => {
-      const override = state.payrollOverrides[`${row.result_center.company_id ?? companyId}:${competency}:${row.employee_id}`] ?? state.payrollOverrides[`${companyId}:${competency}:${row.employee_id}`];
-      const employee = state.employees.find(item => item.id === row.employee_id);
-      const rates = employee ? settingsByCompany(state)[employee.company_id]?.payroll_rates : undefined;
-      return override && rates ? recalculatePayrollRow({ ...row, ...override }, rates) : row;
-    }) as T;
+    return localPayrollRows(state, scopeEmployees(state, companyId), competency, companyBenefitDistributionsFor(state, companyId, competency)) as T;
   }
   if (route.startsWith("/demo/payroll/") && method === "PATCH") {
     assertAdmin(token);
@@ -2195,7 +2263,10 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const employees = scopeEmployees(state, companyId).filter(item => closedIds.includes(item.company_id));
     const movements = scopeMovements(state, companyId).filter(item => closedIds.includes(item.company_id));
     const benefits = companyBenefitDistributionsFor(state, companyId, competency).filter(item => closedIds.includes(item.company_id));
-    return consolidatedIndicators(employees, movements, competency, benefits, settingsByCompany(state)) as T;
+    const summary = consolidatedIndicators(employees, movements, competency, benefits, settingsByCompany(state));
+    const rows = localPayrollRows(state, employees, competency, benefits);
+    const gross = sumRows(rows, "gross_payroll");
+    return { ...summary, gross_payroll: gross, net_payroll: sumRows(rows, "net_payroll"), total_cost: sumRows(rows, "total_cost"), salary_per_capita: summary.final_headcount ? gross / summary.final_headcount : 0 } as T;
   }
   if (route === "/demo/indicators/sheets" && method === "GET") return buildIndicatorSheets(state, companyId, params.get("competency") ?? "2026-06") as T;
   if (route === "/demo/settings" && method === "GET") return company.settings as T;
@@ -2224,6 +2295,17 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     assertAdmin(token);
     const payload = body<Partial<DemoSettings>>(options);
     const normalizedPayload: Partial<DemoSettings> = { ...payload };
+    if (Array.isArray(payload.family_allowance_rates)) {
+      const primary = state.companies.find(item => item.is_primary) ?? state.companies[0];
+      const rates = new Map((primary.settings.family_allowance_rates ?? []).map(rate => [rate.effective_date, rate]));
+      for (const rate of payload.family_allowance_rates) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(rate.effective_date) || !Number.isFinite(rate.amount) || rate.amount < 0) throw new Error("Informe data inicial válida e valor não negativo.");
+        if (rates.has(rate.effective_date) && rates.get(rate.effective_date)!.amount !== rate.amount) throw new Error("Vigência já cadastrada. Cadastre uma nova data para preservar o histórico.");
+        rates.set(rate.effective_date, rate);
+      }
+      state.companies = state.companies.map(current => ({ ...current, settings: { ...current.settings, family_allowance_rates: [...rates.values()].sort((a, b) => a.effective_date.localeCompare(b.effective_date)) } }));
+      delete normalizedPayload.family_allowance_rates;
+    }
     if (Array.isArray(payload.job_titles)) {
       normalizedPayload.job_titles = [...new Set(payload.job_titles.map(item => String(item).trim().toUpperCase()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
     }
@@ -2362,10 +2444,19 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     return { ...getClosingFor(state, companyId, competency), warnings: missingBenefitDistributions(state, companyId, competency).map(item => `${item.employee_name} - ${item.benefit}`) } as T;
   }
   if (route === "/demo/report-preview" && method === "GET") {
-    const scopedEmployees = scopeEmployees(state, companyId);
+    const scopedEmployees = scopeEmployees(state, companyId).filter(item =>
+      (!params.get("supervisor") || item.supervisor_name === params.get("supervisor"))
+      && (!params.get("state") || item.state === params.get("state"))
+      && (!params.get("modality") || item.employment_type.name === params.get("modality"))
+      && (!params.get("center_code") || item.result_center.code === params.get("center_code"))
+      && (!params.get("query") || normalizeText([item.employee.full_name, item.employee.cpf, item.employee_code, item.job_title, item.department, item.notes, item.supervisor_name, item.state, item.result_center.code].join(" ")).includes(normalizeText(params.get("query")!))));
     const scopedMovements = scopeMovements(state, companyId);
     const competency = params.get("competency") ?? "2026-06";
-    return { company: company.settings.company_name, company_logo: company.settings.company_logo ?? "", competency, cards: dashboardCards(scopedEmployees, scopedMovements, competency, companyBenefitDistributionsFor(state, companyId, competency), settingsByCompany(state), scopeResultCenters(state, companyId).filter(item => item.active)) } as T;
+    const cards = localDashboardCards(state, scopedEmployees, scopedMovements, competency, companyBenefitDistributionsFor(state, companyId, competency), settingsByCompany(state), scopeResultCenters(state, companyId).filter(item => item.active && (!params.get("center_code") || item.code === params.get("center_code"))));
+    const metrics = monthlyOperational(scopedEmployees, scopedMovements, competency, settingsByCompany(state));
+    const summary = { active_employees: cards.reduce((sum, card) => sum + card.active_employees, 0), admissions: metrics.admissions, terminations: metrics.terminations,
+      absenteeism: metrics.scheduled ? metrics.unproductive / metrics.scheduled : 0, turnover: metrics.final ? (metrics.admissions + metrics.terminations) / 2 / metrics.final : 0 };
+    return { company: company.settings.company_name, company_logo: company.settings.company_logo ?? "", competency, cards, summary } as T;
   }
   if (route === "/demo/import-preview" && method === "POST") {
     assertAdmin(token);

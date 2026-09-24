@@ -25,6 +25,10 @@ from app.models.monthly_closing import MonthlyClosing
 from app.models.payroll_override import PayrollOverride
 from app.models.result_center import ResultCenter
 from app.models.system_setting import SystemSetting
+from app.services.competency import (
+    active_in_period as period_active, business_days, departure_map, effective_end,
+    movement_share, overlapping_movements, operational_metrics,
+)
 
 router = APIRouter()
 
@@ -67,10 +71,12 @@ DEFAULT_BENEFITS = [
         "Benefício mensal de cesta básica por colaborador.",
     ),
     ("PS", "Plano de saúde", "MONTHLY", "Valor mensal por titular e dependentes."),
+    ("PO", "Plano odontológico", "MONTHLY", "Valor mensal por titular e dependentes."),
     ("SV", "Seguro de vida", "MONTHLY", "Valor mensal recorrente por colaborador."),
 ]
 PERIOD_MOVEMENT_TYPES = {"atestado", "afastamento", "férias"}
-LAUNCH_KINDS = {"MEI", "BASIC_BASKET", "BONUS"}
+LAUNCH_FIELDS = {"MEI": "salary", "FREELANCER": "salary", "BONUS": "bonus", "COST_AID": "cost_aid", "LODGING": "lodging"}
+LAUNCH_KINDS = {*LAUNCH_FIELDS, "BASIC_BASKET"}
 
 
 def money(value: Decimal | float | int) -> Decimal:
@@ -101,11 +107,14 @@ def launch_eligible(
             and employment.id in (valid_mei_ids or set())
             and employment_active_in_period(employment, period_start, period_end)
         )
-    if employment.status == EmploymentStatus.INACTIVE:
+    _, _, period_start, period_end = parse_competency(competency)
+    if not employment_active_in_period(employment, period_start, period_end):
         return False
+    if kind == "FREELANCER":
+        return normalized(employment.employment_type.name) == "FREELANCER"
     if kind == "BASIC_BASKET":
         return any(normalized(value) == "CESTA BASICA" for value in (employment.benefits or []))
-    return kind == "BONUS"
+    return kind in {"BONUS", "COST_AID", "LODGING"}
 
 
 def launch_batch_to_dict(
@@ -114,7 +123,8 @@ def launch_batch_to_dict(
     stored = {item.employment_id: item for item in batch.items}
     eligible = [
         item for item in employments
-        if launch_eligible(item, batch.kind, valid_mei_ids, batch.competency)
+        if (batch.status == "CONFIRMED" and item.id in stored)
+        or (batch.status != "CONFIRMED" and launch_eligible(item, batch.kind, valid_mei_ids, batch.competency))
     ]
     return {
         "id": batch.id,
@@ -186,6 +196,27 @@ def employment_for_movement_date(
             detail="Não há vínculo vigente para este colaborador na data informada.",
         )
     return employment
+
+
+def dismissal_values(db, employment, start, end, override=None):
+    end = end or date(start.year, start.month, calendar.monthrange(start.year, start.month)[1])
+    if end < start:
+        raise HTTPException(status_code=422, detail="A data final deve ser igual ou posterior à data de saída.")
+    settings = ensure_settings(db, ensure_company(db, employment.company_id))
+    calculated = len(business_days(start + timedelta(days=1), end, settings))
+    days = max(int(override), 0) if override is not None else calculated
+    return end, days, money(Decimal(str(employment.daily_hours or 0)) * days)
+
+
+@router.post("/movement-preview")
+def preview_movement(payload: dict[str, Any], db: DbSession, _: CurrentUser, company_id: int = 1):
+    employment = db.get(Employment, int(payload.get("employee_id") or 0))
+    if not employment or employment.company_id != company_id:
+        raise HTTPException(status_code=422, detail="Selecione um colaborador da empresa.")
+    start = parse_date(payload.get("start_date"))
+    employment = employment_for_movement_date(db, employment, start, company_id)
+    end, days, hours = dismissal_values(db, employment, start, parse_date(payload["end_date"]) if payload.get("end_date") else None)
+    return {"end_date": end.isoformat(), "days": days, "hour_impact": as_float(hours), "daily_hours": as_float(employment.daily_hours)}
 
 
 def ensure_company(db: DbSession, company_id: int) -> Company:
@@ -364,6 +395,7 @@ def movement_to_dict(item: Movement) -> dict[str, Any]:
         "end_date": item.end_date.isoformat() if item.end_date else None,
         "days": item.days,
         "hour_impact": as_float(item.hour_impact),
+        "daily_hours": as_float(employment.daily_hours),
         "result_center": result_center_to_dict(employment),
         "observation": item.observation,
         "status": item.status,
@@ -381,6 +413,10 @@ def mei_contract_to_dict(item: MeiContract) -> dict[str, Any]:
         "result_center": result_center_to_dict(employment),
         "employment_type": employment.employment_type.name,
         "status": item.status,
+        "renewed_from_id": item.renewed_from_id,
+        "terminated_on": item.terminated_on.isoformat() if item.terminated_on else None,
+        "termination_attachment_name": item.termination_attachment_name,
+        "termination_attachment_data_url": item.termination_attachment_data_url,
         "start_date": item.start_date.isoformat(),
         "end_date": item.end_date.isoformat(),
         "attachment_name": item.attachment_name,
@@ -508,6 +544,7 @@ def benefit_matches(employment: Employment, benefit: BenefitDefinition) -> bool:
         "VT": "vale transporte",
         "AL": "alimentação",
         "PS": "plano de saúde",
+        "PO": "plano odontológico",
         "SV": "seguro de vida",
     }
     wanted = {
@@ -543,6 +580,7 @@ def get_settings(db: DbSession, _: CurrentUser, company_id: int = 1) -> dict[str
         "auto_backup_on_start": settings.auto_backup_on_start,
         "backup_retention": 90,
         "job_titles": global_job_titles(db),
+        "family_allowance_rates": list(settings_for_scope(db, 0).family_allowance_rates or []),
     }
 
 
@@ -557,6 +595,24 @@ def update_settings(
     )
     if not companies:
         raise HTTPException(status_code=404, detail="Empresa não encontrada")
+    if "family_allowance_rates" in payload:
+        incoming = payload["family_allowance_rates"]
+        if not isinstance(incoming, list):
+            raise HTTPException(status_code=422, detail="Informe uma lista de vigências.")
+        global_settings = settings_for_scope(db, 0)
+        rates = {item["effective_date"]: item for item in global_settings.family_allowance_rates or []}
+        try:
+            for item in incoming:
+                effective = date.fromisoformat(str(item["effective_date"])).isoformat()
+                amount = Decimal(str(item["amount"]))
+                if not amount.is_finite() or amount < 0 or amount > 1000000:
+                    raise ValueError("Valor inválido")
+                if effective in rates and money(rates[effective]["amount"]) != money(amount):
+                    raise HTTPException(status_code=409, detail="Vigência já cadastrada. Cadastre uma nova data para preservar o histórico.")
+                rates[effective] = {"effective_date": effective, "amount": as_float(amount)}
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            raise HTTPException(status_code=422, detail="Informe data inicial válida e valor não negativo.") from None
+        global_settings.family_allowance_rates = sorted(rates.values(), key=lambda item: item["effective_date"])
     for company in companies:
         settings = ensure_settings(db, company)
         if "company_name" in payload and company_id != 0:
@@ -709,9 +765,21 @@ def list_movements(
     )
     if company_id != 0:
         query = query.where(Movement.company_id == company_id)
-    if competency:
-        query = query.where(Movement.competency == competency)
-    return [movement_to_dict(item) for item in db.scalars(query)]
+    if not competency:
+        return [movement_to_dict(item) for item in db.scalars(query)]
+    _, _, start, end = parse_competency(competency)
+    from sqlalchemy import func
+    query = query.where(Movement.start_date <= end, func.coalesce(Movement.end_date, Movement.start_date) >= start)
+    settings_by_company = {item.company_id: item for item in db.scalars(select(SystemSetting))}
+    result = []
+    for item in db.scalars(query):
+        value = movement_to_dict(item)
+        days, hours = movement_share(item, start, end, settings_by_company.get(item.company_id))
+        value.update(source_competency=item.competency, competency=competency,
+                     total_days=item.days, total_hour_impact=as_float(item.hour_impact),
+                     days=days, hour_impact=as_float(hours))
+        result.append(value)
+    return result
 
 
 @router.post("/movements", status_code=201)
@@ -750,7 +818,9 @@ def create_movement(
         parse_date(payload.get("end_date")) if payload.get("end_date") else None,
         payload.get("hour_impact") or employment.daily_hours or 0,
     )
-    if employment.termination_date and (end_date or start_date) > employment.termination_date:
+    if normalized(movement_type) == "DESLIGAMENTO":
+        end_date, days, hour_impact = dismissal_values(db, employment, start_date, end_date, payload.get("days"))
+    if normalized(movement_type) != "DESLIGAMENTO" and employment.termination_date and (end_date or start_date) > employment.termination_date:
         raise HTTPException(
             status_code=422,
             detail=(
@@ -818,8 +888,12 @@ def update_movement(
         parse_date(payload.get("end_date")) if payload.get("end_date") else None,
         payload.get("hour_impact") or movement.hour_impact,
     )
+    if normalized(movement.type) == "DESLIGAMENTO":
+        movement.end_date, movement.days, movement.hour_impact = dismissal_values(
+            db, movement.employment, movement.start_date, movement.end_date, payload.get("days")
+        )
     if (
-        movement.employment.termination_date
+        normalized(movement.type) != "DESLIGAMENTO" and movement.employment.termination_date
         and (movement.end_date or movement.start_date)
         > movement.employment.termination_date
     ):
@@ -1001,11 +1075,19 @@ def sign_mei_contract(
     contract = db.scalar(query)
     if not contract:
         raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
+    if contract.status != "Pendente de assinatura":
+        raise HTTPException(status_code=409, detail="Somente contratos pendentes podem ser assinados.")
+    if not str(payload.get("attachment_data_url") or "").startswith(("data:application/pdf;base64,", "data:image/png;base64,", "data:image/jpeg;base64,")):
+        raise HTTPException(status_code=422, detail="Anexe um documento PDF, PNG ou JPEG válido.")
     contract.status = "Ativo"
     contract.attachment_name = attachment_name
     contract.attachment_data_url = str(payload.get("attachment_data_url") or "") or None
     contract.signed_at = datetime.now()
     contract.signed_by = user.full_name
+    if contract.renewed_from_id:
+        previous = db.get(MeiContract, contract.renewed_from_id)
+        if previous and previous.status == "Ativo":
+            previous.status = "Renovado"
     pending_movements = db.scalars(
         select(Movement).where(
             Movement.company_id == contract.company_id,
@@ -1126,6 +1208,8 @@ def renew_mei_contract(
         raise HTTPException(status_code=409, detail="Somente contratos ativos podem ser renovados.")
     start_date = parse_date(payload.get("start_date"))
     end_date = parse_date(payload.get("end_date"))
+    if start_date <= source.end_date:
+        raise HTTPException(status_code=422, detail="A renovação deve começar depois do fim do contrato anterior.")
     if end_date < start_date:
         raise HTTPException(
             status_code=422, detail="A vigência final não pode ser anterior à inicial."
@@ -1143,6 +1227,7 @@ def renew_mei_contract(
             detail="Já existe uma renovação pendente de assinatura para este MEI.",
         )
     renewed = MeiContract(
+        renewed_from_id=source.id,
         company_id=source.company_id,
         employee_id=source.employee_id,
         status="Pendente de assinatura",
@@ -1210,16 +1295,22 @@ def delete_mei_contract(
     contract = db.scalar(query)
     if not contract:
         raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
-    if contract.status != "Pendente de assinatura":
-        raise HTTPException(
-            status_code=409,
-            detail="Contrato assinado não pode ser excluído; ele deve permanecer no histórico.",
-        )
+    if contract.cancelled_at:
+        return {"deleted": True}
+    # Logical deletion keeps signed documents and past financial references intact.
+    contract.cancelled_at = datetime.now(timezone.utc)
+    contract.status = "Cancelado"
+    if contract.renewed_from_id:
+        previous = db.get(MeiContract, contract.renewed_from_id)
+        remaining = db.scalar(select(MeiContract.id).where(MeiContract.renewed_from_id == contract.renewed_from_id,
+            MeiContract.id != contract.id, MeiContract.signed_at.is_not(None), MeiContract.cancelled_at.is_(None)))
+        if previous and previous.status == "Renovado" and not remaining:
+            previous.status = "Ativo"
     db.add(
         AuditEntry(
             company_id=contract.company_id,
             module="Contratos MEI",
-            action="Contrato pendente excluído",
+            action="Contrato excluído (histórico preservado)",
             employee_name=contract.employment.employee.full_name,
             result_center=result_center_to_dict(contract.employment),
             performed_by=user.full_name,
@@ -1233,10 +1324,35 @@ def delete_mei_contract(
             Movement.observation.like(f"MEI#{contract.id} - contrato pendente%"),
         )
     ):
-        db.delete(movement)
-    db.delete(contract)
+        movement.status = "Aplicada"
     db.commit()
     return {"deleted": True}
+
+
+@router.post("/mei-contracts/{contract_id}/terminate")
+def terminate_mei_contract(contract_id: int, payload: dict[str, Any], db: DbSession, user: AdminUser, company_id: int = 1):
+    contract = db.get(MeiContract, contract_id)
+    if not contract or (company_id and contract.company_id != company_id):
+        raise HTTPException(status_code=404, detail="Contrato MEI não encontrado")
+    if contract.status != "Ativo" or not contract.signed_at:
+        raise HTTPException(status_code=409, detail="O distrato exige um contrato assinado ativo.")
+    terminated_on = parse_date(payload.get("terminated_on"))
+    if not contract.start_date <= terminated_on <= contract.end_date:
+        raise HTTPException(status_code=422, detail="A data do distrato deve estar dentro da vigência do contrato.")
+    attachment = str(payload.get("attachment_data_url") or "")
+    name = str(payload.get("attachment_name") or "").strip()
+    if not name or len(name) > 240 or not attachment.startswith(("data:application/pdf;base64,", "data:image/png;base64,", "data:image/jpeg;base64,")) or len(attachment) > 14_000_000:
+        raise HTTPException(status_code=422, detail="Anexe o distrato em PDF, PNG ou JPEG, até 10 MB.")
+    contract.terminated_on = terminated_on
+    contract.termination_attachment_name = name
+    contract.termination_attachment_data_url = attachment
+    contract.status = "Distratado"
+    db.add(AuditEntry(company_id=contract.company_id, module="Contratos MEI", action="Distrato registrado",
+        employee_name=contract.employment.employee.full_name, result_center=result_center_to_dict(contract.employment),
+        performed_by=user.full_name, performed_role=user.role.value,
+        details=f"Contrato #{contract.id} | distrato {terminated_on.isoformat()} | {name} | lançamentos anteriores preservados"))
+    db.commit()
+    return mei_contract_to_dict(contract)
 
 
 @router.post("/benefit-distributions", status_code=201)
@@ -1481,10 +1597,11 @@ def valid_mei_contract_ids(
         db.scalars(
             select(MeiContract.employee_id).where(
                 MeiContract.company_id == company_id,
-                MeiContract.status == "Ativo",
+                MeiContract.status.in_(["Ativo", "Renovado", "Distratado"]),
                 MeiContract.signed_at.is_not(None),
                 MeiContract.start_date <= period_end,
                 MeiContract.end_date >= period_start,
+                (MeiContract.terminated_on.is_(None)) | (MeiContract.terminated_on >= period_start),
             )
         )
     )
@@ -1537,8 +1654,7 @@ def create_launch(
     kind = str(payload.get("kind") or "").upper()
     if kind not in LAUNCH_KINDS:
         raise HTTPException(status_code=422, detail="Tipo de lançamento inválido")
-    if len(competency) != 7:
-        raise HTTPException(status_code=422, detail="Competência inválida")
+    parse_competency(competency)
     if is_competency_closed(db, company_id, competency):
         raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para lançar valores.")
     batch = db.scalar(
@@ -1637,8 +1753,8 @@ def confirm_launch(
         raise HTTPException(status_code=422, detail="Informe ao menos um valor antes de confirmar.")
     if len(valid_items) != len(batch.items):
         raise HTTPException(status_code=409, detail="A lista de elegíveis mudou. Salve o rascunho novamente.")
-    if batch.kind in {"MEI", "BONUS"}:
-        field = "pro_labore" if batch.kind == "MEI" else "bonus"
+    if batch.kind in LAUNCH_FIELDS:
+        field = LAUNCH_FIELDS[batch.kind]
         existing_overrides = {
             item.employment_id: item
             for item in db.scalars(
@@ -1653,8 +1769,8 @@ def confirm_launch(
             employments[item.employment_id].employee.full_name
             for item in valid_items
             if item.employment_id in existing_overrides
-            and field in (existing_overrides[item.employment_id].values or {})
-            and money(existing_overrides[item.employment_id].values[field]) != Decimal("0.00")
+            and any(money((existing_overrides[item.employment_id].values or {}).get(key, 0)) != Decimal("0.00")
+                for key in ([field, "pro_labore"] if batch.kind == "MEI" else [field]))
         ]
         if conflicts:
             raise HTTPException(
@@ -1744,6 +1860,7 @@ def payroll(
     db: DbSession, _: CurrentUser, competency: str = "2026-06", company_id: int = 1
 ) -> list[dict[str, Any]]:
     _, _, period_start, period_end = parse_competency(competency)
+    exits = departure_map(db, company_id)
     company = ensure_company(db, company_id) if company_id != 0 else None
     rates = (
         ensure_settings(db, company).payroll_rates if company else DEFAULT_PAYROLL_RATES
@@ -1762,7 +1879,7 @@ def payroll(
         employment_query = employment_query.where(Employment.company_id == company_id)
     employments = [
         item for item in db.scalars(employment_query)
-        if employment_active_in_period(item, period_start, period_end)
+        if period_active(item, period_start, period_end, exits)
     ]
     distributions = list(
         db.scalars(
@@ -1808,6 +1925,7 @@ def payroll(
                 overrides.get(employment.id),
                 period_start,
                 period_end,
+                effective_end(employment, exits),
             )
         )
     return rows
@@ -1843,6 +1961,7 @@ def save_payroll_override(
         "lodging",
         "insurance",
         "health_plan",
+        "dental_plan",
     }
     values = {key: as_float(value) for key, value in payload.items() if key in allowed}
     override = db.scalar(
@@ -1875,33 +1994,20 @@ def save_payroll_override(
 
 @router.get("/report-preview")
 def report_preview(
-    db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1
+    db: DbSession, user: CurrentUser, competency: str = "2026-06", company_id: int = 1,
+    supervisor: str = "", state: str = "", modality: str = "", query: str = "", center_code: str = "",
 ) -> dict[str, Any]:
     company = ensure_company(db, company_id) if company_id != 0 else None
     settings = ensure_settings(db, company) if company else None
-    rows = payroll(db, user, competency, company_id)
-    cards: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        center = row["result_center"]
-        code = center["code"]
-        if code not in cards:
-            cards[code] = {
-                "code": code,
-                "name": center["name"],
-                "color": center["color"],
-                "active_employees": 0,
-                "gross_payroll": 0,
-                "total_cost": 0,
-                "absenteeism": 0,
-                "turnover": 0,
-            }
-        cards[code]["active_employees"] += 1
-        cards[code]["gross_payroll"] += float(row.get("gross_payroll") or 0)
-        cards[code]["total_cost"] += float(row.get("total_cost") or 0)
+    from app.api.routes.dashboard import get_dashboard
+    year, month, _, _ = parse_competency(competency)
+    dashboard = get_dashboard(db, user, month=month, year=year, company_id=company_id,
+        supervisor=supervisor, state=state, modality=modality, query=query, center_code=center_code)
     return {
         "company": company.name if company else "Todas as empresas",
         "company_logo": settings.company_logo if settings else "",
-        "cards": list(cards.values()),
+        "cards": [card.model_dump() for card in dashboard.cards],
+        "summary": dashboard.consolidated.model_dump(),
     }
 
 
@@ -1973,6 +2079,8 @@ def list_alerts(
         movement_query = movement_query.where(Movement.company_id == company_id)
 
     for contract in db.scalars(mei_query):
+        if contract.status not in {"Ativo", "Pendente de assinatura"}:
+            continue
         employment = contract.employment
         if not employment:
             continue
@@ -2027,6 +2135,12 @@ def list_alerts(
         )
 
     for movement in db.scalars(movement_query):
+        if movement.type in {"contrato não assinado", "contrato MEI a vencer"} and movement.observation.startswith("MEI#"):
+            contract_number = movement.observation.split(" ", 1)[0][4:]
+            linked_contract = db.get(MeiContract, int(contract_number)) if contract_number.isdigit() else None
+            if linked_contract and (linked_contract.status not in {"Ativo", "Pendente de assinatura"}
+                or (movement.type == "contrato não assinado" and linked_contract.signed_at)):
+                continue
         employment = movement.employment
         if not employment:
             continue
@@ -2371,34 +2485,15 @@ def indicators(
     employment_query = employment_query.where(Employment.company_id.in_(closed_ids))
     employments = list(db.scalars(employment_query))
 
-    active = [
-        item
-        for item in employments
-        if employment_active_in_period(item, start, end)
-        and item.status != EmploymentStatus.INACTIVE
-    ]
-    initial_headcount = sum(
-        employment_active_in_period(item, start, start)
-        and item.status != EmploymentStatus.INACTIVE
-        for item in employments
-    )
-    final_headcount = len(active)
-    admissions = sum(start <= item.admission_date <= end for item in employments)
-    terminations = sum(
-        bool(item.termination_date and start <= item.termination_date <= end)
-        for item in employments
-    )
-    average_headcount = (
-        (initial_headcount + final_headcount) / 2
-        if (initial_headcount or final_headcount)
-        else 0
-    )
-
-    movement_query = select(Movement).where(Movement.competency == competency)
+    movement_query = overlapping_movements(start, end)
     movement_query = movement_query.where(Movement.company_id.in_(closed_ids))
     movements = list(db.scalars(movement_query))
-    non_productive_hours = sum(as_float(item.hour_impact) for item in movements)
-    scheduled_hours = sum(as_float(item.daily_hours) * 22 for item in active)
+    settings_by_company = {item.company_id: item for item in db.scalars(select(SystemSetting))}
+    metrics = operational_metrics(employments, movements, start, end, settings_by_company, departure_map(db, company_id))
+    initial_headcount, final_headcount = metrics["initial"], metrics["final"]
+    admissions, terminations = metrics["admissions"], metrics["terminations"]
+    average_headcount = metrics["average"]
+    non_productive_hours, scheduled_hours = metrics["unproductive"], metrics["scheduled"]
 
     payroll_rows = [
         row
@@ -2423,7 +2518,7 @@ def indicators(
         "net_payroll": net_payroll,
         "salary_per_capita": gross_payroll / final_headcount if final_headcount else 0,
         "total_cost": total_cost,
-        "productive_days": 22 if final_headcount else 0,
+        "productive_days": max((len(business_days(start, end, settings_by_company.get(item.company_id))) for item in employments), default=0),
         "non_productive_hours": non_productive_hours,
     }
 
@@ -2439,6 +2534,7 @@ def indicator_sheets(
     if company_id != 0:
         centers_query = centers_query.where(ResultCenter.company_id == company_id)
     centers = list(db.scalars(centers_query.order_by(ResultCenter.code)))
+    centers = list({center.code: center for center in centers}.values())
     sheets = {
         center.code: build_indicator_sheet(db, user, year, center, company_id)
         for center in centers
@@ -2506,16 +2602,17 @@ def build_indicator_sheet(
     turnover_values: list[float] = []
     absenteeism_values: list[float] = []
 
-    employment_query = select(Employment).where(
-        Employment.result_center_id == center.id
-    )
+    employment_query = select(Employment).join(ResultCenter).options(joinedload(Employment.employment_type)).where(ResultCenter.code == center.code)
     if company_id != 0:
         employment_query = employment_query.where(Employment.company_id == company_id)
     employments = list(db.scalars(employment_query))
+    settings_by_company = {item.company_id: ensure_settings(db, ensure_company(db, item.company_id)) for item in employments}
+    exits = departure_map(db, company_id)
 
     for month in range(1, 13):
         month_competency = f"{year}-{month:02d}"
-        if not is_competency_closed(db, center.company_id, month_competency):
+        closed_ids = {key for key in settings_by_company if is_competency_closed(db, key, month_competency)}
+        if not closed_ids:
             for values in costs.values():
                 values.append(0)
             for values in operational.values():
@@ -2557,53 +2654,21 @@ def build_indicator_sheet(
         _, _, start, end = parse_competency(month_competency)
         month_payroll_rows = [
             row
-            for row in payroll(db, user, month_competency, center.company_id)
-            if row["result_center"]["id"] == center.id
+            for row in payroll(db, user, month_competency, company_id)
+            if row["result_center"]["code"] == center.code and row["result_center"]["company_id"] in closed_ids
         ]
-        month_movements = list(
-            db.scalars(
-                select(Movement).where(
-                    Movement.competency == month_competency,
-                    Movement.company_id == center.company_id,
-                )
-            )
-        )
+        month_movements = list(db.scalars(overlapping_movements(start, end).where(Movement.company_id.in_(closed_ids))))
         month_movements = [
             item
             for item in month_movements
-            if item.employment and item.employment.result_center_id == center.id
+            if item.employment and item.employment.result_center.code == center.code
         ]
-        initial = sum(
-            employment_active_in_period(item, start, start)
-            and item.status != EmploymentStatus.INACTIVE
-            for item in employments
-        )
-        final = sum(
-            employment_active_in_period(item, start, end)
-            and item.status != EmploymentStatus.INACTIVE
-            for item in employments
-        )
-        active_month = [
-            item
-            for item in employments
-            if employment_active_in_period(item, start, end)
-            and item.status != EmploymentStatus.INACTIVE
-        ]
-        admissions = sum(start <= item.admission_date <= end for item in employments)
-        terminations = sum(
-            bool(item.termination_date and start <= item.termination_date <= end)
-            for item in employments
-        )
-        non_productive = sum(as_float(item.hour_impact) for item in month_movements)
-        scheduled = sum(as_float(item.daily_hours) * 22 for item in active_month)
-        absence_days = sum(
-            item.days
-            for item in month_movements
-            if any(
-                marker in item.type.lower()
-                for marker in ("afast", "falta", "ferias", "férias", "atestado")
-            )
-        )
+        metrics = operational_metrics([item for item in employments if item.company_id in closed_ids], month_movements, start, end,
+            settings_by_company, exits)
+        initial, final = metrics["initial"], metrics["final"]
+        admissions, terminations = metrics["admissions"], metrics["terminations"]
+        non_productive, scheduled = metrics["unproductive"], metrics["scheduled"]
+        absence_days = metrics["absence_days"]
         average_headcount = (initial + final) / 2 if (initial or final) else 0
         turnover_value = ((admissions + terminations) / 2 / final) if final else 0
         absenteeism_value = non_productive / scheduled if scheduled else 0
@@ -2618,6 +2683,8 @@ def build_indicator_sheet(
                     + float(row["lodging"])
                     + float(row["insurance"])
                     + float(row["health_plan"])
+                    + float(row["dental_plan"])
+                    + float(row["basic_basket"])
                     for row in month_payroll_rows
                 )
             else:
@@ -2697,12 +2764,13 @@ def payroll_row(
     override: dict[str, Any] | None = None,
     period_start: date | None = None,
     period_end: date | None = None,
+    termination_date: date | None = None,
 ) -> dict[str, Any]:
     values = override or {}
     allocation_factor = Decimal("1")
     if period_start and period_end:
         active_start = max(period_start, employment.admission_date)
-        active_end = min(period_end, employment.termination_date or period_end)
+        active_end = min(period_end, termination_date or employment.termination_date or period_end)
         active_days = max((active_end - active_start).days + 1, 0)
         allocation_factor = Decimal(active_days) / Decimal((period_end - period_start).days + 1)
     salary = money(
@@ -2722,12 +2790,17 @@ def payroll_row(
             else 0,
         )
     )
+    if normalized(employment.employment_type.name) == "MEI":
+        # Preserve amounts already posted to the legacy pro_labore field.
+        salary = money(salary + pro_labore)
+        pro_labore = Decimal("0")
     cost_aid = money(values.get("cost_aid", employment.cost_aid * allocation_factor))
     gratification = money(values.get("gratification", employment.gratification * allocation_factor))
     transport = money(values.get("transport", benefits.get("VT", Decimal("0.00"))))
     meal = money(values.get("meal", benefits.get("AL", Decimal("0.00"))))
     basic_basket = money(values.get("basic_basket", benefits.get("CB", Decimal("0.00"))))
     health_plan = money(values.get("health_plan", benefits.get("PS", Decimal("0.00"))))
+    dental_plan = money(values.get("dental_plan", benefits.get("PO", Decimal("0.00"))))
     insurance = money(values.get("insurance", benefits.get("SV", Decimal("0.00"))))
     profit_distribution = money(values.get("profit_distribution", 0))
     bonus = money(values.get("bonus", 0))
@@ -2735,20 +2808,21 @@ def payroll_row(
     subtotal = money(
         salary + gratification + pro_labore + profit_distribution + bonus + cost_aid
     )
-    benefit_total = money(transport + meal + basic_basket + lodging + insurance + health_plan)
-    inss = money(subtotal * Decimal(str(rates["inss"])) / 100)
-    rat = money(subtotal * Decimal(str(rates["rat"])) / 100)
-    terceiros = money(subtotal * Decimal(str(rates["terceiros"])) / 100)
-    fgts = money(subtotal * Decimal(str(rates["fgts"])) / 100)
+    benefit_total = money(transport + meal + basic_basket + lodging + insurance + health_plan + dental_plan)
+    charge_base = subtotal if employment.employment_type.has_charges and normalized(employment.employment_type.name) not in {"MEI", "FREELANCER"} else Decimal("0")
+    inss = money(charge_base * Decimal(str(rates["inss"])) / 100)
+    rat = money(charge_base * Decimal(str(rates["rat"])) / 100)
+    terceiros = money(charge_base * Decimal(str(rates["terceiros"])) / 100)
+    fgts = money(charge_base * Decimal(str(rates["fgts"])) / 100)
     charges = money(inss + rat + terceiros + fgts)
-    vacation = money(subtotal / 12)
+    vacation = money(charge_base / 12)
     vacation_third = money(vacation / 3)
     fgts_vacation = money(
         (vacation + vacation_third) * Decimal(str(rates["fgts_vacation"])) / 100
     )
-    thirteenth = money(subtotal / 12)
+    thirteenth = money(charge_base / 12)
     fgts_thirteenth = money(thirteenth * Decimal(str(rates["fgts_thirteenth"])) / 100)
-    notice = money(subtotal / 12)
+    notice = money(charge_base / 12)
     fgts_notice = money(notice * Decimal(str(rates["fgts_notice"])) / 100)
     fgts_fine = money(
         (fgts + fgts_vacation + fgts_thirteenth + fgts_notice)
@@ -2777,7 +2851,7 @@ def payroll_row(
         "person_id": employment.employee_id,
         "employee_name": employment.employee.full_name,
         "period_start": max(period_start, employment.admission_date).isoformat() if period_start else employment.admission_date.isoformat(),
-        "period_end": min(period_end, employment.termination_date or period_end).isoformat() if period_end else (employment.termination_date.isoformat() if employment.termination_date else None),
+        "period_end": min(period_end, termination_date or employment.termination_date or period_end).isoformat() if period_end else (employment.termination_date.isoformat() if employment.termination_date else None),
         "allocation_factor": as_float(allocation_factor),
         "result_center": result_center_to_dict(employment),
         "employment_type": employment_type_to_dict(employment),
@@ -2793,6 +2867,7 @@ def payroll_row(
         "lodging": as_float(lodging),
         "insurance": as_float(insurance),
         "health_plan": as_float(health_plan),
+        "dental_plan": as_float(dental_plan),
         "subtotal_earnings": as_float(subtotal),
         "inss": as_float(inss),
         "rat": as_float(rat),

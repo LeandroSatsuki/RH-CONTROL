@@ -15,6 +15,7 @@ export function buildEmployeeImportTemplateRow(options: {
     MODALIDADE: options.employmentType || "CLT",
     SALARIO: 3000,
     GRATIFICACAO: 0,
+    "SALARIO FAMILIA": "Não",
     CEP: "29000000",
     RUA: "RUA EXEMPLO",
     NUMERO: "100",
@@ -58,6 +59,7 @@ export interface NormalizedEmployeeImportRow {
   type: string;
   salary: number;
   gratification: number;
+  familyAllowanceEligible: boolean;
   costAid: number;
   cep: string;
   street: string;
@@ -122,6 +124,7 @@ function normalizeBenefitName(value: string) {
     alimentacao: "Alimentação",
     "cesta basica": "Cesta básica",
     "plano de saude": "Plano de saúde",
+    "plano odontologico": "Plano odontológico",
     "seguro de vida": "Seguro de vida",
     "ajuda de custo": "Ajuda de custo"
   } as Record<string, string>)[normalized] ?? normalizeEmployeeText(value);
@@ -185,6 +188,7 @@ export function normalizeEmployeeImportRow(row: Record<string, unknown>): Normal
     type: normalizeEmployeeText(read("MODALIDADE", "TIPO CONTRATO", "TIPO DE CONTRATO", "CONTRATO")),
     salary: parseNumber(readValue("SALARIO", "SALÁRIO")),
     gratification: parseNumber(readValue("GRATIFICACAO", "GRATIFICAÇÃO")),
+    familyAllowanceEligible: ["sim", "s", "true", "1"].includes(normalizedKey(String(readValue("SALARIO FAMILIA", "SALÁRIO FAMÍLIA")))),
     costAid: parseNumber(readValue("AJUDA DE CUSTO", "AJUDA CUSTO")),
     cep: onlyDigits(read("CEP")),
     street: normalizeEmployeeText(read("RUA", "LOGRADOURO")),

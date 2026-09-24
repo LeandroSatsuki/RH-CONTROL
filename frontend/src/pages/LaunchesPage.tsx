@@ -3,8 +3,10 @@ import { api } from "../api";
 import { ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { useDemoScope } from "../context/DemoScope";
 import { User } from "../types";
+import { downloadExcel, readFirstExcelSheet } from "../excel";
+import { LaunchImportPreview, previewLaunchImport } from "../launchImport";
 
-type LaunchKind = "MEI" | "BASIC_BASKET" | "BONUS";
+type LaunchKind = "MEI" | "FREELANCER" | "BASIC_BASKET" | "BONUS" | "COST_AID" | "LODGING";
 type LaunchEmployee = {
   employment_id: number;
   employee_name: string;
@@ -32,6 +34,9 @@ type LaunchBatch = {
 
 const labels: Record<LaunchKind, { title: string; detail: string }> = {
   MEI: { title: "MEI", detail: "Exibe somente MEIs com contrato assinado e vigente, com filtro opcional de supervisor." },
+  FREELANCER: { title: "Freelancer", detail: "Valores de serviços prestados por freelancers na competência." },
+  COST_AID: { title: "Ajuda de custo", detail: "Lançamento avulso com conferência por colaborador." },
+  LODGING: { title: "Hospedagem", detail: "Despesas de hospedagem integradas ao Custo/Folha." },
   BASIC_BASKET: { title: "Cesta básica", detail: "Exibe somente quem possui o benefício marcado." },
   BONUS: { title: "Premiação", detail: "Permite filtrar por supervisor, modalidade e Centro de Resultado." }
 };
@@ -50,8 +55,14 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
   const [success, setSuccess] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const dirty = useRef(false);
+  const [importPreview, setImportPreview] = useState<LaunchImportPreview | null>(null);
+  const [importing, setImporting] = useState(false);
+  const scopeRef = useRef("");
+  scopeRef.current = `${selectedCompany.id}:${competency}`;
+  useEffect(() => { setImportPreview(null); }, [active?.id, selectedCompany.id, competency]);
 
   async function loadBatches() {
+    const scope = scopeRef.current;
     if (selectedCompany.id === 0) {
       setBatches([]);
       setActive(null);
@@ -60,7 +71,8 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
     setLoading(true);
     setError("");
     try {
-      const response = await api<LaunchBatch[]>(`/demo/launches?competency=${competency}`, {}, token);
+      const response = await api<LaunchBatch[]>(`/demo/launches?company_id=${selectedCompany.id}&competency=${competency}`, {}, token);
+      if (scopeRef.current !== scope) return;
       setBatches(response);
       setActive(current => current ? response.find(item => item.id === current.id) ?? null : null);
     } catch (err) {
@@ -73,6 +85,7 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
   useEffect(() => { void loadBatches(); }, [competency, selectedCompany.id, token]);
 
   async function openKind(kind: LaunchKind) {
+    if (dirty.current && !await saveDraft(false)) return;
     if (selectedCompany.id === 0) {
       setError("Selecione uma empresa específica para realizar lançamentos.");
       return;
@@ -106,23 +119,59 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
     } : current);
   }
 
+  async function importFile(file?: File) {
+    if (!file || !active) return;
+    const scope = scopeRef.current;
+    if (file.size > 5 * 1024 * 1024) { setError("A planilha deve ter até 5 MB."); return; }
+    setImporting(true);
+    setError("");
+    try {
+      const rows = await readFirstExcelSheet(await file.arrayBuffer());
+      if (!rows.length) throw new Error("A planilha não contém lançamentos.");
+      if (scopeRef.current === scope) setImportPreview(previewLaunchImport(rows, active.employees, active.competency, active.kind));
+    } catch (err) { setError(err instanceof Error ? err.message : "Não foi possível ler a planilha."); }
+    finally { setImporting(false); }
+  }
+
+  async function applyImport() {
+    if (!active || !importPreview) return;
+    const scope = scopeRef.current;
+    const imported = new Map(importPreview.items.map(item => [item.employment_id, item]));
+    const merged = active.employees.map(item => ({ ...item, ...imported.get(item.employment_id) }));
+    setSaving(true);
+    setError("");
+    try {
+      const saved = await api<LaunchBatch>(`/demo/launches/${active.id}?company_id=${active.company_id}`, { method: "PATCH", body: JSON.stringify({ filters: active.filters, items: merged.map(item => ({ employment_id: item.employment_id, amount: item.amount, note: item.note })) }) }, token);
+      if (scopeRef.current !== scope) return;
+      setActive(saved);
+      setBatches(current => [saved, ...current.filter(item => item.id !== saved.id)]);
+      dirty.current = false;
+      setImportPreview(null);
+      setSuccess("Linhas válidas importadas e salvas como rascunho. Confira antes de confirmar.");
+    } catch (err) { setError(err instanceof Error ? err.message : "Não foi possível salvar a importação."); }
+    finally { setSaving(false); }
+  }
+
   function patchFilter(name: string, value: string) {
     dirty.current = true;
     setActive(current => current ? { ...current, filters: { ...current.filters, [name]: value } } : current);
   }
 
   async function saveDraft(showMessage = true) {
-    if (!active || active.status !== "PENDING" || saving) return active;
+    if (saving) return null;
+    if (!active || active.status !== "PENDING") return active;
+    const scope = scopeRef.current;
     setSaving(true);
     setError("");
     try {
-      const saved = await api<LaunchBatch>(`/demo/launches/${active.id}`, {
+      const saved = await api<LaunchBatch>(`/demo/launches/${active.id}?company_id=${active.company_id}`, {
         method: "PATCH",
         body: JSON.stringify({
           filters: active.filters,
           items: active.employees.map(item => ({ employment_id: item.employment_id, amount: item.amount, note: item.note }))
         })
       }, token);
+      if (scopeRef.current !== scope) return null;
       setActive(saved);
       setBatches(current => [saved, ...current.filter(item => item.id !== saved.id)]);
       dirty.current = false;
@@ -143,7 +192,7 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
     setSaving(true);
     setError("");
     try {
-      const confirmed = await api<LaunchBatch>(`/demo/launches/${saved.id}/confirm`, { method: "POST" }, token);
+      const confirmed = await api<LaunchBatch>(`/demo/launches/${saved.id}/confirm?company_id=${saved.company_id}`, { method: "POST" }, token);
       setActive(confirmed);
       setBatches(current => [confirmed, ...current.filter(item => item.id !== confirmed.id)]);
       setConfirmOpen(false);
@@ -175,8 +224,8 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
 
   return <section className="page launches-page">
     <div className="page-title">
-      <div><span className="eyebrow">Operação mensal</span><h1>Lançamentos</h1><p>MEI, cesta básica e premiação em uma conferência única, integrada ao Custo/Folha.</p></div>
-      <label className="launch-competency">Competência<input type="month" value={competency} onChange={event => { setCompetency(event.target.value); setActive(null); }} /></label>
+      <div><span className="eyebrow">Operação mensal</span><h1>Lançamentos</h1><p>Serviços, benefícios e valores avulsos em uma conferência única, integrada ao Custo/Folha.</p></div>
+      <label className="launch-competency">Competência<input type="month" disabled={saving || importing} value={competency} onChange={event => { setCompetency(event.target.value); setActive(null); }} /></label>
     </div>
     <ErrorMessage message={error} /><SuccessMessage message={success} />
     {selectedCompany.id === 0 && <div className="feedback error">Selecione uma empresa específica no cabeçalho.</div>}
@@ -184,7 +233,7 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
     <div className="launch-kind-grid">
       {(Object.keys(labels) as LaunchKind[]).map(kind => {
         const existing = batches.find(item => item.kind === kind);
-        return <button className={`panel launch-kind-card ${active?.kind === kind ? "active" : ""}`} type="button" key={kind} onClick={() => void openKind(kind)} disabled={loading || selectedCompany.id === 0 || (user.role !== "ADMIN" && !existing)}>
+        return <button className={`panel launch-kind-card ${active?.kind === kind ? "active" : ""}`} type="button" key={kind} onClick={() => void openKind(kind)} disabled={loading || saving || importing || selectedCompany.id === 0 || (user.role !== "ADMIN" && !existing)}>
           <span className="eyebrow">{existing ? (existing.status === "PENDING" ? "Rascunho em andamento" : "Confirmado") : "Novo lançamento"}</span>
           <strong>{labels[kind].title}</strong><small>{labels[kind].detail}</small>
           {existing && <span>{existing.filled_count}/{existing.eligible_count} preenchidos · {currency.format(existing.total)}</span>}
@@ -199,16 +248,22 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
       </div>
       <div className="launch-filters">
         <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar nome ou matrícula" />
-        {(active.kind === "MEI" || active.kind === "BONUS") &&
+        {active.kind !== "BASIC_BASKET" &&
           <select value={active.filters.supervisor ?? ""} onChange={event => patchFilter("supervisor", event.target.value)}><option value="">Todos os supervisores</option>{options.supervisors.map(value => <option key={value}>{value}</option>)}</select>
         }
-        {active.kind === "BONUS" && <>
+        {["BONUS", "COST_AID", "LODGING", "FREELANCER"].includes(active.kind) && <>
           <select value={active.filters.modality ?? ""} onChange={event => patchFilter("modality", event.target.value)}><option value="">Todas as modalidades</option>{options.modalities.map(value => <option key={value}>{value}</option>)}</select>
           <select value={active.filters.center ?? ""} onChange={event => patchFilter("center", event.target.value)}><option value="">Todos os CRs</option>{options.centers.map(value => <option key={value.code} value={value.code}>{value.code} - {value.name}</option>)}</select>
         </>}
       </div>
+      {["MEI", "FREELANCER"].includes(active.kind) && active.status === "PENDING" && user.role === "ADMIN" && <section className="panel">
+        <h3>Importar valores</h3><p className="note">Use o modelo desta empresa e competência. Aplique apenas após conferir; valores das matrículas importadas substituirão os valores do rascunho.</p>
+        <div className="actions"><button className="secondary" disabled={saving || importing} onClick={() => void downloadExcel(active.employees.map(item => ({ Matrícula: item.employee_code, Colaborador: item.employee_name, Competência: active.competency, Tipo: active.kind, Valor: item.amount || "", Observação: item.note })), "Lançamentos", `lancamentos-${active.company_id}-${active.kind}-${active.competency}.xlsx`)}>Baixar modelo com elegíveis</button><label>Selecionar planilha<input type="file" accept=".xlsx" disabled={saving || importing} onChange={event => { void importFile(event.target.files?.[0]); event.target.value = ""; }} /></label></div>
+        {importing && <p>Lendo planilha…</p>}
+        {importPreview && <><p>{importPreview.items.length} linha(s) válida(s), total {currency.format(importPreview.items.reduce((sum, item) => sum + item.amount, 0))}. {importPreview.issues.length} inconsistência(s).</p><div className="table-wrap"><table><thead><tr><th>Colaborador</th><th>Valor importado</th></tr></thead><tbody>{importPreview.items.map(item => <tr key={item.employment_id}><td>{item.employee_name}</td><td>{currency.format(item.amount)}</td></tr>)}</tbody></table></div>{importPreview.issues.length > 0 && <ul>{importPreview.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul>}<button className="primary" disabled={saving || !importPreview.items.length} onClick={() => void applyImport()}>Salvar linhas válidas no rascunho</button><button className="secondary" onClick={() => setImportPreview(null)}>Descartar conferência</button></>}
+      </section>}
       <div className="table-wrap launch-table"><table><thead><tr><th>Colaborador</th><th>Supervisor</th><th>Modalidade</th><th>CR</th><th>Valor</th><th>Observação</th></tr></thead><tbody>
-        {visible.map(item => <tr key={item.employment_id}><td><strong>{item.employee_name}</strong><small>{item.employee_code}</small></td><td>{item.supervisor_name || "—"}</td><td>{item.employment_type}</td><td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td><td><input className="money-input" type="number" min="0" step="0.01" value={item.amount || ""} disabled={active.status === "CONFIRMED" || user.role !== "ADMIN"} onChange={event => patchEmployee(item.employment_id, { amount: Number(event.target.value) })} onBlur={() => { if (dirty.current) void saveDraft(false); }} placeholder="0,00" /></td><td><input value={item.note} disabled={active.status === "CONFIRMED" || user.role !== "ADMIN"} onChange={event => patchEmployee(item.employment_id, { note: event.target.value })} onBlur={() => { if (dirty.current) void saveDraft(false); }} placeholder="Opcional" /></td></tr>)}
+        {visible.map(item => <tr key={item.employment_id}><td><strong>{item.employee_name}</strong><small>{item.employee_code}</small></td><td>{item.supervisor_name || "—"}</td><td>{item.employment_type}</td><td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td><td><input className="money-input" type="number" min="0" step="0.01" value={item.amount || ""} disabled={saving || importing || active.status === "CONFIRMED" || user.role !== "ADMIN"} onChange={event => patchEmployee(item.employment_id, { amount: Number(event.target.value) })} onBlur={() => { if (dirty.current) void saveDraft(false); }} placeholder="0,00" /></td><td><input value={item.note} disabled={saving || importing || active.status === "CONFIRMED" || user.role !== "ADMIN"} onChange={event => patchEmployee(item.employment_id, { note: event.target.value })} onBlur={() => { if (dirty.current) void saveDraft(false); }} placeholder="Opcional" /></td></tr>)}
         {!visible.length && <tr><td colSpan={6}>Nenhum colaborador corresponde aos filtros.</td></tr>}
       </tbody></table></div>
       {active.status === "PENDING" && user.role === "ADMIN" && <div className="launch-actions"><span>{saving ? "Salvando…" : "Os valores são salvos como rascunho ao sair do campo."}</span><button className="secondary" type="button" onClick={() => void saveDraft()} disabled={saving}>Salvar e continuar depois</button><button className="primary" type="button" onClick={() => setConfirmOpen(true)} disabled={saving || draftCount === 0}>Revisar e confirmar</button></div>}

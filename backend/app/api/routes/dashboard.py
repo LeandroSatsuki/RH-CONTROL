@@ -10,8 +10,11 @@ from app.models.company import Company
 from app.models.employment import Employment
 from app.models.movement import Movement
 from app.models.result_center import ResultCenter
+from app.models.system_setting import SystemSetting
 from app.schemas.dashboard import DashboardCard, DashboardCompany, DashboardConsolidated, DashboardResponse
 from app.services.indicators import turnover
+from app.services.competency import active_in_period as period_active, departure_map, overlapping_movements, operational_metrics
+from app.services.competency import normalized
 
 router = APIRouter()
 
@@ -42,6 +45,11 @@ def get_dashboard(
     company_id: int = 1,
     result_center_id: int | None = None,
     employment_type_id: int | None = None,
+    supervisor: str = "",
+    state: str = "",
+    modality: str = "",
+    query: str = "",
+    center_code: str = "",
 ) -> DashboardResponse:
     if competency and (month is None or year is None):
         try:
@@ -69,27 +77,36 @@ def get_dashboard(
     for center in centers:
         unique_centers.setdefault(center.code.strip().upper(), center)
     centers = sorted(unique_centers.values(), key=lambda item: item.code)
+    if center_code:
+        centers = [item for item in centers if item.code == center_code]
 
     employment_query = select(Employment).options(
         joinedload(Employment.employment_type),
         joinedload(Employment.result_center),
+        joinedload(Employment.employee),
     )
     if company_id != 0:
         employment_query = employment_query.where(Employment.company_id == company_id)
     if employment_type_id:
         employment_query = employment_query.where(Employment.employment_type_id == employment_type_id)
     employments = list(db.scalars(employment_query))
+    employments = [item for item in employments
+        if (not supervisor or item.supervisor_name == supervisor)
+        and (not state or item.state == state)
+        and (not modality or item.employment_type.name == modality)
+        and (not query or normalized(query) in normalized(" ".join(str(value or "") for value in [item.employee.full_name, item.employee.cpf, item.employee_code, item.job_title, item.department, item.notes, item.supervisor_name, item.state, item.result_center.code])))]
     competency_value = f"{year:04d}-{month:02d}"
     movement_query = (
-        select(Movement)
+        overlapping_movements(start, end)
         .options(
             joinedload(Movement.employment).joinedload(Employment.result_center),
         )
-        .where(Movement.competency == competency_value)
     )
     if company_id != 0:
         movement_query = movement_query.where(Movement.company_id == company_id)
     movements = list(db.scalars(movement_query))
+    exits = departure_map(db, company_id)
+    settings_by_company = {item.company_id: item for item in db.scalars(select(SystemSetting))}
 
     # Reuse the same official payroll calculation shown on Custo/Folha so the
     # dashboard never presents a second, divergent cost formula.
@@ -103,6 +120,7 @@ def get_dashboard(
     cards: list[DashboardCard] = []
     total_scheduled_hours = 0.0
     total_non_productive_hours = 0.0
+    total_clt_final = 0
     for center in centers:
         scoped = [
             item
@@ -112,39 +130,13 @@ def get_dashboard(
         active = [
             item
             for item in scoped
-            if active_on(item, end)
+            if period_active(item, end, end, exits)
         ]
-        previous_active = [item for item in scoped if active_on(item, previous_end)]
-        person_employments = {}
-        for item in employments:
-            person_employments.setdefault(item.employee_id, []).append(item)
-        admissions = sum(
-            start <= item.admission_date <= end
-            and not any(
-                other.id != item.id
-                and other.employee_id == item.employee_id
-                and other.termination_date == item.admission_date.fromordinal(item.admission_date.toordinal() - 1)
-                for other in person_employments.get(item.employee_id, [])
-            )
-            for item in scoped
-        )
-        terminations = sum(
-            bool(
-                item.termination_date
-                and start <= item.termination_date <= end
-                and not any(
-                    other.id != item.id
-                    and other.employee_id == item.employee_id
-                    and other.admission_date == item.termination_date.fromordinal(item.termination_date.toordinal() + 1)
-                    for other in person_employments.get(item.employee_id, [])
-                )
-            )
-            for item in scoped
-        )
+        previous_active = [item for item in scoped if period_active(item, previous_end, previous_end, exits)]
         by_type: dict[str, int] = {}
         for item in active:
             by_type[item.employment_type.name] = by_type.get(item.employment_type.name, 0) + 1
-        active_ids = {item.id for item in active}
+        active_ids = {item.id for item in scoped}
         payroll_rows = [
             payroll_by_employment[item_id]
             for item_id in active_ids
@@ -156,10 +148,14 @@ def get_dashboard(
             if item.employment.result_center.code.strip().upper()
             == center.code.strip().upper()
         ]
-        scheduled_hours = sum(float(item.daily_hours or 0) * 22 for item in active)
-        non_productive_hours = sum(float(item.hour_impact or 0) for item in center_movements)
+        metrics = operational_metrics(scoped, center_movements, start, end, settings_by_company, exits)
+        admissions = metrics["admissions"]
+        terminations = metrics["terminations"]
+        scheduled_hours = metrics["scheduled"]
+        non_productive_hours = metrics["unproductive"]
         total_scheduled_hours += scheduled_hours
         total_non_productive_hours += non_productive_hours
+        total_clt_final += metrics["final"]
         cards.append(
             DashboardCard(
                 id=center.id,
@@ -171,7 +167,7 @@ def get_dashboard(
                 admissions=admissions,
                 terminations=terminations,
                 absenteeism=(non_productive_hours / scheduled_hours) if scheduled_hours else 0,
-                turnover=turnover(admissions, terminations, len(active)),
+                turnover=turnover(admissions, terminations, metrics["final"]),
                 gross_payroll=sum(float(row["gross_payroll"]) for row in payroll_rows),
                 net_payroll=sum(float(row["net_payroll"]) for row in payroll_rows),
                 total_cost=sum(float(row["total_cost"]) for row in payroll_rows),
@@ -191,7 +187,7 @@ def get_dashboard(
         turnover=turnover(
             sum(card.admissions for card in cards),
             sum(card.terminations for card in cards),
-            sum(card.active_employees for card in cards),
+            total_clt_final,
         ),
     )
     return DashboardResponse(

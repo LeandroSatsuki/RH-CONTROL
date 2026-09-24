@@ -51,6 +51,10 @@ export interface DemoAppUser {
 }
 
 export interface DemoMovement {
+  source_competency?: string;
+  total_days?: number;
+  total_hour_impact?: number;
+  daily_hours?: number;
   id: number;
   company_id: number;
   competency: string;
@@ -87,6 +91,7 @@ export interface PayrollRow {
   lodging: number;
   insurance: number;
   health_plan: number;
+  dental_plan: number;
   subtotal_earnings: number;
   inss: number;
   rat: number;
@@ -143,7 +148,11 @@ export interface DemoMeiContract {
   employee_code: string;
   result_center: ResultCenter;
   employment_type: string;
-  status: "Pendente de assinatura" | "Ativo";
+  status: "Pendente de assinatura" | "Ativo" | "Renovado" | "Distratado" | "Cancelado";
+  renewed_from_id?: number | null;
+  terminated_on?: string | null;
+  termination_attachment_name?: string | null;
+  termination_attachment_data_url?: string | null;
   start_date: string;
   end_date: string;
   attachment_name: string | null;
@@ -215,6 +224,7 @@ export interface IndicatorSummary {
 }
 
 export interface DemoSettings {
+  family_allowance_rates?: { effective_date: string; amount: number }[];
   company_name: string;
   cnpj: string;
   company_logo: string;

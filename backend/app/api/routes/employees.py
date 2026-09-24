@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
@@ -19,6 +20,8 @@ from app.models.payroll_override import PayrollOverride
 from app.models.launch import LaunchItem
 from app.models.monthly_closing import MonthlyClosing
 from app.models.result_center import ResultCenter
+from app.models.system_setting import SystemSetting
+from app.services.competency import departure_map, effective_end, active_in_period as period_active
 from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmploymentRead, EmploymentTransitionCreate, SalaryHistoryCreate
 
 router = APIRouter()
@@ -66,7 +69,8 @@ def list_employees(
     _: CurrentUser,
     company_id: int = 1,
     reference_date: date | None = None,
-) -> list[Employment]:
+    include_history: bool = False,
+) -> list[EmploymentRead]:
     query = employment_query()
     if company_id != 0:
         query = query.where(Employment.company_id == company_id)
@@ -77,12 +81,27 @@ def list_employees(
             | (Employment.termination_date >= reference_date),
         )
     employments = list(db.scalars(query))
+    exits = departure_map(db, company_id)
+    if reference_date:
+        employments = [item for item in employments if period_active(item, reference_date, reference_date, exits)]
     latest_by_person: dict[int, Employment] = {}
     for item in employments:
         current = latest_by_person.get(item.employee_id)
         if current is None or (item.admission_date, item.id) > (current.admission_date, current.id):
             latest_by_person[item.employee_id] = item
-    return sorted(latest_by_person.values(), key=lambda item: item.employee.full_name)
+    selected = employments if include_history else latest_by_person.values()
+    results = []
+    primary_settings = db.scalar(select(SystemSetting).join(Company).order_by(Company.is_primary.desc(), Company.id))
+    applicable = [rate for rate in (primary_settings.family_allowance_rates or [] if primary_settings else []) if rate["effective_date"] <= (reference_date or date.today()).isoformat()]
+    family_amount = max(applicable, key=lambda rate: rate["effective_date"])["amount"] if applicable else 0
+    for item in sorted(selected, key=lambda item: item.employee.full_name):
+        view = EmploymentRead.model_validate(item)
+        view.family_allowance_amount = Decimal(str(family_amount)) if item.family_allowance_eligible else Decimal("0")
+        view.termination_date = effective_end(item, exits)
+        if view.termination_date and view.termination_date < (reference_date or date.today()):
+            view.status = EmploymentStatus.INACTIVE
+        results.append(view)
+    return results
 
 
 @router.get("/{employment_id}/history", response_model=list[EmploymentRead])
@@ -184,6 +203,7 @@ def transition_employment(
         pix_key_type=source.pix_key_type,
         pix_key=source.pix_key,
         benefits=payload.benefits,
+        family_allowance_eligible=source.family_allowance_eligible,
     )
     new_employment.salary_history.append(
         SalaryHistory(

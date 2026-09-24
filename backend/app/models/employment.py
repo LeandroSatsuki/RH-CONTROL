@@ -63,6 +63,7 @@ class Employment(Base):
     pix_key_type: Mapped[PixKeyType] = mapped_column(Enum(PixKeyType), default=PixKeyType.CPF, nullable=False)
     pix_key: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     benefits: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    family_allowance_eligible: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     company = relationship("Company", back_populates="employments")
     employee = relationship("Employee", back_populates="employments")

@@ -72,9 +72,9 @@ export function CompanyScopeProvider({ companies, children }: { companies: Scope
 
   useEffect(() => {
     if (!companies.length) return;
-    const current = selectedCompanyId === ALL_COMPANIES_ID || companies.some(company => company.id === selectedCompanyId)
+    const current = selectedCompanyId === ALL_COMPANIES_ID || companies.some(company => company.id === selectedCompanyId && company.active)
       ? selectedCompanyId
-      : companies[0].id;
+      : companies.find(company => company.active)?.id ?? ALL_COMPANIES_ID;
     if (current !== selectedCompanyId) {
       setSelectedCompanyId(current);
       return;
@@ -85,7 +85,7 @@ export function CompanyScopeProvider({ companies, children }: { companies: Scope
   const value = useMemo<CompanyScopeValue>(() => {
     const selectedCompany = selectedCompanyId === ALL_COMPANIES_ID
       ? allCompaniesScope
-      : companies.find(company => company.id === selectedCompanyId) ?? companies[0] ?? allCompaniesScope;
+      : companies.find(company => company.id === selectedCompanyId && company.active) ?? companies.find(company => company.active) ?? allCompaniesScope;
     return {
       companies: [allCompaniesScope, ...companies],
       selectedCompanyId: selectedCompany.id,

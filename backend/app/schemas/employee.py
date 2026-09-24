@@ -51,6 +51,7 @@ def is_valid_cpf_cnpj(value: str) -> bool:
 
 
 class EmployeeCreate(BaseModel):
+    family_allowance_eligible: bool = False
     company_id: int = 1
     cpf: str
     full_name: str = Field(min_length=3, max_length=180)
@@ -127,6 +128,7 @@ class SalaryHistoryCreate(BaseModel):
 
 
 class EmployeeUpdate(BaseModel):
+    family_allowance_eligible: bool | None = None
     company_id: int | None = None
     full_name: str | None = Field(default=None, min_length=3, max_length=180)
     employment_type_id: int | None = None
@@ -176,6 +178,8 @@ class EmploymentTransitionCreate(BaseModel):
 
 
 class EmploymentRead(BaseModel):
+    family_allowance_eligible: bool = False
+    family_allowance_amount: Decimal = Decimal("0.00")
     model_config = ConfigDict(from_attributes=True)
 
     id: int

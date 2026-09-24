@@ -95,6 +95,10 @@ nav button.active { box-shadow: inset 3px 0 #60a5fa; }
 header { min-height: 72px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px 18px; padding: 12px 34px; background: var(--surface); border-bottom: 1px solid var(--line); }
 header > div { display: grid; text-align: right; line-height: 1.2; }
 header small { color: var(--muted); font-size: 11px; font-weight: 600; }
+.main > header { position: sticky; top: 0; z-index: 30; }
+.date-input { display: flex; align-items: center; gap: 6px; }
+.date-input input { flex: 1; min-width: 0; }
+.date-input button { width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 .company-switch { width: min(100%, 290px); }
 .notification-menu { position: relative; display: block; }
 .notification-button { position: relative; display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); font-size: 17px; }
@@ -658,3 +662,4 @@ tr.clickable:hover { background: var(--surface-2); }
   .report-selected-controls { grid-template-columns: 1fr; }
   .drawer { width: 100%; }
 }
+.mei-contract-modal { width: min(1080px, 94vw); max-height: 90vh; overflow-y: auto; background: #fff; border-radius: 16px; padding: 20px; }

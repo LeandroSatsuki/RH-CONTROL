@@ -155,11 +155,15 @@ export function IndicatorsPage({ token }: { token: string }) {
   const [financeEditMode, setFinanceEditMode] = useState(false);
   const [financeDrafts, setFinanceDrafts] = useState<Partial<Record<CenterCode, FinanceRow[]>>>({});
   const [storedRevenue, setStoredRevenue] = useState<Record<string, Record<string, number>>>({});
+  const [financeSaving, setFinanceSaving] = useState(false);
+  const [financeMessage, setFinanceMessage] = useState("");
   const selectedYear = Number(competency.split("-")[0]) || new Date().getFullYear();
   const competencies = useMemo(() => buildCompetencies(selectedYear), [selectedYear]);
 
   useEffect(() => {
     setFinanceDrafts({});
+    setFinanceMessage("");
+    setFinanceEditMode(false);
   }, [competency, selectedCompany.id]);
 
   useEffect(() => {
@@ -220,28 +224,38 @@ export function IndicatorsPage({ token }: { token: string }) {
       const scopedRevenue = storedRevenue[scope] ?? {};
       const rows = cloneFinanceRows(sheet.financeRows).map(row => recalculateFinanceRow({
         ...row,
-        faturamento: scopedRevenue[row.month] ?? row.faturamento
+        faturamento: scopedRevenue[row.month] ?? row.faturamento,
+        meta: scopedRevenue[`${row.month}:meta`] ?? (selectedCenter === "IND" ? 0.07 : row.meta),
+        metric: selectedCenter === "IND" ? scopedRevenue[`${row.month}:kg`] ?? 0 : row.metric,
+        metricLabel: selectedCenter === "IND" ? "KG" : row.metricLabel
       }));
       return { ...previous, [selectedCenter]: rows };
     });
   }, [selectedCenter, selectedCompany.id, selectedYear, sheet.financeRows, storedRevenue]);
 
-  function updateFinanceRow(month: string, rawValue: number) {
+  function updateFinanceRow(month: string, rawValue: number, field: "faturamento" | "meta" | "metric" = "faturamento") {
+    setFinanceMessage("");
     setFinanceDrafts(previous => {
       const baseRows = previous[selectedCenter] ?? cloneFinanceRows(sheet.financeRows);
       const nextRows = baseRows.map(row => {
         if (row.month !== month) return row;
-        return recalculateFinanceRow({ ...row, faturamento: rawValue });
+        return recalculateFinanceRow({ ...row, [field]: Math.max(0, rawValue) });
       });
-      const scope = financeScopeKey(selectedCompany.id, selectedYear, selectedCenter);
-      const values = Object.fromEntries(nextRows.map(row => [row.month, row.faturamento]));
-      setStoredRevenue(current => ({ ...current, [scope]: values }));
-      void api("/demo/indicator-revenue", {
-        method: "PATCH",
-        body: JSON.stringify({ scope, values })
-      }, token).catch(err => setError(err instanceof Error ? err.message : "Não foi possível salvar o faturamento."));
       return { ...previous, [selectedCenter]: nextRows };
     });
+  }
+
+  async function saveFinance() {
+    setFinanceSaving(true);
+    setError("");
+    const scope = financeScopeKey(selectedCompany.id, selectedYear, selectedCenter);
+    const values = Object.fromEntries(financeRows.flatMap(row => [[row.month, row.faturamento], [`${row.month}:meta`, row.meta], ...(selectedCenter === "IND" ? [[`${row.month}:kg`, row.metric]] : [])]));
+    try {
+      await api("/demo/indicator-revenue", { method: "PATCH", body: JSON.stringify({ scope, values }) }, token);
+      setStoredRevenue(current => ({ ...current, [scope]: values }));
+      setFinanceMessage("Faturamento, metas e produção salvos.");
+    } catch (err) { setError(err instanceof Error ? err.message : "Não foi possível salvar os indicadores."); }
+    finally { setFinanceSaving(false); }
   }
 
   const financeChartRows = financeRows;
@@ -324,7 +338,8 @@ export function IndicatorsPage({ token }: { token: string }) {
   }
 
   function renderFinanceSection(presentation = false) {
-    const financeHeaders = ["Faturam.", "Custo", "%", "Meta", sheet.financeMetricLabel, `Custo/${sheet.financeMetricLabel.replace(/\s+/g, "")}`];
+    const metricLabel = selectedCenter === "IND" ? "KG" : sheet.financeMetricLabel;
+    const financeHeaders = ["Faturamento", "Custo", "% custo/faturamento", "Meta", selectedCenter === "IND" ? "Prod. KG" : metricLabel, `Custo/${metricLabel.replace(/\s+/g, "")}`];
     return (
       <section className="panel indicator-chart-panel indicator-section">
         <div className="indicator-sheet-header">
@@ -333,7 +348,8 @@ export function IndicatorsPage({ token }: { token: string }) {
             <h2>Comparação mensal</h2>
           </div>
           <div className="indicator-header-actions">
-            <span className="indicator-chip">{sheet.financeMetricLabel}</span>
+            <span className="indicator-chip">{metricLabel}</span>
+            {financeEditMode && !presentation && <button className="primary" onClick={() => void saveFinance()} disabled={financeSaving}>{financeSaving ? "Salvando…" : "Salvar indicadores"}</button>}
             {!presentation && (
               <button
                 type="button"
@@ -357,7 +373,7 @@ export function IndicatorsPage({ token }: { token: string }) {
           </div>
         </div>
         <div className="indicator-section-note">
-          {financeEditMode && !presentation ? "Edição de faturamento ativada. Os custos permanecem vinculados aos fechamentos." : "Dados consolidados por competência e centro de resultado."}
+          {financeEditMode && !presentation ? "Edite e clique em Salvar indicadores. Os custos permanecem vinculados aos fechamentos." : "Dados consolidados por competência e centro de resultado."} {financeMessage}
         </div>
         <div className="indicator-topic-stack">
           <div className="indicator-table-shell indicator-finance-table-shell">
@@ -389,8 +405,8 @@ export function IndicatorsPage({ token }: { token: string }) {
                       {money.format(row.custo)}
                     </td>
                     <td>{percent.format(row.percent)}</td>
-                    <td>{percent.format(row.meta)}</td>
-                    <td>{plainValue(row.metric)}</td>
+                    <td>{financeEditMode && !presentation ? <input aria-label={`Meta percentual ${row.month}`} className="indicator-inline-input" type="number" min="0" step="0.1" value={Number((row.meta * 100).toFixed(4))} onChange={event => updateFinanceRow(row.month, Number(event.target.value) / 100, "meta")} /> : percent.format(row.meta)}</td>
+                    <td>{financeEditMode && !presentation && selectedCenter === "IND" ? <input aria-label={`Produção KG ${row.month}`} className="indicator-inline-input" type="number" min="0" step="0.01" value={row.metric} onChange={event => updateFinanceRow(row.month, Number(event.target.value), "metric")} /> : plainValue(row.metric)}</td>
                     <td>{money.format(row.costPerMetric)}</td>
                   </tr>
                 ))}

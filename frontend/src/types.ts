@@ -58,6 +58,8 @@ export interface Employment {
   daily_hours: string;
   salary_base: number;
   gratification: number;
+  family_allowance_eligible?: boolean;
+  family_allowance_amount?: number;
   cost_aid: number;
   notes: string;
   supervisor_name: string;

@@ -25,6 +25,7 @@ interface EmployeeDraft {
   employment_type_id: string;
   salary_base: string;
   gratification: string;
+  family_allowance_eligible: boolean;
   cost_aid: string;
   benefits: string[];
   cep: string;
@@ -60,6 +61,7 @@ function createEmployeeDraft(settings: DemoSettings | null, centers: ResultCente
     employment_type_id: String(companyTypes[0]?.id ?? ""),
     salary_base: "0",
     gratification: "0",
+    family_allowance_eligible: false,
     cost_aid: "0",
     benefits: [],
     cep: "",
@@ -191,11 +193,11 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
   const companyTypes = useMemo(() => types.filter(item => item.company_id === draftCompanyId && item.active), [types, draftCompanyId]);
   const filterCenters = useMemo(() => distinctCatalog(centers.filter(item => selectedCompany.id === 0 || item.company_id === selectedCompany.id), item => item.code), [centers, selectedCompany.id]);
   const filterTypes = useMemo(() => distinctCatalog(types.filter(item => selectedCompany.id === 0 || item.company_id === selectedCompany.id), item => item.name), [selectedCompany.id, types]);
-  const draftSupervisorOptions = useMemo(() => items
-    .filter(item => item.company_id === draftCompanyId && item.status !== "INACTIVE" && normalizeText(item.job_title).includes("supervisor"))
+  const draftSupervisorOptions = useMemo(() => employeeDirectory
+    .filter(item => item.status !== "INACTIVE" && normalizeText(item.job_title).includes("supervisor"))
     .map(item => item.employee.full_name)
     .filter((value, index, array) => array.indexOf(value) === index)
-    .sort((a, b) => a.localeCompare(b, "pt-BR")), [draftCompanyId, items]);
+    .sort((a, b) => a.localeCompare(b, "pt-BR")), [employeeDirectory]);
   const selectedCenter = companyCenters.find(item => item.id === Number(draft.result_center_id)) ?? companyCenters[0] ?? null;
   const generatedEmployeeCode = useMemo(() => {
     if (!selectedCenter) return "";
@@ -323,6 +325,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
           result_center_id: draft.result_center_id,
           salary_base: Number(draft.salary_base || 0),
           gratification: Number(draft.gratification || 0),
+          family_allowance_eligible: draft.family_allowance_eligible,
           cost_aid: draft.benefits.includes("Ajuda de custo") ? Number(draft.cost_aid || 0) : 0,
           cep: draft.cep.replace(/\D/g, ""),
           street: draft.street,
@@ -518,6 +521,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
               result_center_id: center.id,
               salary_base: normalized.salary,
               gratification: normalized.gratification,
+              family_allowance_eligible: normalized.familyAllowanceEligible,
               cost_aid: normalized.costAid,
               cep: normalized.cep,
               street: normalized.street,
@@ -606,6 +610,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       <label>Modalidade<select value={draft.employment_type_id} onChange={event => setDraft(current => ({ ...current, employment_type_id: event.target.value }))} required><option value="">Selecione</option>{companyTypes.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
       <label>Salário base<input value={draft.salary_base} onChange={event => setDraft(current => ({ ...current, salary_base: event.target.value }))} type="number" step="100" required /></label>
       <label>Gratificação<input value={draft.gratification} onChange={event => setDraft(current => ({ ...current, gratification: event.target.value }))} type="number" min="0" step="0.01" /></label>
+      <label className="check"><input type="checkbox" checked={draft.family_allowance_eligible} onChange={event => setDraft(current => ({ ...current, family_allowance_eligible: event.target.checked }))} /> Elegível ao salário-família (fora do custo)</label>
       <h3 className="span-2 form-section-title">Endereço</h3>
       <label className="span-2">CEP<input value={draft.cep} onChange={event => setDraft(current => ({ ...current, cep: event.target.value.replace(/\D/g, "") }))} placeholder="00000000" maxLength={8} inputMode="numeric" required /></label>
       <label className="span-2">Rua<input value={draft.street} onChange={event => setDraft(current => ({ ...current, street: upperText(event.target.value) }))} placeholder="Logradouro" readOnly={addressLocked} /></label>
@@ -643,7 +648,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       {draft.pix_key_type === "PHONE" && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.phone && Boolean(draft.phone)} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.phone : "" }))} /> Meu celular</label>}
       <fieldset className="span-2 benefits-fieldset">
         <legend>Benefícios</legend>
-        {["Vale transporte", "Alimentação", "Cesta básica", "Plano de saúde", "Seguro de vida", "Ajuda de custo"].map(benefit => <label className="check" key={benefit}><input type="checkbox" checked={draft.benefits.includes(benefit)} onChange={event => setDraft(current => ({ ...current, benefits: event.target.checked ? [...current.benefits, benefit] : current.benefits.filter(item => item !== benefit) }))} /> {benefit}</label>)}
+        {["Vale transporte", "Alimentação", "Cesta básica", "Plano de saúde", "Plano odontológico", "Seguro de vida", "Ajuda de custo"].map(benefit => <label className="check" key={benefit}><input type="checkbox" checked={draft.benefits.includes(benefit)} onChange={event => setDraft(current => ({ ...current, benefits: event.target.checked ? [...current.benefits, benefit] : current.benefits.filter(item => item !== benefit) }))} /> {benefit}</label>)}
         {draft.benefits.includes("Ajuda de custo") && <label className="span-2">Valor da ajuda de custo<input value={draft.cost_aid} onChange={event => setDraft(current => ({ ...current, cost_aid: event.target.value }))} type="number" min="0" step="0.01" placeholder="0,00" /></label>}
       </fieldset>
       <label className="span-2">Observações<textarea value={draft.notes} onChange={event => setDraft(current => ({ ...current, notes: upperText(event.target.value) }))} rows={2} /></label>
@@ -683,11 +688,7 @@ export function EmployeesPage({ token, user }: { token: string; user: User }) {
       centers={centers}
       types={types}
       jobTitleOptions={jobTitleOptions}
-      supervisorOptions={items
-        .filter(item => item.company_id === selected.company_id && item.status !== "INACTIVE" && normalizeText(item.job_title).includes("supervisor"))
-        .map(item => item.employee.full_name)
-        .filter((value, index, array) => array.indexOf(value) === index)
-        .sort((a, b) => a.localeCompare(b, "pt-BR"))}
+      supervisorOptions={Array.from(new Set([...draftSupervisorOptions, selected.supervisor_name].filter(Boolean)))}
       onClose={() => setSelected(null)}
       onAction={simulate}
       onSaved={updated => {
@@ -790,6 +791,7 @@ function EmployeeDrawer({
           result_center_id: draft.result_center_id,
           salary_base: salaryChanged && salaryMode === "history" ? employee.salary_base : Number(draft.salary_base || 0),
           gratification: Number(draft.gratification || 0),
+          family_allowance_eligible: draft.family_allowance_eligible,
           cost_aid: benefitDraft.includes("Ajuda de custo") ? Number(draft.cost_aid || 0) : 0,
           salary_mode: salaryMode === "correction" ? "correction" : undefined,
           cep: draft.cep.replace(/\D/g, ""),
@@ -931,6 +933,7 @@ function EmployeeDrawer({
       <label>Data de admissão<input value={draft.admission_date} onChange={event => setDraft(current => ({ ...current, admission_date: event.target.value }))} type="date" required /></label>
       <label>Salário base<input value={draft.salary_base} onChange={event => setDraft(current => ({ ...current, salary_base: event.target.value }))} type="number" step="0.01" required /></label>
       <label>Gratificação<input value={draft.gratification} onChange={event => setDraft(current => ({ ...current, gratification: event.target.value }))} type="number" min="0" step="0.01" /></label>
+      <label className="check"><input type="checkbox" checked={draft.family_allowance_eligible} onChange={event => setDraft(current => ({ ...current, family_allowance_eligible: event.target.checked }))} /> Elegível ao salário-família (fora do custo)</label>
       {salaryChanged && <fieldset className="span-2 benefits-fieldset">
         <legend>Tipo da alteração salarial</legend>
         <label className="check"><input type="radio" name="salary_mode" checked={salaryMode === "history"} onChange={() => setSalaryMode("history")} /> Ajuste salarial: cria histórico e movimentação</label>
@@ -953,7 +956,7 @@ function EmployeeDrawer({
       {(draft.pix_key_type === "CPF" || draft.pix_key_type === "CNPJ") && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.cpf_cnpj} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.cpf_cnpj : "" }))} /> Meu CPF/CNPJ</label>}
       {draft.pix_key_type === "EMAIL" && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.email && Boolean(draft.email)} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.email : "" }))} /> Meu e-mail</label>}
       {draft.pix_key_type === "PHONE" && <label className="check span-2"><input type="checkbox" checked={draft.pix_key === draft.phone && Boolean(draft.phone)} onChange={event => setDraft(current => ({ ...current, pix_key: event.target.checked ? current.phone : "" }))} /> Meu celular</label>}
-      <fieldset className="span-2 benefits-fieldset"><legend>Benefícios</legend>{["Vale transporte", "Alimentação", "Cesta básica", "Plano de saúde", "Seguro de vida", "Ajuda de custo"].map(benefit => <label className="check" key={benefit}><input type="checkbox" checked={benefitDraft.includes(benefit)} onChange={event => setBenefitDraft(current => event.target.checked ? [...current, benefit] : current.filter(item => item !== benefit))} /> {benefit}</label>)}{benefitDraft.includes("Ajuda de custo") && <label className="span-2">Valor da ajuda de custo<input value={draft.cost_aid} onChange={event => setDraft(current => ({ ...current, cost_aid: event.target.value }))} type="number" min="0" step="0.01" /></label>}</fieldset>
+      <fieldset className="span-2 benefits-fieldset"><legend>Benefícios</legend>{["Vale transporte", "Alimentação", "Cesta básica", "Plano de saúde", "Plano odontológico", "Seguro de vida", "Ajuda de custo"].map(benefit => <label className="check" key={benefit}><input type="checkbox" checked={benefitDraft.includes(benefit)} onChange={event => setBenefitDraft(current => event.target.checked ? [...current, benefit] : current.filter(item => item !== benefit))} /> {benefit}</label>)}{benefitDraft.includes("Ajuda de custo") && <label className="span-2">Valor da ajuda de custo<input value={draft.cost_aid} onChange={event => setDraft(current => ({ ...current, cost_aid: event.target.value }))} type="number" min="0" step="0.01" /></label>}</fieldset>
       <label className="span-2">Observações<textarea value={draft.notes} onChange={event => setDraft(current => ({ ...current, notes: upperText(event.target.value) }))} rows={2} /></label>
       <div className="span-2 field-feedback-group">
         {pixMessage && <p className="field-feedback error">{pixMessage}</p>}
@@ -969,6 +972,7 @@ function EmployeeDrawer({
       <Info label="Centro atual" value={`${employee.result_center.code} - ${employee.result_center.name}`} />
       <Info label="Modalidade" value={employee.employment_type.name} />
       <Info label="Salário base" value={money.format(employee.salary_base)} />
+      <Info label="Salário-família" value={employee.family_allowance_eligible ? "Elegível — valor conforme vigência global" : "Não"} />
       <Info label="Gratificação" value={money.format(employee.gratification ?? 0)} />
       <Info label="Custo estimado do mês" value={money.format(estimatedCost)} />
       <Info label="Endereço" value={[employee.street, employee.address_number, employee.address_complement, employee.neighborhood, employee.city, employee.state].filter(Boolean).join(", ") || "-"} />
@@ -1061,7 +1065,7 @@ function EmploymentTransitionModal({
         <label>Salário/valor base<input type="number" min="0.01" step="0.01" value={salary} onChange={event => setSalary(event.target.value)} required /></label>
         <label>Gratificação<input type="number" min="0" step="0.01" value={gratification} onChange={event => setGratification(event.target.value)} /></label>
         <label>Ajuda de custo<input type="number" min="0" step="0.01" value={costAid} onChange={event => setCostAid(event.target.value)} /></label>
-        <fieldset className="span-2 benefits-fieldset"><legend>Benefícios do novo vínculo</legend>{["Vale transporte", "Alimentação", "Cesta básica", "Plano de saúde", "Seguro de vida", "Ajuda de custo"].map(benefit => <label className="check" key={benefit}><input type="checkbox" checked={benefits.includes(benefit)} onChange={event => setBenefits(current => event.target.checked ? [...current, benefit] : current.filter(item => item !== benefit))} /> {benefit}</label>)}</fieldset>
+        <fieldset className="span-2 benefits-fieldset"><legend>Benefícios do novo vínculo</legend>{["Vale transporte", "Alimentação", "Cesta básica", "Plano de saúde", "Plano odontológico", "Seguro de vida", "Ajuda de custo"].map(benefit => <label className="check" key={benefit}><input type="checkbox" checked={benefits.includes(benefit)} onChange={event => setBenefits(current => event.target.checked ? [...current, benefit] : current.filter(item => item !== benefit))} /> {benefit}</label>)}</fieldset>
         <label className="span-2">Observação da transição<textarea rows={2} value={notes} onChange={event => setNotes(upperText(event.target.value))} placeholder="Motivo ou referência da contratação" /></label>
         <div className="actions span-2"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving || !availableTypes.length}>{saving ? "Alterando..." : "Confirmar novo vínculo"}</button></div>
       </form>
@@ -1120,6 +1124,7 @@ function employeeToDraft(employee: DemoEmployee): EmployeeDraft {
     employment_type_id: String(employee.employment_type.id),
     salary_base: String(employee.salary_base ?? 0),
     gratification: String(employee.gratification ?? 0),
+    family_allowance_eligible: Boolean(employee.family_allowance_eligible),
     cost_aid: String(employee.cost_aid ?? 0),
     benefits: employee.benefits ?? [],
     cep: employee.cep ?? "",

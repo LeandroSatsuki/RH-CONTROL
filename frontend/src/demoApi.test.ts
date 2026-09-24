@@ -371,6 +371,11 @@ describe("modo local multiempresa", () => {
     }, adminToken);
     const rows = await demoApi<any[]>("/demo/payroll?company_id=1&competency=2026-08", {}, adminToken);
     expect(rows.find(row => row.employee_id === employee.id)?.cost_aid).toBe(175);
+    const dashboard = await demoApi<any>("/dashboard?company_id=1&competency=2026-08", {}, adminToken);
+    const report = await demoApi<any>("/demo/report-preview?company_id=1&competency=2026-08", {}, adminToken);
+    const total = rows.reduce((sum, row) => sum + row.total_cost, 0);
+    expect(dashboard.cards.reduce((sum: number, card: any) => sum + card.total_cost, 0)).toBeCloseTo(total, 2);
+    expect(report.cards.reduce((sum: number, card: any) => sum + card.total_cost, 0)).toBeCloseTo(total, 2);
   });
 
   it("retoma e confirma lançamentos integrados ao custo folha", async () => {
@@ -416,7 +421,10 @@ describe("modo local multiempresa", () => {
     expect(resumed[0].employees[0].note).toBe("NF agosto");
     await demoApi(`/demo/launches/${batch.id}/confirm?company_id=1`, { method: "POST" }, adminToken);
     const payroll = await demoApi<any[]>("/demo/payroll?company_id=1&competency=2026-08", {}, adminToken);
-    expect(payroll[0].pro_labore).toBe(1800);
+    expect(payroll[0].salary).toBe(1800);
+    expect(payroll[0].pro_labore).toBe(0);
+    expect(payroll[0].charges).toBe(0);
+    expect(payroll[0].total_provisions).toBe(0);
     await expect(demoApi(`/demo/launches/${batch.id}/confirm?company_id=1`, { method: "POST" }, adminToken)).rejects.toThrow("já foi confirmado");
   });
 

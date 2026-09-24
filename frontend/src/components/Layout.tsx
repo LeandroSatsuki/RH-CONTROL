@@ -157,7 +157,7 @@ export function Layout({ user, token, page, onPage, onRefresh, onLogout, childre
             disabled={companySwitching}
             aria-label="Selecionar empresa"
           >
-            {companies.map(company => (
+            {companies.filter(company => company.id === 0 || company.active).map(company => (
               <option key={company.id} value={company.id}>
                 {company.id === 0 ? "Todas as empresas" : `${company.code} - ${company.name}${company.is_primary ? " (principal)" : ""}${company.active ? "" : " (inativa)"}`}
               </option>

@@ -5,6 +5,7 @@ import { Empty, ErrorMessage, SuccessMessage } from "../components/Feedback";
 import { DemoBenefitDistribution, DemoEmployee, DemoMovement, PayrollRow } from "../mocks/demoTypes";
 import { currentCompetency, operationalCompetencies } from "../competencies";
 import { EmploymentType, ResultCenter, User } from "../types";
+import { activeDuring, monthDates } from "../competencyCalculations";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const plainNumber = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
@@ -67,6 +68,7 @@ const fieldLibrary: FieldMeta[] = [
   { id: "daily_hours", source: "Colaboradores", label: "Jornada diária", extractor: row => row.daily_hours ?? "" },
   { id: "document", source: "Colaboradores", label: "CPF / CNPJ", extractor: row => row.employee?.cpf ?? row.cpf ?? row.cnpj ?? "" },
   { id: "employee_benefits", source: "Colaboradores", label: "Benefícios", extractor: row => Array.isArray(row.benefits) ? row.benefits.join(", ") : "" },
+  { id: "employee_family_allowance", source: "Colaboradores", label: "Elegível ao salário-família", extractor: row => row.family_allowance_eligible ? "Sim" : "Não" },
   { id: "salary_base", source: "Colaboradores", label: "Salário base", display: "currency", extractor: row => Number(row.salary_base ?? 0) },
   { id: "gratification", source: "Colaboradores", label: "Gratificação", display: "currency", extractor: row => Number(row.gratification ?? 0) },
   { id: "status", source: "Colaboradores", label: "Status", extractor: row => row.status ?? "" },
@@ -94,6 +96,7 @@ const fieldLibrary: FieldMeta[] = [
   { id: "payroll_transport", source: "Custo / Folha", label: "Vale transporte", display: "currency", extractor: row => Number(row.transport ?? 0) },
   { id: "payroll_meal", source: "Custo / Folha", label: "Alimentação", display: "currency", extractor: row => Number(row.meal ?? 0) },
   { id: "payroll_health", source: "Custo / Folha", label: "Plano de saúde", display: "currency", extractor: row => Number(row.health_plan ?? 0) },
+  { id: "payroll_dental", source: "Custo / Folha", label: "Plano odontológico", display: "currency", extractor: row => Number(row.dental_plan ?? 0) },
   { id: "payroll_insurance", source: "Custo / Folha", label: "Seguro de vida", display: "currency", extractor: row => Number(row.insurance ?? 0) },
   { id: "payroll_lodging", source: "Custo / Folha", label: "Hospedagem", display: "currency", extractor: row => Number(row.lodging ?? 0) },
   { id: "payroll_cost_aid", source: "Custo / Folha", label: "Ajuda de custo", display: "currency", extractor: row => Number(row.cost_aid ?? 0) },
@@ -158,7 +161,7 @@ export function ReportMakerPage({ token, user }: { token: string; user: User }) 
     setError("");
     try {
       const [employeeList, movementList, benefitList, payrollList, resultCenters, employmentTypes, savedTemplates] = await Promise.all([
-        api<DemoEmployee[]>("/employees", {}, token),
+        api<DemoEmployee[]>("/employees?include_history=true", {}, token),
         api<DemoMovement[]>(`/demo/movements?competency=${competency}`, {}, token),
         api<DemoBenefitDistribution[]>(`/demo/benefit-distributions?competency=${competency}`, {}, token),
         api<PayrollRow[]>(`/demo/payroll?competency=${competency}`, {}, token),
@@ -515,7 +518,7 @@ function aggregationOptions(meta?: FieldMeta) {
 function getSourceRows(source: SourceName, employees: DemoEmployee[], movements: DemoMovement[], benefits: DemoBenefitDistribution[], payroll: PayrollRow[], competency: string) {
   switch (source) {
     case "Colaboradores":
-      return employees.filter(employee => employee.status !== "INACTIVE").map(employee => ({
+      return employees.filter(employee => activeDuring(employee, monthDates(competency).end, monthDates(competency).end)).map(employee => ({
         ...employee,
         full_name: employee.employee.full_name,
         employee_name: employee.employee.full_name,

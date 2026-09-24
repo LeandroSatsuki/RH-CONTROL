@@ -1,4 +1,5 @@
 import { DashboardCard, ResultCenter } from "../types";
+import { activeDuring, businessDates, effectiveEmployees, monthDates, monthlyOperational, shiftDay } from "../competencyCalculations";
 import { demoCompanies, demoResultCenters } from "./demoData";
 import { DemoBenefitDistribution, DemoEmployee, DemoMovement, IndicatorSummary, PayrollRow, DemoSettings } from "./demoTypes";
 
@@ -36,6 +37,7 @@ export function payrollRows(
     const lodging = employee.benefits.some(item => normalizeLabel(item) === "hospedagem") ? (employee.result_center.code === "DIR" ? 900 : 550) : 0;
     const insurance = sumBenefit(benefitMap["seguro de vida"] ?? []);
     const healthPlan = sumBenefit(benefitMap["plano de saude"] ?? []);
+    const dentalPlan = sumBenefit(benefitMap["plano odontologico"] ?? []);
     return recalculatePayrollRow({
       employee_id: employee.id,
       person_id: employee.employee.id,
@@ -57,6 +59,7 @@ export function payrollRows(
       lodging,
       insurance,
       health_plan: healthPlan,
+      dental_plan: dentalPlan,
       subtotal_earnings: 0,
       inss: 0,
       rat: 0,
@@ -82,9 +85,10 @@ export function payrollRows(
 }
 
 export function recalculatePayrollRow(row: PayrollRow, rates: DemoSettings["payroll_rates"]): PayrollRow {
+  if (normalizeLabel(row.employment_type.name) === "mei") row = { ...row, salary: roundMoney(row.salary + row.pro_labore), pro_labore: 0 };
   const subtotalEarnings = roundMoney(row.salary + row.gratification + row.pro_labore + row.profit_distribution + row.bonus + row.cost_aid);
-  const benefitTotal = roundMoney(row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan);
-  const chargeBase = subtotalEarnings;
+  const benefitTotal = roundMoney(row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan + (row.dental_plan ?? 0));
+  const chargeBase = row.employment_type.has_charges && !["mei", "freelancer"].includes(normalizeLabel(row.employment_type.name)) ? subtotalEarnings : 0;
   const inss = roundMoney(chargeBase * (rates.inss / 100));
   const rat = roundMoney(chargeBase * (rates.rat / 100));
   const terceiros = roundMoney(chargeBase * (rates.terceiros / 100));
@@ -152,36 +156,37 @@ export function dashboardCards(
   settingsByCompany: Record<number, DemoSettings> = {},
   availableCenters: ResultCenter[] = demoResultCenters
 ): DashboardCard[] {
+  employees = effectiveEmployees(employees, movements);
   const rows = payrollRows(employees, competency, benefitDistributions, settingsByCompany);
-  const [year, month] = competency.split("-").map(Number);
+  const { start, end } = monthDates(competency);
   const centers = availableCenters.filter((center, index) => availableCenters.findIndex(candidate => candidate.code === center.code) === index);
   employees.forEach(employee => {
     if (!centers.some(center => center.code === employee.result_center.code)) centers.push(employee.result_center);
   });
   return centers.map(center => {
-    const centerEmployees = employees.filter(item => item.result_center.code === center.code && item.status !== "INACTIVE");
+    const allCenterEmployees = employees.filter(item => item.result_center.code === center.code);
+    const centerEmployees = allCenterEmployees.filter(item => activeDuring(item, end, end));
     const centerRows = rows.filter(row => row.result_center.code === center.code);
-    const centerMovements = movements.filter(item => item.competency === competency && item.result_center.code === center.code);
+    const centerMovements = movements.filter(item => item.result_center.code === center.code);
     const byType = centerEmployees.reduce<Record<string, number>>((acc, employee) => {
       acc[employee.employment_type.name] = (acc[employee.employment_type.name] ?? 0) + 1;
       return acc;
     }, {});
-    const admissions = centerMovements.filter(item => item.type === "admissão").length;
-    const terminations = centerMovements.filter(item => item.type === "desligamento").length;
-    const nonProductiveHours = centerEmployees.reduce((acc, employee) => acc + nonProductiveHoursForEmployee(employee, centerMovements, year, month), 0);
-    const plannedHours = Math.max(centerEmployees.reduce((acc, employee) => acc + scheduledHoursForEmployee(employee, year, month), 0), 1);
-    const previous = Math.max(centerEmployees.length - admissions + terminations - (center.code === "IND" ? 1 : 0), 0);
+    const metrics = monthlyOperational(allCenterEmployees, centerMovements, competency, settingsByCompany);
+    const { admissions, terminations, unproductive: nonProductiveHours, scheduled: plannedHours } = metrics;
+    const previousDate = shiftDay(start, -1);
+    const previous = new Set(allCenterEmployees.filter(item => activeDuring(item, previousDate, previousDate)).map(item => item.employee.id)).size;
     return {
       id: center.id,
       code: center.code,
       name: center.name,
       color: center.color,
-      active_employees: centerEmployees.length,
+      active_employees: new Set(centerEmployees.map(item => item.employee.id)).size,
       by_employment_type: byType,
       admissions,
       terminations,
       absenteeism: safeDivide(nonProductiveHours, plannedHours),
-      turnover: safeDivide((admissions + terminations) / 2, centerEmployees.length),
+      turnover: safeDivide((admissions + terminations) / 2, metrics.final),
       gross_payroll: sum(centerRows, "gross_payroll"),
       net_payroll: sum(centerRows, "net_payroll"),
       total_cost: sum(centerRows, "total_cost"),
@@ -197,16 +202,11 @@ export function consolidatedIndicators(
   benefitDistributions: DemoBenefitDistribution[] = [],
   settingsByCompany: Record<number, DemoSettings> = {}
 ): IndicatorSummary {
+  employees = effectiveEmployees(employees, movements);
   const rows = payrollRows(employees, competency, benefitDistributions, settingsByCompany);
-  const active = employees.filter(item => item.status !== "INACTIVE").length;
-  const competencyMovements = movements.filter(item => item.competency === competency);
-  const admissions = competencyMovements.filter(item => item.type === "admissão").length;
-  const terminations = competencyMovements.filter(item => item.type === "desligamento").length;
-  const initial = Math.max(active - admissions + terminations, 0);
-  const average = (initial + active) / 2;
-  const [year, month] = competency.split("-").map(Number);
-  const nonProductiveHours = employees.reduce((acc, employee) => acc + nonProductiveHoursForEmployee(employee, competencyMovements, year, month), 0);
-  const programmedHours = Math.max(employees.reduce((acc, employee) => acc + scheduledHoursForEmployee(employee, year, month), 0), 1);
+  const metrics = monthlyOperational(employees, movements, competency, settingsByCompany);
+  const { initial, final: active, admissions, terminations, average, unproductive: nonProductiveHours, scheduled: programmedHours } = metrics;
+  const { start, end } = monthDates(competency);
   return {
     initial_headcount: initial,
     admissions,
@@ -214,12 +214,12 @@ export function consolidatedIndicators(
     final_headcount: active,
     average_headcount: average,
     absenteeism: safeDivide(nonProductiveHours, programmedHours),
-    turnover: safeDivide((admissions + terminations) / 2, average),
+    turnover: safeDivide((admissions + terminations) / 2, active),
     gross_payroll: sum(rows, "gross_payroll"),
     net_payroll: sum(rows, "net_payroll"),
     salary_per_capita: safeDivide(sum(rows, "gross_payroll"), active),
     total_cost: sum(rows, "total_cost"),
-    productive_days: 22,
+    productive_days: Math.max(0, ...employees.map(item => businessDates(start, end, settingsByCompany[item.company_id]).length)),
     non_productive_hours: nonProductiveHours
   };
 }

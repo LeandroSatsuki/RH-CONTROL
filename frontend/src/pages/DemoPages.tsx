@@ -13,6 +13,9 @@ import { CentersPage, TypesPage } from "./CatalogPages";
 import { Company, EmploymentType, ResultCenter, User } from "../types";
 import { buildEmployeeImportTemplateRow, createEmployeeImportApiIssue, EmployeeImportRowResult, validateEmployeeImportRows } from "../employeeImport";
 import { EmployeeImportReport } from "../components/EmployeeImportReport";
+import { DateInput } from "../components/DateInput";
+import { FamilyAllowanceSettings } from "../components/FamilyAllowanceSettings";
+import { activeDuring, monthDates } from "../competencyCalculations";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
@@ -152,6 +155,7 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
   const [savingContract, setSavingContract] = useState(false);
   const [contractDeleteOpen, setContractDeleteOpen] = useState(false);
   const [contractDeleteError, setContractDeleteError] = useState("");
+  const [terminationDate, setTerminationDate] = useState("");
   const fb = useFeedback();
 
   async function load() {
@@ -189,10 +193,11 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
     setRenewEndDate(contractYearEnd(renewalStart));
     setAttachmentName("");
     setAttachmentDataUrl("");
+    setTerminationDate(new Date().toISOString().slice(0, 10));
   }, [selected?.id]);
 
   const meis = useMemo(() => employees.filter(item => item.status === "ACTIVE" && item.employment_type.name === "MEI"), [employees]);
-  const filtered = useMemo(() => contracts.filter(contract => (!status || contract.status === status) && (!query || `${contract.employee_name} ${contract.employee_code} ${contract.result_center.code} ${contract.end_date}`.toLowerCase().includes(query.toLowerCase()))), [contracts, query, status]);
+  const filtered = useMemo(() => contracts.filter(contract => (status ? contract.status === status : contract.status !== "Cancelado") && (!query || `${contract.employee_name} ${contract.employee_code} ${contract.result_center.code} ${contract.end_date}`.toLowerCase().includes(query.toLowerCase()))), [contracts, query, status]);
   const summary = useMemo(() => ({
     pending: contracts.filter(item => item.status === "Pendente de assinatura").length,
     active: contracts.filter(item => item.status === "Ativo").length,
@@ -260,9 +265,21 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
       await api(`/demo/mei-contracts/${selected.id}`, { method: "DELETE", body: JSON.stringify({ password }) }, token);
       setContractDeleteOpen(false);
       setSelected(null);
-      fb.notify("Contrato pendente excluído e registrado na Auditoria.");
+      fb.notify("Contrato excluído da operação. Histórico financeiro e Auditoria preservados.");
       await load();
     } catch (err) { setContractDeleteError(err instanceof Error ? err.message : "Erro ao excluir contrato"); }
+    finally { setSavingContract(false); }
+  }
+
+  async function terminateContract() {
+    if (restricted(user, fb.fail) || !selected) return;
+    setSavingContract(true);
+    try {
+      await api(`/demo/mei-contracts/${selected.id}/terminate`, { method: "POST", body: JSON.stringify({ terminated_on: terminationDate, attachment_name: attachmentName, attachment_data_url: attachmentDataUrl }) }, token);
+      setSelected(null);
+      fb.notify("Distrato registrado. Os lançamentos anteriores foram preservados.");
+      await load();
+    } catch (err) { fb.fail(err instanceof Error ? err.message : "Erro ao registrar distrato"); }
     finally { setSavingContract(false); }
   }
 
@@ -291,16 +308,25 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
   return <PageShell title="Contratos MEI" subtitle="Acompanhe pendências, documentos assinados e renovações sem perder o histórico." error={fb.error} success={fb.success}>
     <div className="summary-grid mei-summary"><Summary label="Total" value={String(contracts.length)} /><Summary label="Ação necessária" value={String(summary.pending)} /><Summary label="Ativos" value={String(summary.active)} /><Summary label="Vencendo / vencidos" value={String(summary.due5)} strong /></div>
     <div className="panel mei-contract-form"><h2>Novo contrato</h2><div className="filters-panel mei-contract-filters"><select value={employeeId} onChange={event => setEmployeeId(event.target.value)} disabled={selectedCompany.id === 0}><option value="">Selecione um MEI</option>{meis.map(employee => <option key={employee.id} value={employee.id}>{employee.employee.full_name} • {employee.employee_code} • {employee.result_center.code}</option>)}</select><label>Vigência inicial<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>Vigência final<input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></label><button className="primary" type="button" onClick={() => void createContract()} disabled={selectedCompany.id === 0 || !employeeId}>Lançar contrato</button></div><p className="note">O contrato será criado em “Ação necessária” até o documento assinado ser anexado.</p></div>
-    <div className="panel filters-panel mei-contract-filters"><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar colaborador, CR ou data" /><select value={status} onChange={event => setStatus(event.target.value)}><option value="">Todos os status</option><option value="Pendente de assinatura">Ação necessária</option><option value="Ativo">Ativo</option></select></div>
-    <DataTable loading={loading} empty="Nenhum contrato MEI encontrado."><table><thead><tr><th>Colaborador</th><th>CR</th><th>Vigência</th><th>Status</th><th>Dias</th><th>Anexo</th><th>Ações</th></tr></thead><tbody>{filtered.map(contract => { const daysLeft = meiDaysLeft(contract.end_date); return <tr key={contract.id} className="clickable" onClick={() => setSelected(contract)}><td>{contract.employee_name}<small>{contract.employee_code}</small></td><td><span className="color-dot" style={{ background: contract.result_center.color }} />{contract.result_center.code}</td><td>{date(contract.start_date)} a {date(contract.end_date)}</td><td><span className={meiStatusClass(contract, daysLeft)}>{contract.status === "Pendente de assinatura" ? "Ação necessária" : daysLeft < 0 ? "Vencido" : contract.status}</span></td><td>{contract.status === "Ativo" ? daysLeft : "-"}</td><td>{contract.attachment_name ?? "-"}</td><td><div className="actions table-actions"><button type="button" className="secondary compact-button" onClick={event => { event.stopPropagation(); setSelected(contract); }}>Consultar</button>{contract.status === "Pendente de assinatura" && <button type="button" className="primary compact-button" onClick={event => { event.stopPropagation(); setSelected(contract); }}>Assinar</button>}{contract.status === "Ativo" && contract.attachment_data_url && <button type="button" className="secondary compact-button" onClick={event => { event.stopPropagation(); downloadAttachment(contract); }}>Baixar</button>}</div></td></tr>; })}</tbody></table>{!filtered.length && !loading && <Empty>Nenhum contrato MEI encontrado.</Empty>}</DataTable>
-    {selected && <div className="panel mei-contract-drawer"><div className="selected-panel-head"><div><span className="eyebrow">Contrato selecionado</span><h2>{selected.employee_name}</h2></div><button className="ghost" type="button" onClick={() => setSelected(null)}>Fechar</button></div><div className="detail-grid"><Summary label="Status" value={selected.status === "Pendente de assinatura" ? "Ação necessária" : selected.status} /><Summary label="Vigência" value={`${date(selected.start_date)} a ${date(selected.end_date)}`} /><Summary label="Dias restantes" value={selected.status === "Ativo" ? String(meiDaysLeft(selected.end_date)) : "-"} /><Summary label="Anexo" value={selected.attachment_name ?? "Pendente"} /></div>
+    <div className="panel filters-panel mei-contract-filters"><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar colaborador, CR ou data" /><select value={status} onChange={event => setStatus(event.target.value)}><option value="">Todos os status</option><option value="Pendente de assinatura">Ação necessária</option><option value="Ativo">Ativo</option><option value="Renovado">Renovado</option><option value="Distratado">Distratado</option><option value="Cancelado">Excluído (histórico)</option></select></div>
+    <DataTable loading={loading} empty="Nenhum contrato MEI encontrado."><table><thead><tr><th>Colaborador</th><th>CR</th><th>Vigência</th><th>Status</th><th>Dias</th><th>Anexo</th><th>Ações</th></tr></thead><tbody>{filtered.map(contract => { const daysLeft = meiDaysLeft(contract.end_date); return <tr key={contract.id} className="clickable" onClick={() => setSelected(contract)}><td>{contract.employee_name}<small>{contract.employee_code}</small></td><td><span className="color-dot" style={{ background: contract.result_center.color }} />{contract.result_center.code}</td><td>{date(contract.start_date)} a {date(contract.end_date)}</td><td><span className={meiStatusClass(contract, daysLeft)}>{contract.status === "Pendente de assinatura" ? "Ação necessária" : contract.status === "Ativo" && daysLeft < 0 ? "Vencido" : contract.status}</span></td><td>{contract.status === "Ativo" ? daysLeft : "-"}</td><td>{contract.attachment_name ?? "-"}</td><td><div className="actions table-actions"><button type="button" className="secondary compact-button" onClick={event => { event.stopPropagation(); setSelected(contract); }}>Consultar</button>{contract.status === "Pendente de assinatura" && <button type="button" className="primary compact-button" onClick={event => { event.stopPropagation(); setSelected(contract); }}>Assinar</button>}{contract.status === "Ativo" && contract.attachment_data_url && <button type="button" className="secondary compact-button" onClick={event => { event.stopPropagation(); downloadAttachment(contract); }}>Baixar</button>}</div></td></tr>; })}</tbody></table>{!filtered.length && !loading && <Empty>Nenhum contrato MEI encontrado.</Empty>}</DataTable>
+    {selected && <div className="modal-backdrop"><section className="modal mei-contract-modal" role="dialog" aria-modal="true" aria-label="Consultar contrato MEI"><ErrorMessage message={fb.error} /><div className="panel mei-contract-drawer"><div className="selected-panel-head"><div><span className="eyebrow">Contrato selecionado</span><h2>{selected.employee_name}</h2></div><button className="ghost" type="button" onClick={() => setSelected(null)}>Fechar</button></div><div className="detail-grid"><Summary label="Status" value={selected.status === "Pendente de assinatura" ? "Ação necessária" : selected.status} /><Summary label="Vigência" value={`${date(selected.start_date)} a ${date(selected.end_date)}`} /><Summary label="Dias restantes" value={selected.status === "Ativo" ? String(meiDaysLeft(selected.end_date)) : "-"} /><Summary label="Anexo" value={selected.attachment_name ?? "Pendente"} /></div>
       {selected.status === "Pendente de assinatura" ? <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">1. Conferir dados</span><h3>Editar contrato pendente</h3><div className="form-grid compact"><label className="span-2">MEI<select value={selectedEmployeeId} onChange={event => setSelectedEmployeeId(event.target.value)}>{meis.map(employee => <option key={employee.id} value={employee.id}>{employee.employee.full_name} • {employee.employee_code}</option>)}</select></label><label>Vigência inicial<input type="date" value={selectedStartDate} onChange={event => setSelectedStartDate(event.target.value)} /></label><label>Vigência final<input type="date" value={selectedEndDate} onChange={event => setSelectedEndDate(event.target.value)} /></label></div><div className="actions"><button className="secondary" type="button" onClick={() => void editContract()} disabled={savingContract}>Salvar alterações</button><button className="danger" type="button" onClick={() => void deleteContract()} disabled={savingContract}>Excluir pendente</button></div></section><section className="panel mei-action-panel mei-sign-panel"><span className="eyebrow">2. Concluir pendência</span><h3>Anexar e ativar</h3><p>O alerta desaparecerá quando o contrato assinado for anexado.</p><label>Contrato assinado<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={handleAttachment} /></label>{attachmentName && <p className="note">Arquivo: <strong>{attachmentName}</strong></p>}<button className="primary" type="button" onClick={() => void signContract()} disabled={savingContract || !attachmentName}>Assinar e ativar</button></section></div>
-      : <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">Documento vigente</span><h3>Contrato assinado</h3><p>Assinado por <strong>{selected.signed_by ?? "-"}</strong> em {selected.signed_at ? dateTime(selected.signed_at) : "-"}.</p><button className="secondary" type="button" onClick={() => downloadAttachment(selected)} disabled={!selected.attachment_data_url}>Baixar contrato</button></section><section className="panel mei-action-panel"><span className="eyebrow">Próxima vigência</span><h3>Renovar sem alterar o histórico</h3><div className="form-grid compact"><label>Início<input type="date" value={renewStartDate} onChange={event => setRenewStartDate(event.target.value)} /></label><label>Fim<input type="date" value={renewEndDate} onChange={event => setRenewEndDate(event.target.value)} /></label></div><p className="note">A renovação cria um novo contrato pendente e preserva este documento assinado.</p><button className="primary" type="button" onClick={() => void renewContract()} disabled={savingContract}>Criar renovação</button></section></div>}
-    </div>}
+      : <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">Documento vigente</span><h3>Contrato assinado</h3><p>Assinado por <strong>{selected.signed_by ?? "-"}</strong> em {selected.signed_at ? dateTime(selected.signed_at) : "-"}.</p><button className="secondary" type="button" onClick={() => downloadAttachment(selected)} disabled={!selected.attachment_data_url}>Baixar contrato</button></section>{selected.status === "Ativo" && <section className="panel mei-action-panel"><span className="eyebrow">Próxima vigência</span><h3>Renovar sem alterar o histórico</h3><div className="form-grid compact"><label>Início<input type="date" value={renewStartDate} onChange={event => setRenewStartDate(event.target.value)} /></label><label>Fim<input type="date" value={renewEndDate} onChange={event => setRenewEndDate(event.target.value)} /></label></div><p className="note">A renovação cria um novo contrato pendente e preserva este documento assinado.</p><button className="primary" type="button" onClick={() => void renewContract()} disabled={savingContract}>Criar renovação</button></section>}</div>}
+    </div>
+    {selected.status === "Ativo" && user.role === "ADMIN" && <section className="panel">
+      <h3>Registrar distrato</h3>
+      <p className="note">Encerra a vigência na data informada, sem apagar custos ou lançamentos anteriores.</p>
+      <div className="form-grid compact"><label>Data do distrato<DateInput value={terminationDate} min={selected.start_date} max={selected.end_date} onChange={event => setTerminationDate(event.target.value)} /></label><label>Documento do distrato<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={handleAttachment} /></label></div>
+      <button className="primary" onClick={() => void terminateContract()} disabled={savingContract || !terminationDate || !attachmentDataUrl}>Confirmar distrato</button>
+    </section>}
+    {selected?.terminated_on && <p>Distrato em {date(selected.terminated_on)}. {selected.termination_attachment_data_url && <a href={selected.termination_attachment_data_url} download={selected.termination_attachment_name || "distrato"}>Baixar documento do distrato</a>}</p>}
+    {selected && selected.status !== "Cancelado" && user.role === "ADMIN" && <button className="danger" disabled={savingContract} onClick={() => void deleteContract()}>Excluir contrato</button>}
+    </section></div>}
     {contractDeleteOpen && selected && <DeleteConfirmationModal
-      title="Excluir contrato pendente"
+      title="Excluir contrato"
       itemName={`${selected.employee_name} • ${date(selected.start_date)} a ${date(selected.end_date)}`}
-      description="O contrato pendente e a movimentação automática associada serão removidos. A exclusão ficará registrada na Auditoria."
+      description="O contrato deixará de habilitar novos lançamentos. Documentos, valores já confirmados e Auditoria serão preservados."
       busy={savingContract}
       error={contractDeleteError}
       onCancel={() => { setContractDeleteOpen(false); setContractDeleteError(""); }}
@@ -362,6 +388,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     lodging: acc.lodging + item.lodging,
     insurance: acc.insurance + item.insurance,
     healthPlan: acc.healthPlan + item.health_plan,
+    dentalPlan: acc.dentalPlan + (item.dental_plan ?? 0),
     subtotal: acc.subtotal + item.subtotal_earnings,
     inss: acc.inss + item.inss,
     rat: acc.rat + item.rat,
@@ -380,7 +407,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     totalProvisions: acc.totalProvisions + item.total_provisions,
     grandTotal: acc.grandTotal + item.grand_total
   }), {
-    salary: 0, gratification: 0, proLabore: 0, profit: 0, bonus: 0, costAid: 0, transport: 0, meal: 0, basicBasket: 0, lodging: 0, insurance: 0, healthPlan: 0,
+    salary: 0, gratification: 0, proLabore: 0, profit: 0, bonus: 0, costAid: 0, transport: 0, meal: 0, basicBasket: 0, lodging: 0, insurance: 0, healthPlan: 0, dentalPlan: 0,
     subtotal: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacationThird: 0,
     fgtsVacation: 0, thirteenth: 0, fgtsThirteenth: 0, notice: 0, fgtsNotice: 0, fgtsFine: 0,
     employerContribution: 0, totalProvisions: 0, grandTotal: 0
@@ -389,9 +416,9 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
     acc[item.result_center.code] = (acc[item.result_center.code] ?? 0) + item.grand_total;
     return acc;
   }, {});
-  const benefitsTotal = totals.transport + totals.meal + totals.basicBasket + totals.lodging + totals.insurance + totals.healthPlan;
+  const benefitsTotal = totals.transport + totals.meal + totals.basicBasket + totals.lodging + totals.insurance + totals.healthPlan + totals.dentalPlan;
   const payrollCenters = distinctBy(rows.map(item => item.result_center), item => item.code).sort((a, b) => a.code.localeCompare(b.code, "pt-BR"));
-  function updateRowField(rowId: number, field: keyof Pick<PayrollRow, "salary" | "gratification" | "pro_labore" | "profit_distribution" | "bonus" | "cost_aid" | "transport" | "meal" | "basic_basket" | "lodging" | "insurance" | "health_plan">, value: number) {
+  function updateRowField(rowId: number, field: keyof Pick<PayrollRow, "salary" | "gratification" | "pro_labore" | "profit_distribution" | "bonus" | "cost_aid" | "transport" | "meal" | "basic_basket" | "lodging" | "insurance" | "health_plan" | "dental_plan">, value: number) {
     setDirtyRows(current => new Set(current).add(rowId));
     setRows(current => current.map(row => {
       if (row.employee_id !== rowId) return row;
@@ -421,7 +448,8 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
           basic_basket: row.basic_basket,
           lodging: row.lodging,
           insurance: row.insurance,
-          health_plan: row.health_plan
+          health_plan: row.health_plan,
+          dental_plan: row.dental_plan
         })
       }, token)));
       setDirtyRows(new Set());
@@ -513,7 +541,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <th colSpan={7} className="group-head group-earnings">Composições</th>
             <th colSpan={5} className="group-head group-charges">Encargos</th>
             <th colSpan={10} className="group-head group-provisions">Provisões</th>
-            <th colSpan={6} className="group-head group-earnings">Benefícios</th>
+            <th colSpan={7} className="group-head group-earnings">Benefícios</th>
             <th rowSpan={2} className="group-head group-total">Total Geral</th>
             <th rowSpan={2}>Memória</th>
           </tr>
@@ -546,6 +574,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <th className="group-earnings">Hospedagem</th>
             <th className="group-earnings">Seguro</th>
             <th className="group-earnings">Plano de Saúde</th>
+            <th className="group-earnings">Plano odontológico</th>
           </tr>
         </thead>
         <tbody>
@@ -641,6 +670,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
                 onChange={value => updateRowField(item.employee_id, "health_plan", value)}
                 className="group-earnings"
               />
+              <EditablePayrollCell value={item.dental_plan ?? 0} editing={editMode} onChange={value => updateRowField(item.employee_id, "dental_plan", value)} className="group-earnings" />
               <td className="group-total strong">{money.format(item.grand_total)}</td>
               <td><button className="icon-button" type="button" onClick={() => setCalculationRow(item)} title="Ver memória de cálculo">i</button></td>
             </tr>
@@ -676,6 +706,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
               <td className="group-earnings strong subtotal-cell">{money.format(totals.lodging)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.insurance)}</td>
               <td className="group-earnings strong subtotal-cell">{money.format(totals.healthPlan)}</td>
+              <td className="group-earnings strong subtotal-cell">{money.format(totals.dentalPlan)}</td>
               <td className="group-total strong">{money.format(totals.grandTotal)}</td>
               <td></td>
             </tr>
@@ -806,6 +837,36 @@ function MovementDrawer({ item, token, user, onClose, onSaved, onDeleted }: { it
   const [success, setSuccess] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const previewSequence = useRef(0);
+  const dailyHours = useRef(Number(item.daily_hours ?? 8.8));
+  const [calculating, setCalculating] = useState(false);
+  async function updatePeriod(event: FormEvent<HTMLFormElement>) {
+    const form = event.currentTarget;
+    const input = event.target as HTMLInputElement;
+    const values = new FormData(form);
+    if (values.get("type") !== "desligamento") return;
+    const daysInput = form.elements.namedItem("days") as HTMLInputElement;
+    const hoursInput = form.elements.namedItem("hour_impact") as HTMLInputElement;
+    if (input.name === "days") {
+      hoursInput.value = (Number(daysInput.value) * dailyHours.current).toFixed(2);
+      return;
+    }
+    if (!["start_date", "end_date", "type"].includes(input.name) || !values.get("start_date")) return;
+    const sequence = ++previewSequence.current;
+    setCalculating(true);
+    try {
+      const preview = await api<{ days: number; hour_impact: number; end_date: string; daily_hours: number }>(`/demo/movement-preview?company_id=${item.company_id}`, {
+        method: "POST", body: JSON.stringify({ employee_id: item.employee_id, start_date: values.get("start_date"), end_date: values.get("end_date") })
+      }, token);
+      if (sequence !== previewSequence.current) return;
+      dailyHours.current = preview.daily_hours;
+      daysInput.value = String(preview.days);
+      hoursInput.value = String(preview.hour_impact);
+      (form.elements.namedItem("end_date") as HTMLInputElement).value = preview.end_date;
+      setError("");
+    } catch (err) { if (sequence === previewSequence.current) setError(err instanceof Error ? err.message : "Erro no cálculo do período."); }
+    finally { if (sequence === previewSequence.current) setCalculating(false); }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -870,17 +931,17 @@ function MovementDrawer({ item, token, user, onClose, onSaved, onDeleted }: { it
       <Summary label="Status" value={item.status} />
       <Summary label="Observação" value={item.observation} />
     </div>
-    {user.role === "ADMIN" ? <form className="panel form-grid compact" onSubmit={submit}>
-      <label>Competência<input name="competency" defaultValue={item.competency} required /></label>
+    {user.role === "ADMIN" ? <form className="panel form-grid compact" onSubmit={submit} onChange={updatePeriod}>
+      <label>Competência de origem<input name="competency" defaultValue={item.source_competency ?? item.competency} required /></label>
       <label>Tipo<select name="type" defaultValue={item.type} required>{movementTypes.map(option => <option key={option} value={option}>{option}</option>)}</select></label>
-      <label>Início<input name="start_date" type="date" defaultValue={item.start_date} required /></label>
-      <label>Fim<input name="end_date" type="date" defaultValue={item.end_date ?? ""} /></label>
-      <label>Dias<input name="days" type="number" step="1" min="1" defaultValue={item.days} required /></label>
-      <label>Horas<input name="hour_impact" type="number" step="0.1" min="0" defaultValue={item.hour_impact} required /></label>
+      <label>Início / último dia trabalhado<DateInput name="start_date" defaultValue={item.start_date} required /></label>
+      <label>Fim<DateInput name="end_date" defaultValue={item.end_date ?? ""} /></label>
+      <label>Dias totais<input name="days" type="number" step="1" min="0" defaultValue={item.total_days ?? item.days} required /></label>
+      <label>Horas totais<input name="hour_impact" type="number" step="0.1" min="0" defaultValue={item.total_hour_impact ?? item.hour_impact} required /></label>
       <label>Status<select name="status" defaultValue={item.status} required><option value="Pendente">Pendente</option><option value="Conferida">Conferida</option><option value="Aplicada">Aplicada</option></select></label>
       <label className="span-2">Observação<input name="observation" defaultValue={item.observation} required /></label>
       <label className="span-2">Senha de confirmação<input name="password" type="password" required /></label>
-      <div className="actions"><button className="primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button><button className="danger" type="button" onClick={() => { setDeleteError(""); setDeleteOpen(true); }} disabled={saving}>Excluir movimentação</button></div>
+      <div className="actions"><button className="primary" disabled={saving || calculating}>{calculating ? "Calculando..." : saving ? "Salvando..." : "Salvar alterações"}</button><button className="danger" type="button" onClick={() => { setDeleteError(""); setDeleteOpen(true); }} disabled={saving}>Excluir movimentação</button></div>
       {error && <p className="error-line span-2">{error}</p>}
       {success && <p className="success-line span-2">{success}</p>}
     </form> : <p className="note">Seu perfil possui acesso somente para consulta.</p>}
@@ -931,6 +992,8 @@ function MovementCreateModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [draftLoaded, setDraftLoaded] = useState(false);
+  const [calculatingPeriod, setCalculatingPeriod] = useState(false);
+  const savedPreviewKey = useRef("");
 
   const basicsSelected = Boolean(employmentType && center);
   const eligibleEmployees = useMemo(() => {
@@ -974,6 +1037,7 @@ function MovementCreateModal({
     try {
       const saved = JSON.parse(window.localStorage.getItem(key) ?? "null") as Partial<MovementDraft> | null;
       if (saved) {
+        savedPreviewKey.current = `${saved.employeeId}:${saved.startDate}:${saved.endDate}:${saved.movementType}`;
         setEmploymentType(saved.employmentType ?? "");
         setCenter(saved.center ?? "");
         setEmployeeId(saved.employeeId ?? "");
@@ -981,7 +1045,7 @@ function MovementCreateModal({
         setMovementType(saved.movementType ?? "falta");
         setStartDate(saved.startDate ?? new Date().toISOString().slice(0, 10));
         setEndDate(saved.endDate ?? "");
-        setDays(Math.max(Number(saved.days) || 1, 1));
+        setDays(Math.max(Number(saved.days ?? 1), saved.movementType === "desligamento" ? 0 : 1));
         setHours(Number(saved.hours) || 0);
         setObservation(saved.observation ?? "");
       }
@@ -1001,7 +1065,23 @@ function MovementCreateModal({
   const selectedEmployee = eligibleEmployees.find(employee => employee.id === Number(employeeId));
   const periodMovement = isPeriodMovement(movementType);
   const calculatedEndDate = periodMovement ? addCalendarDays(startDate, days - 1) : endDate;
-  const calculatedHours = periodMovement ? Number((Number(selectedEmployee?.daily_hours ?? 0) * days).toFixed(2)) : hours;
+  const calculatedHours = periodMovement || movementType === "desligamento" ? Number((Number(selectedEmployee?.daily_hours ?? 0) * days).toFixed(2)) : hours;
+
+  useEffect(() => {
+    const key = `${employeeId}:${startDate}:${endDate}:${movementType}`;
+    if (!draftLoaded || !employeeId || !startDate || movementType !== "desligamento" || key === savedPreviewKey.current) return;
+    let active = true;
+    setCalculatingPeriod(true);
+    api<{ days: number; end_date: string }>(`/demo/movement-preview?company_id=${companyId}`, {
+      method: "POST", body: JSON.stringify({ employee_id: Number(employeeId), start_date: startDate, end_date: endDate || null })
+    }, token).then(preview => {
+      if (!active) return;
+      savedPreviewKey.current = `${employeeId}:${startDate}:${preview.end_date}:${movementType}`;
+      setDays(preview.days); setEndDate(preview.end_date); setError(""); setCalculatingPeriod(false);
+    }).catch(err => { if (active) setError(err instanceof Error ? err.message : "Erro no cálculo do período."); })
+      .finally(() => { if (active) setCalculatingPeriod(false); });
+    return () => { active = false; };
+  }, [draftLoaded, employeeId, startDate, endDate, movementType, companyId, token]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1072,16 +1152,19 @@ function MovementCreateModal({
               {movementTypes.map(option => <option key={option} value={option}>{option}</option>)}
             </select></label>
             <label>Competência<input value={competency} readOnly disabled={!basicsSelected} /></label>
-            <label>Início<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} disabled={!basicsSelected} required /><small>A modalidade e o CR válidos nesta data serão usados.</small></label>
-            <label>Fim<input type="date" value={calculatedEndDate} onChange={event => setEndDate(event.target.value)} disabled={!basicsSelected} readOnly={periodMovement} /><small>{periodMovement ? "Calculado incluindo a data de inÃ­cio." : ""}</small></label>
-            <label>Dias<input type="number" min="1" step="1" value={days} onChange={event => setDays(Number(event.target.value || 1))} disabled={!basicsSelected} required /></label>
-            <label>Horas<input type="number" min="0" step="0.1" value={calculatedHours} onChange={event => setHours(Number(event.target.value || 0))} disabled={!basicsSelected} readOnly={periodMovement} required /><small>{periodMovement ? "Calculadas conforme a jornada diÃ¡ria do colaborador." : ""}</small></label>
+            <label>{movementType === "desligamento" ? "Último dia trabalhado" : "Início"}<DateInput value={startDate} onChange={event => setStartDate(event.target.value)} disabled={!basicsSelected} required /><small>A modalidade e o CR válidos nesta data serão usados.</small></label>
+            <label>Fim<DateInput value={calculatedEndDate} onChange={event => {
+              if (periodMovement && event.target.value >= startDate) setDays(Math.round((Date.parse(event.target.value) - Date.parse(startDate)) / 86400000) + 1);
+              else setEndDate(event.target.value);
+            }} disabled={!basicsSelected} /><small>{movementType === "desligamento" ? "Dias úteis após a saída; você pode ajustar os dias calculados." : periodMovement ? "Inclui a data de início." : ""}</small></label>
+            <label>{movementType === "desligamento" ? "Dias úteis" : "Dias"}<input type="number" min={movementType === "desligamento" ? "0" : "1"} step="1" value={days} onChange={event => setDays(Number(event.target.value))} disabled={!basicsSelected || calculatingPeriod} required /></label>
+            <label>Horas<input type="number" min="0" step="0.1" value={calculatedHours} onChange={event => setHours(Number(event.target.value || 0))} disabled={!basicsSelected} readOnly={periodMovement || movementType === "desligamento"} required /><small>{periodMovement || movementType === "desligamento" ? "Dias × jornada diária do colaborador." : ""}</small></label>
             <label className="span-2">Observação<input value={observation} onChange={event => setObservation(event.target.value)} disabled={!basicsSelected} placeholder="Descreva o motivo ou contexto da movimentação" /></label>
           </div>
           {error && <p className="error-line">{error}</p>}
           <div className="actions movement-modal-actions">
             <button type="button" className="secondary" onClick={onClose}>Cancelar</button>
-            <button className="primary" disabled={saving || !basicsSelected || !employeeId}>{saving ? "Salvando..." : "Salvar movimentação"}</button>
+            <button className="primary" disabled={saving || calculatingPeriod || loadingEmployees || !basicsSelected || !employeeId}>{calculatingPeriod ? "Calculando..." : saving ? "Salvando..." : "Salvar movimentação"}</button>
           </div>
         </div>
       </form>
@@ -1141,6 +1224,7 @@ type ReportKey =
   | "benefit-vt"
   | "benefit-al"
   | "benefit-ps"
+  | "benefit-po"
   | "benefit-sv";
 
 interface ReportColumn {
@@ -1166,6 +1250,13 @@ interface ReportCatalogItem {
   hint: string;
 }
 
+interface CompanyReportPreview {
+  company: string;
+  company_logo: string;
+  cards: { code: string; name: string; color: string; active_employees: number; gross_payroll: number; total_cost: number; absenteeism?: number; turnover?: number; admissions?: number; terminations?: number }[];
+  summary?: { active_employees: number; admissions: number; terminations: number; absenteeism: number; turnover: number };
+}
+
 interface ReportFilters {
   center: string;
   state: string;
@@ -1187,6 +1278,7 @@ const reportCatalog: ReportCatalogItem[] = [
   { key: "benefit-vt", title: "Benefício - Vale transporte", description: "Distribuições de vale transporte com dias, valor por dia e valor mensal.", hint: "Benefícios" },
   { key: "benefit-al", title: "Benefício - Alimentação", description: "Distribuições de alimentação em lote ou individual, por colaborador.", hint: "Benefícios" },
   { key: "benefit-ps", title: "Benefício - Plano de saúde", description: "Distribuições recorrentes com visão mensal por colaborador.", hint: "Benefícios" },
+  { key: "benefit-po", title: "Benefício - Plano odontológico", description: "Distribuições recorrentes com visão mensal por colaborador.", hint: "Benefícios" },
   { key: "benefit-sv", title: "Benefício - Seguro de vida", description: "Distribuições de seguro de vida com controle mensal e histórico.", hint: "Benefícios" }
 ];
 
@@ -1202,7 +1294,7 @@ export function ReportsPage({ token }: { token: string }) {
     supervisor: "",
     query: ""
   });
-  const [companyPreview, setCompanyPreview] = useState<{ company: string; company_logo: string; cards: { code: string; name: string; color: string; active_employees: number; gross_payroll: number; total_cost: number; absenteeism?: number; turnover?: number }[] } | null>(null);
+  const [companyPreview, setCompanyPreview] = useState<CompanyReportPreview | null>(null);
   const [employees, setEmployees] = useState<DemoEmployee[]>([]);
   const [movements, setMovements] = useState<DemoMovement[]>([]);
   const [benefits, setBenefits] = useState<DemoBenefitDistribution[]>([]);
@@ -1214,15 +1306,13 @@ export function ReportsPage({ token }: { token: string }) {
     setLoading(true);
     fb.setError("");
     try {
-      const [preview, employeeList, movementList, benefitList, allocationList, indicatorSummary] = await Promise.all([
-        api<{ company: string; company_logo: string; cards: { code: string; name: string; color: string; active_employees: number; gross_payroll: number; total_cost: number; absenteeism?: number; turnover?: number }[] }>(`/demo/report-preview?competency=${competency}`, {}, token),
-        api<DemoEmployee[]>("/employees", {}, token),
+      const [employeeList, movementList, benefitList, allocationList, indicatorSummary] = await Promise.all([
+        api<DemoEmployee[]>("/employees?include_history=true", {}, token),
         api<DemoMovement[]>(`/demo/movements?competency=${competency}`, {}, token),
         api<DemoBenefitDistribution[]>(`/demo/benefit-distributions?competency=${competency}`, {}, token),
         api<DemoCostAllocation[]>(`/demo/cost-allocations?competency=${competency}`, {}, token),
         api<IndicatorSummary>(`/demo/indicators?competency=${competency}`, {}, token)
       ]);
-      setCompanyPreview(preview);
       setEmployees(employeeList);
       setMovements(movementList);
       setBenefits(benefitList);
@@ -1239,6 +1329,16 @@ export function ReportsPage({ token }: { token: string }) {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [competency, token, selectedCompany.id]);
+
+  useEffect(() => {
+    let active = true;
+    setCompanyPreview(null);
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ company_id: String(selectedCompany.id), competency, center_code: filters.center, state: filters.state, modality: filters.employmentType, supervisor: filters.supervisor, query: filters.query });
+      api<CompanyReportPreview>(`/demo/report-preview?${params}`, {}, token).then(value => { if (active) setCompanyPreview(value); }).catch(err => { if (active) fb.fail(err instanceof Error ? err.message : "Erro ao calcular totais filtrados."); });
+    }, 300);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [competency, token, selectedCompany.id, filters]);
 
   const previews: Record<ReportKey, ReportPreview> = useMemo(() => buildReportPreviews({
     competency,
@@ -1311,9 +1411,9 @@ export function ReportsPage({ token }: { token: string }) {
           {selectedReport.kpis.map(kpi => <Summary key={kpi.label} label={kpi.label} value={kpi.value} strong />)}
         </div>
         <div className="actions report-actions">
-          <button className="secondary" type="button" onClick={() => void downloadReportExcel(selectedReport, selectedReport.exportLabel, companyPreview?.company ?? selectedCompany.name, competency)}>Baixar Excel</button>
-          <button className="secondary" type="button" onClick={() => downloadReportPdf(selectedReport, selectedReport.exportLabel, companyPreview?.company ?? selectedCompany.name, competency)}>Gerar PDF</button>
-          <button className="secondary" type="button" onClick={() => {
+          <button className="secondary" type="button" disabled={loading || !companyPreview} onClick={() => void downloadReportExcel(selectedReport, selectedReport.exportLabel, companyPreview?.company ?? selectedCompany.name, competency)}>Baixar Excel</button>
+          <button className="secondary" type="button" disabled={loading || !companyPreview} onClick={() => downloadReportPdf(selectedReport, selectedReport.exportLabel, companyPreview?.company ?? selectedCompany.name, competency)}>Gerar PDF</button>
+          <button className="secondary" type="button" disabled={loading || !companyPreview} onClick={() => {
             try {
               printReport(selectedReport, companyPreview?.company ?? selectedCompany.name, competency, companyPreview?.company_logo);
             } catch (err) {
@@ -1321,7 +1421,7 @@ export function ReportsPage({ token }: { token: string }) {
             }
           }}>Imprimir</button>
         </div>
-        {loading && <div className="inline-loading">Carregando prévias...</div>}
+        {(loading || !companyPreview) && <div className="inline-loading">Carregando prévias...</div>}
         <div className="table-wrap report-preview-shell">
           <table>
             <thead>
@@ -1359,7 +1459,7 @@ function matchesReportQuery(parts: Array<string | number | undefined | null>, qu
 
 function buildReportPreviews(input: {
   competency: string;
-  companyPreview: { company: string; company_logo: string; cards: { code: string; name: string; color: string; active_employees: number; gross_payroll: number; total_cost: number; absenteeism?: number; turnover?: number }[] } | null;
+  companyPreview: CompanyReportPreview | null;
   employees: DemoEmployee[];
   movements: DemoMovement[];
   benefits: DemoBenefitDistribution[];
@@ -1368,7 +1468,7 @@ function buildReportPreviews(input: {
   companyName: string;
   filters: ReportFilters;
 }): Record<ReportKey, ReportPreview> {
-  const cards = (input.companyPreview?.cards ?? demoResultCenters.map(center => ({
+  const cards: CompanyReportPreview["cards"] = (input.companyPreview?.cards ?? demoResultCenters.map(center => ({
     code: center.code,
     name: center.name,
     color: center.color,
@@ -1379,8 +1479,8 @@ function buildReportPreviews(input: {
     turnover: 0
   }))).filter(card => !input.filters.center || card.code === input.filters.center);
   const employeeLookup = new Map(input.employees.map(employee => [employee.id, employee]));
-  const activeEmployees = input.employees.filter(item => item.status !== "INACTIVE" && (!input.filters.center || item.result_center.code === input.filters.center) && (!input.filters.state || item.state === input.filters.state) && (!input.filters.employmentType || item.employment_type.name === input.filters.employmentType) && (!input.filters.supervisor || item.supervisor_name === input.filters.supervisor) && matchesReportQuery([item.employee.full_name, item.employee.cpf, item.employee_code, item.job_title, item.department, item.notes, item.supervisor_name, item.state, item.result_center.code], input.filters.query));
-  const employeeRows = activeEmployees.slice(0, 12).map(employee => ({
+  const activeEmployees = input.employees.filter(item => activeDuring(item, monthDates(input.competency).end, monthDates(input.competency).end) && (!input.filters.center || item.result_center.code === input.filters.center) && (!input.filters.state || item.state === input.filters.state) && (!input.filters.employmentType || item.employment_type.name === input.filters.employmentType) && (!input.filters.supervisor || item.supervisor_name === input.filters.supervisor) && matchesReportQuery([item.employee.full_name, item.employee.cpf, item.employee_code, item.job_title, item.department, item.notes, item.supervisor_name, item.state, item.result_center.code], input.filters.query));
+  const employeeRows = activeEmployees.map(employee => ({
     employee: employee.employee.full_name,
     center: employee.result_center.code,
     type: employee.employment_type.name,
@@ -1395,7 +1495,7 @@ function buildReportPreviews(input: {
       && (!input.filters.employmentType || employee?.employment_type.name === input.filters.employmentType)
       && (!input.filters.supervisor || employee?.supervisor_name === input.filters.supervisor)
       && matchesReportQuery([item.employee_name, item.type, item.result_center.code, item.observation, employee?.employee.cpf, employee?.job_title], input.filters.query);
-  }).slice(0, 12).map(movement => ({
+  }).map(movement => ({
     employee: movement.employee_name,
     type: movement.type,
     center: movement.result_center.code,
@@ -1404,7 +1504,7 @@ function buildReportPreviews(input: {
     status: movement.status,
     observation: movement.observation
   }));
-  const allocationRows = input.allocations.filter(item => (!input.filters.center || item.result_center.code === input.filters.center) && matchesReportQuery([item.result_center.code, item.category, item.description, item.status], input.filters.query)).slice(0, 12).map(item => ({
+  const allocationRows = input.allocations.filter(item => (!input.filters.center || item.result_center.code === input.filters.center) && matchesReportQuery([item.result_center.code, item.category, item.description, item.status], input.filters.query)).map(item => ({
     center: item.result_center.code,
     category: item.category,
     description: item.description,
@@ -1412,15 +1512,14 @@ function buildReportPreviews(input: {
     status: item.status
   }));
   const salaryRows = input.employees
-    .filter(employee => employee.status !== "INACTIVE" && (!input.filters.center || employee.result_center.code === input.filters.center) && (!input.filters.state || employee.state === input.filters.state) && (!input.filters.employmentType || employee.employment_type.name === input.filters.employmentType) && (!input.filters.supervisor || employee.supervisor_name === input.filters.supervisor) && matchesReportQuery([employee.employee.full_name, employee.employee.cpf, employee.job_title, employee.department], input.filters.query))
-    .flatMap(employee => (employee.salary_history ?? []).slice(0, 3).map((item: { date?: string; effective_date?: string; amount: number; family_allowance: number; reason: string }) => ({
+    .filter(employee => activeDuring(employee, monthDates(input.competency).start, monthDates(input.competency).end) && (!input.filters.center || employee.result_center.code === input.filters.center) && (!input.filters.state || employee.state === input.filters.state) && (!input.filters.employmentType || employee.employment_type.name === input.filters.employmentType) && (!input.filters.supervisor || employee.supervisor_name === input.filters.supervisor) && matchesReportQuery([employee.employee.full_name, employee.employee.cpf, employee.job_title, employee.department], input.filters.query))
+    .flatMap(employee => (employee.salary_history ?? []).map((item: { date?: string; effective_date?: string; amount: number; family_allowance: number; reason: string }) => ({
       employee: employee.employee.full_name,
       date: item.date ?? item.effective_date ?? "",
       amount: item.amount,
       family_allowance: item.family_allowance,
       reason: item.reason
-    })))
-    .slice(0, 15);
+    })));
   const leaveRows = input.movements.filter(item => {
     const employee = employeeLookup.get(item.employee_id);
     return ["afastamento", "atestado", "férias"].includes(item.type)
@@ -1429,7 +1528,7 @@ function buildReportPreviews(input: {
       && (!input.filters.employmentType || employee?.employment_type.name === input.filters.employmentType)
       && (!input.filters.supervisor || employee?.supervisor_name === input.filters.supervisor)
       && matchesReportQuery([item.employee_name, item.type, item.observation, employee?.job_title], input.filters.query);
-  }).slice(0, 15).map(item => ({
+  }).map(item => ({
     employee: item.employee_name,
     type: item.type,
     center: item.result_center.code,
@@ -1438,14 +1537,13 @@ function buildReportPreviews(input: {
     observation: item.observation
   }));
   const movementStatsByCenter = cards.map(center => {
-    const scoped = input.movements.filter(item => item.result_center.code === center.code);
     return {
       code: center.code,
       name: center.name,
       color: center.color,
-      admissions: scoped.filter(item => item.type === "admissão").length,
-      terminations: scoped.filter(item => item.type === "desligamento").length,
-      turnover: input.indicators ? input.indicators.turnover : 0
+      admissions: center.admissions ?? 0,
+      terminations: center.terminations ?? 0,
+      turnover: center.turnover ?? 0
     };
   });
   const turnoverRows = cards.map(card => {
@@ -1462,7 +1560,7 @@ function buildReportPreviews(input: {
     const scoped = input.benefits.filter(item => item.benefit_code === definition.code && (!input.filters.center || item.result_center.code === input.filters.center) && (!input.filters.state || item.state === input.filters.state) && (!input.filters.employmentType || item.employment_type === input.filters.employmentType) && (!input.filters.supervisor || item.supervisor_name === input.filters.supervisor) && matchesReportQuery([item.employee_name, item.description, item.source, item.result_center.code], input.filters.query));
     return {
       definition,
-      rows: scoped.slice(0, 15).map(item => ({
+      rows: scoped.map(item => ({
         employee: item.employee_name,
         center: item.result_center.code,
         supervisor: item.supervisor_name,
@@ -1538,10 +1636,10 @@ function buildReportPreviews(input: {
       description: "Faltas, atestados, férias, admissões e desligamentos registrados na competência.",
       exportLabel: "relatorio-movimentacoes-mes",
       kpis: [
-        { label: "Linhas", value: String(input.movements.length) },
-        { label: "Afastamentos", value: String(input.movements.filter(item => ["afastamento", "atestado", "férias"].includes(item.type)).length) },
-        { label: "Pendente", value: String(input.movements.filter(item => item.status === "Pendente").length) },
-        { label: "Aplicada", value: String(input.movements.filter(item => item.status === "Aplicada").length) }
+        { label: "Linhas", value: String(movementRows.length) },
+        { label: "Afastamentos", value: String(movementRows.filter(item => ["afastamento", "atestado", "férias"].includes(item.type)).length) },
+        { label: "Pendente", value: String(movementRows.filter(item => item.status === "Pendente").length) },
+        { label: "Aplicada", value: String(movementRows.filter(item => item.status === "Aplicada").length) }
       ],
       columns: [
         { key: "employee", label: "Colaborador" },
@@ -1559,10 +1657,10 @@ function buildReportPreviews(input: {
       description: "Horas não produtivas e comparação por Centro de Resultado.",
       exportLabel: "relatorio-absenteismo",
       kpis: [
-        { label: "Absenteísmo", value: percent.format(input.indicators?.absenteeism ?? 0) },
-        { label: "Horas não produtivas", value: String((input.indicators?.non_productive_hours ?? 0).toFixed(1)) },
-        { label: "Dias produtivos", value: String(input.indicators?.productive_days ?? 0) },
-        { label: "Efetivo médio", value: String((input.indicators?.average_headcount ?? 0).toFixed(1)) }
+        { label: "Absenteísmo", value: percent.format(input.companyPreview?.summary?.absenteeism ?? 0) },
+        { label: "Horas de afastamentos", value: plainNumber.format(leaveRows.reduce((sum, item) => sum + item.hours, 0)) },
+        { label: "Dias de afastamentos", value: String(leaveRows.reduce((sum, item) => sum + item.days, 0)) },
+        { label: "Registros de afastamento", value: String(leaveRows.length) }
       ],
       columns: [
         { key: "code", label: "Centro" },
@@ -1579,10 +1677,10 @@ function buildReportPreviews(input: {
       description: "Admissões e desligamentos da competência com taxa de rotatividade por centro.",
       exportLabel: "relatorio-turnover",
       kpis: [
-        { label: "Turnover", value: percent.format(input.indicators?.turnover ?? 0) },
-        { label: "Admissões", value: String(input.indicators?.admissions ?? 0) },
-        { label: "Desligamentos", value: String(input.indicators?.terminations ?? 0) },
-        { label: "Efetivo final", value: String(input.indicators?.final_headcount ?? 0) }
+        { label: "Turnover", value: percent.format(input.companyPreview?.summary?.turnover ?? 0) },
+        { label: "Admissões CLT", value: String(input.companyPreview?.summary?.admissions ?? 0) },
+        { label: "Desligamentos", value: String(input.companyPreview?.summary?.terminations ?? 0) },
+        { label: "Cadastros ativos ao fim do mês", value: String(input.companyPreview?.summary?.active_employees ?? 0) }
       ],
       columns: [
         { key: "code", label: "Centro" },
@@ -1620,7 +1718,7 @@ function buildReportPreviews(input: {
         { label: "Colaboradores", value: String(activeEmployees.length) },
         { label: "Registros", value: String(salaryRows.length) },
         { label: "Com salário-família", value: String(salaryRows.filter(item => Number(item.family_allowance) > 0).length) },
-        { label: "Última revisão", value: "2026-01" }
+        { label: "Última revisão", value: salaryRows.map(item => item.date).sort().at(-1)?.slice(0, 7) ?? "—" }
       ],
       columns: [
         { key: "employee", label: "Colaborador" },
@@ -1726,6 +1824,30 @@ function buildReportPreviews(input: {
         { key: "description", label: "Descrição" }
       ],
       rows: benefitCards.find(item => item.definition.code === "PS")?.rows ?? []
+    },
+    "benefit-po": {
+      title: "Benefício - Plano odontológico",
+      description: "Lançamentos recorrentes de plano odontológico por colaborador.",
+      exportLabel: "relatorio-beneficio-plano-odontologico",
+      kpis: (() => {
+        const benefit = benefitCards.find(item => item.definition.code === "PO");
+        return [
+          { label: "Lançamentos", value: String(benefit?.count ?? 0) },
+          { label: "Valor total", value: money.format(benefit?.total ?? 0) },
+          { label: "Colaboradores", value: String(new Set(benefit?.rows.map(item => item.employee)).size ?? 0) },
+          { label: "Competência", value: input.competency.replace("-", "/") }
+        ];
+      })(),
+      columns: [
+        { key: "employee", label: "Colaborador" },
+        { key: "center", label: "Centro" },
+        { key: "supervisor", label: "Supervisor" },
+        { key: "modality", label: "Modalidade" },
+        { key: "amount", label: "Valor", display: "currency" },
+        { key: "source", label: "Origem" },
+        { key: "description", label: "Descrição" }
+      ],
+      rows: benefitCards.find(item => item.definition.code === "PO")?.rows ?? []
     },
     "benefit-sv": {
       title: "Benefício - Seguro de vida",
@@ -2342,6 +2464,7 @@ export function SettingsPage({ token, user, initialSection = "general" }: { toke
         </div>
       </SectionCard>}
       <SectionCard title="Jornada"><label>Jornada padrão<input name="default_daily_hours" type="number" step="0.1" defaultValue={settings?.default_daily_hours ?? 8.8} disabled={user.role !== "ADMIN"} /></label><InfoLine label="Considerar sábado" value={settings?.include_saturdays ? "Sim" : "Não"} /><InfoLine label="Feriados" value={settings?.holidays.join(", ") ?? ""} /></SectionCard>
+      <FamilyAllowanceSettings token={token} user={user} />
       <SectionCard title="Encargos">
         <div className="payroll-rates-grid">
           {payrollRateLabels.map(([key, label]) => (
@@ -2673,6 +2796,7 @@ export function ImportPage({ token, user, embedded = false }: { token: string; u
               result_center_id: center.id,
               salary_base: row.salary,
               gratification: row.gratification,
+              family_allowance_eligible: row.familyAllowanceEligible,
               cost_aid: row.costAid,
               cep: row.cep,
               street: row.street,
@@ -2791,6 +2915,8 @@ function meiDaysLeft(endDate: string) {
 }
 
 function meiStatusClass(contract: DemoMeiContract, daysLeft: number) {
+  if (contract.status === "Renovado") return "status-active";
+  if (["Distratado", "Cancelado"].includes(contract.status)) return "status-inactive";
   if (contract.status === "Pendente de assinatura") return "status-inactive";
   if (daysLeft <= 5) return "severity-pill severity-high";
   if (daysLeft <= 10) return "severity-pill severity-medium";
@@ -2830,7 +2956,7 @@ function EditablePayrollCell({ value, editing, onChange, className }: { value: n
 }
 
 const payrollNumericFields = [
-  "salary", "gratification", "pro_labore", "profit_distribution", "bonus", "cost_aid", "transport", "meal", "basic_basket", "lodging", "insurance", "health_plan",
+  "salary", "gratification", "pro_labore", "profit_distribution", "bonus", "cost_aid", "transport", "meal", "basic_basket", "lodging", "insurance", "health_plan", "dental_plan",
   "subtotal_earnings", "inss", "rat", "terceiros", "fgts", "charges", "vacation", "vacation_third", "fgts_vacation",
   "thirteenth_salary", "fgts_thirteenth_salary", "notice_indemnity", "fgts_notice", "fgts_fine", "employer_contribution",
   "total_provisions", "gross_payroll", "net_payroll", "total_cost", "grand_total"
@@ -2845,7 +2971,7 @@ function normalizePayrollRow(row: PayrollRow) {
 }
 
 function PayrollCalculationMemory({ row, rates, onClose }: { row: PayrollRow; rates: DemoSettings["payroll_rates"]; onClose: () => void }) {
-  const benefits = row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan;
+  const benefits = row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan + (row.dental_plan ?? 0);
   const lines = [
     ["Base dos encargos", "Salário + gratificação + pró-labore + distribuição de lucro + premiação + ajuda de custo", row.subtotal_earnings],
     ["INSS", `${money.format(row.subtotal_earnings)} x ${rates.inss}%`, row.inss],
@@ -2878,7 +3004,7 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
   const headers = [
     "Colaborador", "Centro", "Salario", "Gratificacao", "Prolabore", "DistribuicaoLucro", "Premiacao", "AjudaCusto",
     "Subtotal", "INSS", "RAT", "Terceiros", "FGTS", "TotalEncargos", "Ferias", "1_3Ferias", "FGTSFerias", "13Salario", "FGTS13",
-    "AvisoPrevio", "FGTSAviso", "MultaFGTS", "Patronal", "TotalProvisoes", "ValeTransporte", "Alimentacao", "CestaBasica", "Hospedagem", "Seguro", "PlanoSaude", "TotalGeral"
+    "AvisoPrevio", "FGTSAviso", "MultaFGTS", "Patronal", "TotalProvisoes", "ValeTransporte", "Alimentacao", "CestaBasica", "Hospedagem", "Seguro", "PlanoSaude", "PlanoOdontologico", "TotalGeral"
   ];
   const totals = rows.reduce((acc, row) => ({
     salary: acc.salary + row.salary,
@@ -2893,6 +3019,7 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
     lodging: acc.lodging + row.lodging,
     insurance: acc.insurance + row.insurance,
     health_plan: acc.health_plan + row.health_plan,
+    dental_plan: acc.dental_plan + (row.dental_plan ?? 0),
     subtotal_earnings: acc.subtotal_earnings + row.subtotal_earnings,
     inss: acc.inss + row.inss,
     rat: acc.rat + row.rat,
@@ -2911,7 +3038,7 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
     total_provisions: acc.total_provisions + row.total_provisions,
     grand_total: acc.grand_total + row.grand_total
   }), {
-    salary: 0, gratification: 0, pro_labore: 0, profit_distribution: 0, bonus: 0, cost_aid: 0, transport: 0, meal: 0, basic_basket: 0, lodging: 0, insurance: 0, health_plan: 0,
+    salary: 0, gratification: 0, pro_labore: 0, profit_distribution: 0, bonus: 0, cost_aid: 0, transport: 0, meal: 0, basic_basket: 0, lodging: 0, insurance: 0, health_plan: 0, dental_plan: 0,
     subtotal_earnings: 0, inss: 0, rat: 0, terceiros: 0, fgts: 0, charges: 0, vacation: 0, vacation_third: 0,
     fgts_vacation: 0, thirteenth_salary: 0, fgts_thirteenth_salary: 0, notice_indemnity: 0, fgts_notice: 0, fgts_fine: 0,
     employer_contribution: 0, total_provisions: 0, grand_total: 0
@@ -2927,10 +3054,10 @@ function downloadPayrollCsv(rows: PayrollRow[], company: { id: number; name: str
       row.salary, row.gratification, row.pro_labore, row.profit_distribution, row.bonus, row.cost_aid,
       row.subtotal_earnings, row.inss, row.rat, row.terceiros, row.fgts, row.charges, row.vacation, row.vacation_third, row.fgts_vacation,
       row.thirteenth_salary, row.fgts_thirteenth_salary, row.notice_indemnity, row.fgts_notice, row.fgts_fine, row.employer_contribution,
-      row.total_provisions, row.transport, row.meal, row.basic_basket, row.lodging, row.insurance, row.health_plan, row.grand_total
+      row.total_provisions, row.transport, row.meal, row.basic_basket, row.lodging, row.insurance, row.health_plan, row.dental_plan, row.grand_total
     ]),
     [],
-    ["Totais", "", totals.salary, totals.gratification, totals.pro_labore, totals.profit_distribution, totals.bonus, totals.cost_aid, totals.subtotal_earnings, totals.inss, totals.rat, totals.terceiros, totals.fgts, totals.charges, totals.vacation, totals.vacation_third, totals.fgts_vacation, totals.thirteenth_salary, totals.fgts_thirteenth_salary, totals.notice_indemnity, totals.fgts_notice, totals.fgts_fine, totals.employer_contribution, totals.total_provisions, totals.transport, totals.meal, totals.basic_basket, totals.lodging, totals.insurance, totals.health_plan, totals.grand_total]
+    ["Totais", "", totals.salary, totals.gratification, totals.pro_labore, totals.profit_distribution, totals.bonus, totals.cost_aid, totals.subtotal_earnings, totals.inss, totals.rat, totals.terceiros, totals.fgts, totals.charges, totals.vacation, totals.vacation_third, totals.fgts_vacation, totals.thirteenth_salary, totals.fgts_thirteenth_salary, totals.notice_indemnity, totals.fgts_notice, totals.fgts_fine, totals.employer_contribution, totals.total_provisions, totals.transport, totals.meal, totals.basic_basket, totals.lodging, totals.insurance, totals.health_plan, totals.dental_plan, totals.grand_total]
   ];
   downloadCsv(`custo-folha-${slugify(competency)}.csv`, lines);
 }

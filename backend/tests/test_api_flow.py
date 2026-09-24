@@ -331,7 +331,10 @@ def test_monthly_launches_resume_confirm_and_feed_payroll(client: TestClient) ->
     payroll = client.get(
         "/api/demo/payroll?competency=2026-08", headers=admin
     ).json()[0]
-    assert payroll["pro_labore"] == 1800
+    assert payroll["salary"] == 1800
+    assert payroll["pro_labore"] == 0
+    assert payroll["charges"] == 0
+    assert payroll["total_provisions"] == 0
 
     basket = client.post(
         "/api/demo/launches", headers=admin,
@@ -349,7 +352,7 @@ def test_monthly_launches_resume_confirm_and_feed_payroll(client: TestClient) ->
         "/api/demo/payroll?competency=2026-08", headers=admin
     ).json()[0]
     assert payroll["basic_basket"] == 250
-    assert payroll["grand_total"] > payroll["pro_labore"] + payroll["basic_basket"]
+    assert payroll["grand_total"] == payroll["salary"] + payroll["basic_basket"]
 
     bonus = client.post(
         "/api/demo/launches", headers=admin,
@@ -376,6 +379,35 @@ def test_monthly_launches_resume_confirm_and_feed_payroll(client: TestClient) ->
         "/api/demo/audit-logs?module=Lançamentos", headers=admin
     ).json()
     assert len(audit) == 3
+
+    # Signed renewals retire the predecessor without invalidating past launches.
+    original_id = contract.json()["id"]
+    renewed = client.post(f"/api/demo/mei-contracts/{original_id}/renew", headers=admin,
+        json={"start_date": "2027-08-01", "end_date": "2028-07-31"})
+    assert renewed.status_code == 201
+    renewed_id = renewed.json()["id"]
+    document = {"attachment_name": "assinado.pdf", "attachment_data_url": "data:application/pdf;base64,JVBERi0xLjQ="}
+    assert client.patch(f"/api/demo/mei-contracts/{renewed_id}/sign", headers=admin, json=document).status_code == 200
+    contracts = client.get("/api/demo/mei-contracts", headers=admin).json()
+    assert next(item for item in contracts if item["id"] == original_id)["status"] == "Renovado"
+    assert not any(item["id"] == f"mei-due-{original_id}" for item in client.get("/api/demo/alerts", headers=admin).json())
+    assert client.get(f"/api/demo/launches/{batch['id']}", headers=admin).json()["total"] == 1800
+    assert client.post(f"/api/demo/mei-contracts/{renewed_id}/terminate", headers=admin,
+        json={**document, "terminated_on": "2027-08-20"}).status_code == 200
+    assert client.get(f"/api/demo/launches/{expired_period.json()['id']}", headers=admin).json()["eligible_count"] == 1
+    after_termination = client.post("/api/demo/launches", headers=admin, json={"kind": "MEI", "competency": "2027-09"})
+    assert after_termination.json()["eligible_count"] == 0
+    # Deleting a signed duplicate is audited and retains documents and booked costs.
+    assert client.request("DELETE", f"/api/demo/mei-contracts/{original_id}", headers=admin,
+        json={"password": "wrong"}).status_code == 403
+    assert client.request("DELETE", f"/api/demo/mei-contracts/{original_id}", headers=admin,
+        json={"password": "SenhaForte123"}).status_code == 200
+    archived = next(item for item in client.get("/api/demo/mei-contracts", headers=admin).json() if item["id"] == original_id)
+    assert archived["status"] == "Cancelado"
+    assert archived["attachment_data_url"] == document["attachment_data_url"]
+    historical = client.get(f"/api/demo/launches/{batch['id']}", headers=admin).json()
+    assert historical["employees"][0]["amount"] == 1800
+    assert client.get("/api/demo/payroll?competency=2026-08", headers=admin).json()[0]["salary"] == 1800
 
 
 def test_initial_flow_permissions_and_duplicate_cpf(client: TestClient) -> None:

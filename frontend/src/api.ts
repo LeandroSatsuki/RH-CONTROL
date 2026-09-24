@@ -94,6 +94,9 @@ function injectCompanyId(path: string, options: RequestInit, companyId: number |
   if (typeof options.body !== "string") return { path: scopedPath, body: options.body };
   try {
     const parsed = JSON.parse(options.body) as Record<string, unknown>;
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+      return { path: scopedPath, body: options.body };
+    }
     return {
       path: scopedPath,
       body: JSON.stringify({ ...parsed, company_id: companyId })

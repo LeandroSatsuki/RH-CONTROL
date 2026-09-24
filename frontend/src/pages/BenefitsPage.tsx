@@ -192,7 +192,7 @@ export function BenefitsPage({ token, user }: { token: string; user: User }) {
     return total + item.override.monthlyValue + item.override.dependentsCount * item.override.dependentValue;
   }, 0);
   const isDailyBenefit = activeBenefit?.mode === "DAILY";
-  const isHealthPlan = activeBenefit?.code === "PS";
+  const isHealthPlan = ["PS", "PO"].includes(activeBenefit?.code ?? "");
   const selectedGridClass = isDailyBenefit
     ? "selected-grid-daily"
     : isHealthPlan
@@ -919,6 +919,7 @@ function benefitMatches(rawBenefit: string, benefit: DemoBenefitDefinition) {
     benefit.code === "VT" ? "transporte" : "",
     benefit.code === "AL" ? "alimentacao" : "",
     benefit.code === "PS" ? "plano de saude" : "",
+    benefit.code === "PO" ? "plano odontologico" : "",
     benefit.code === "SV" ? "seguro de vida" : ""
   ].map(normalizeText).filter(Boolean);
 

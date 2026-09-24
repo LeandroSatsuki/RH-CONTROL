@@ -36,6 +36,7 @@ export const demoBenefitDefinitions: DemoBenefitDefinition[] = [
   { id: 2, code: "AL", name: "Alimentação", active: true, mode: "DAILY", applies_to: ["ADM", "IND", "COM", "DIR"], notes: "Pode ser distribuído em lote ou individualmente no mês." },
   { id: 3, code: "CB", name: "Cesta básica", active: true, mode: "MONTHLY", applies_to: ["ADM", "IND", "COM", "DIR"], notes: "Benefício mensal de cesta básica por colaborador." },
   { id: 4, code: "PS", name: "Plano de saúde", active: true, mode: "MONTHLY", applies_to: ["ADM", "IND", "COM", "DIR"], notes: "Valor mensal recorrente por colaborador." },
+  { id: 6, code: "PO", name: "Plano odontológico", active: true, mode: "MONTHLY", applies_to: ["ADM", "IND", "COM", "DIR"], notes: "Valor mensal por titular e dependentes." },
   { id: 5, code: "SV", name: "Seguro de vida", active: true, mode: "MONTHLY", applies_to: ["ADM", "IND", "COM", "DIR"], notes: "Valor mensal recorrente por colaborador." }
 ];
 
