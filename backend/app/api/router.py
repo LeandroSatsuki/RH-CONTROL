@@ -12,9 +12,11 @@ from app.api.routes import (
     result_centers,
     setup,
     users,
+    vacations,
 )
 
 api_router = APIRouter()
+api_router.include_router(vacations.router, prefix="/vacations", tags=["Férias consultivas"])
 api_router.include_router(auth.router, prefix="/auth", tags=["Autenticação"])
 api_router.include_router(companies.router, prefix="/companies", tags=["Empresas"])
 api_router.include_router(setup.router, prefix="/setup", tags=["Configuração inicial"])

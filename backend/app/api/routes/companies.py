@@ -24,6 +24,7 @@ from app.models.payroll_override import PayrollOverride
 from app.models.launch import LaunchBatch
 from app.models.result_center import ResultCenter
 from app.models.system_setting import SystemSetting
+from app.models.vacation import VacationDossier
 from app.models.enums import CompanyKind
 from app.schemas.catalog import (
     CompanyCreate,
@@ -442,6 +443,7 @@ def delete_company(
         )
 
     linked_records = [
+        (VacationDossier, VacationDossier.company_id, "fichas consultivas de férias"),
         (Employee, Employee.company_id, "colaboradores"),
         (Employment, Employment.company_id, "vínculos de colaboradores"),
         (Movement, Movement.company_id, "movimentações"),

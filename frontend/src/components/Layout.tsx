@@ -12,6 +12,7 @@ export type Page =
   | "audit"
   | "employees"
   | "movements"
+  | "vacations"
   | "launches"
   | "mei-contracts"
   | "benefits"
@@ -44,6 +45,7 @@ interface Props {
 const menu: { page: Page; label: string; icon: string; adminOnly?: boolean }[] = [
   { page: "dashboard", label: "Dashboard", icon: "▦" },
   { page: "employees", label: "Colaboradores", icon: "ID" },
+  { page: "vacations", label: "Férias consultivas", icon: "FE" },
   { page: "movements", label: "Movimentações", icon: "MV" },
   { page: "launches", label: "Lançamentos", icon: "LÇ" },
   { page: "mei-contracts", label: "Contratos MEI", icon: "ME" },

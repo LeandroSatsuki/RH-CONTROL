@@ -11,8 +11,12 @@ from app.models.payroll_override import PayrollOverride
 from app.models.result_center import ResultCenter
 from app.models.system_setting import SystemSetting
 from app.models.user import User
+from app.models.vacation import VacationDossier, VacationEvent, VacationHistory
 
 __all__ = [
+    "VacationDossier",
+    "VacationEvent",
+    "VacationHistory",
     "AuditEntry",
     "Employee",
     "Employment",

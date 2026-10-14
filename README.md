@@ -4,7 +4,7 @@ Sistema de controle de custos e pessoas com operação multiempresa, histórico 
 
 ## Versão de produção
 
-Esta release disponibiliza o cliente `1.1.0` com o servidor `1.1.0`, em uma arquitetura cliente-servidor:
+Esta release disponibiliza o cliente `1.2.0` com o servidor `1.2.0`, em uma arquitetura cliente-servidor:
 
 - **Servidor principal:** FastAPI, PostgreSQL, migrations, backup e API compartilhada.
 - **Estações clientes:** aplicativo Windows Electron com frontend React.
@@ -21,6 +21,7 @@ O computador principal deve permanecer ligado durante o uso e ter IP fixo ou res
 - colaboradores por empresa, CPF/CNPJ validado, matrícula automática, endereço, contato, PIX e dados bancários;
 - cargos/funções, modalidades e Centros de Resultado globais, com exclusão protegida quando houver vínculos;
 - histórico salarial e movimentações auditáveis;
+- férias consultivas manuais, períodos e saldo em dias, avisos não bloqueantes, histórico e relatórios;
 - contratos MEI com ações pendentes, edição antes da assinatura, anexo, renovação, download, auditoria e alertas;
 - lançamentos mensais de MEI, cesta básica e premiação, com elegibilidade, rascunho recuperável, confirmação e integração ao Custo/Folha;
 - benefícios mensais, distribuição individual ou em lote e dependentes de plano de saúde;
@@ -37,16 +38,16 @@ O computador principal deve permanecer ligado durante o uso e ter IP fixo ou res
 
 Os artefatos finais ficam em `entregas/`:
 
-- `Nexo-Servidor-Setup-1.1.0.exe` para primeira instalação;
-- `Nexo-Servidor-Atualizador-1.1.0.exe` para servidor já instalado;
-- `Nexo-Cliente-Setup-1.1.0.exe` para instalação manual do cliente.
+- `Nexo-Servidor-Setup-1.2.0.exe` para primeira instalação;
+- `Nexo-Servidor-Atualizador-1.2.0.exe` para servidor já instalado;
+- `Nexo-Cliente-Setup-1.2.0.exe` para instalação manual do cliente.
 
 ### Computador principal
 
-1. Execute `Nexo-Servidor-Setup-1.1.0.exe` como Administrador na primeira instalação.
+1. Execute `Nexo-Servidor-Setup-1.2.0.exe` como Administrador na primeira instalação.
 2. Informe uma senha para o PostgreSQL e uma senha inicial para o usuário `admin`.
 3. Aguarde a confirmação de que banco, migrations, seed, API, firewall e backup foram configurados.
-4. Execute também `Nexo-Cliente-Setup-1.1.0.exe` para usar o Nexo no computador principal.
+4. Execute também `Nexo-Cliente-Setup-1.2.0.exe` para usar o Nexo no computador principal.
 5. Clique duas vezes no atalho de diagnóstico; ele solicitará permissão de Administrador:
 
 ```text
@@ -57,7 +58,7 @@ O resultado deve mostrar `PostgreSQL 5432: True`, `API 8000: True` e `Saude da A
 
 ### Outros computadores
 
-1. Instale somente `Nexo-Cliente-Setup-1.1.0.exe`.
+1. Instale somente `Nexo-Cliente-Setup-1.2.0.exe`.
 2. Na primeira abertura, informe o endereço privado mostrado pelo diagnóstico, por exemplo `http://192.168.0.10:8000`.
 3. Entre com o usuário criado pelo Administrador.
 
@@ -97,9 +98,9 @@ Boas práticas:
 
 ## Atualizações
 
-O cliente Electron consulta versões publicadas em GitHub Releases, baixa a nova versão em segundo plano e oferece a reinicialização. Se o usuário escolher “Depois”, a versão baixada será aplicada quando o Nexo for fechado. A versão `1.1.0` também atualiza regras do servidor e exige a aplicação do atualizador do servidor correspondente.
+O cliente Electron consulta versões publicadas em GitHub Releases, baixa a nova versão em segundo plano e oferece a reinicialização. Se o usuário escolher “Depois”, a versão baixada será aplicada quando o Nexo for fechado. A versão `1.2.0` adiciona o módulo consultivo de férias e exige a aplicação do atualizador do servidor correspondente **antes de atualizar os clientes**.
 
-Em um servidor já instalado, execute `Nexo-Servidor-Atualizador-1.1.0.exe` como Administrador. Esse entregável não faz instalação inicial: ele exige `C:\Nexo\.env`, cria e valida o backup, atualiza os arquivos, aplica migrations e só conclui depois que a API responder pela tarefa automática. Use `Nexo-Servidor-Setup-1.1.0.exe` apenas para uma máquina sem servidor ou para reparo assistido.
+Em um servidor já instalado, execute `Nexo-Servidor-Atualizador-1.2.0.exe` como Administrador. Esse entregável não faz instalação inicial: ele exige `C:\Nexo\.env`, cria e valida o backup, atualiza os arquivos, aplica migrations e só conclui depois que a API responder pela tarefa automática. Use `Nexo-Servidor-Setup-1.2.0.exe` apenas para uma máquina sem servidor ou para reparo assistido.
 
 Antes de qualquer migration, `server-update.ps1` cria e valida um backup integral. Se isso falhar, a atualização é interrompida antes de modificar o banco.
 
@@ -155,21 +156,70 @@ URLs locais:
 
 ## Empacotamento
 
+### Módulo de férias consultivas — versão 1.2.0
+
+Disponível no menu **Férias consultivas**, com fichas manuais por empresa. Não importa
+colaboradores ou movimentações e não altera folha, custos, ponto ou notificações.
+Administradores mantêm as fichas; Consultores podem consultar e executar relatórios.
+
+1. Selecione uma empresa e crie uma **Nova ficha manual**, informando nome, referência
+   opcional e admissão. “Todas as empresas” permite consulta consolidada.
+2. Em **Consultar → Novo lançamento**, registre férias individuais, coletivas,
+   afastamentos ou faltas. Nas férias individuais, selecione o período aquisitivo;
+   nos afastamentos, informe explicitamente o efeito sobre a aquisição.
+3. Use **Simular períodos e avisos** para consultar o saldo na data inicial.
+   Avisos de saldo insuficiente, conflitos, concessão, venda e fracionamento não
+   bloqueiam o salvamento. Datas invertidas ou campos inválidos precisam ser corrigidos.
+4. Consulte os períodos, edite lançamentos ou cancele registros incorretos.
+   Cancelamentos preservam os dados no histórico; cada alteração guarda os estados
+   anterior e posterior, seus períodos, avisos, autor e revisão. Edições concorrentes
+   retornam conflito em vez de sobrescrever os dados de outra máquina.
+5. Execute os relatórios sob demanda: mapa, aquisitivos, concessivos, vencidas e
+   avos/saldo insuficientes. A exportação Excel contém a página exibida (até 100 linhas).
+   O histórico individual também é carregado sob demanda, em páginas de 20 alterações.
+
+Regras simplificadas da especificação: 2,5 dias por mês completo de aniversário,
+sem arredondamento de frações; datas dos lançamentos são inclusivas; suspensões
+adiam os marcos pelos dias corridos únicos, sem duplicar sobreposições. Reinício e
+perda entram em vigor **no dia seguinte ao término informado**, conforme confirmado.
+Coletivas só reiniciam o primeiro período quando o saldo disponível é insuficiente.
+Faltas não reduzem o saldo. Reservas futuras e dias vendidos entram no saldo disponível;
+uma reserva futura não apaga férias já vencidas. O aviso de fracionamento usa como
+referência o [art. 134 da CLT](https://www.planalto.gov.br/ccivil_03/decreto-lei/del5452compilado.htm),
+sem substituir análise trabalhista nem automatizar enquadramentos de afastamentos.
+
+A migração `20261014_0025` cria apenas `vacation_dossiers`, `vacation_events` e
+`vacation_history`, sem reescrever tabelas anteriores. Para homologar, aplique
+`python -m alembic upgrade head` **somente no banco de desenvolvimento configurado**
+e execute backend e frontend normalmente. Não requer novas dependências.
+Para disponibilizar em produção, atualize primeiro o servidor e depois os clientes,
+usando o atualizador com backup obrigatório. A atualização reinicia a API: reserve
+uma breve janela sem usuários lançando dados. Valide `server-status.bat` ao concluir.
+Os instaladores 1.1.0 já existentes não contêm este módulo.
+
+Validação da 1.2.0: 35 testes de backend e 28 de frontend aprovados; lint e build
+verificados; migração aditiva testada em PostgreSQL 16; backup/restauração em base
+isolada preservando 22 tabelas e 21 registros fictícios, incluindo o histórico de férias.
+
+### Comandos de empacotamento
+
+Os exemplos abaixo usam a versão 1.2.0. Não substitua os artefatos de versões anteriores.
+
 ```powershell
 cd frontend
 npm.cmd run desktop:build
 
 cd ..
-.\scripts\build-server-package.ps1 -Version 1.1.0
-.\scripts\build-separated-installers.ps1 -Version 1.1.0
+.\scripts\build-server-package.ps1 -Version 1.2.0
+.\scripts\build-separated-installers.ps1 -Version 1.2.0
 ```
 
 Antes da entrega, valide hashes e tamanhos:
 
 ```powershell
-Get-FileHash .\entregas\Nexo-Servidor-Setup-1.1.0.exe -Algorithm SHA256
-Get-FileHash .\entregas\Nexo-Servidor-Atualizador-1.1.0.exe -Algorithm SHA256
-Get-FileHash .\entregas\Nexo-Cliente-Setup-1.1.0.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Servidor-Setup-1.2.0.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Servidor-Atualizador-1.2.0.exe -Algorithm SHA256
+Get-FileHash .\entregas\Nexo-Cliente-Setup-1.2.0.exe -Algorithm SHA256
 ```
 
 ## Estrutura
