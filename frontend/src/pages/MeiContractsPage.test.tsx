@@ -9,7 +9,7 @@ vi.mock("../api", () => ({ api: vi.fn(), downloadApiFile: vi.fn(), isLocalDataMo
 
 describe("consulta de contrato", () => {
   afterEach(() => { localStorage.clear(); vi.clearAllMocks(); });
-  it("abre consulta em modal e mantém Renovado verde mesmo depois do vencimento original", async () => {
+  it("abre consulta em modal e mostra contrato renovado como Finalizado", async () => {
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
     const contract = { id: 10, company_id: 1, employee_id: 1, employee_name: "Pessoa MEI", employee_code: "ADM-1", employment_type: "MEI",
       result_center: { id: 1, code: "ADM", name: "Administrativo", color: "#2563eb" }, status: "Renovado", start_date: "2025-01-01", end_date: "2025-12-31",
@@ -19,7 +19,7 @@ describe("consulta de contrato", () => {
     const root = createRoot(element);
     try {
       await act(async () => { root.render(<CompanyScopeProvider companies={[{ id: 1, name: "Empresa", code: "E1", kind: "MATRIZ", group: "", parent_company_id: null, active: true }]}><MeiContractsPage token="token" user={{ id: 1, username: "admin", full_name: "Admin", role: "ADMIN", active: true }} /></CompanyScopeProvider>); });
-      const renewed = [...element.querySelectorAll("span")].find(item => item.textContent === "Renovado");
+      const renewed = [...element.querySelectorAll("span")].find(item => item.textContent === "Finalizado");
       expect(renewed?.className).toBe("status-active");
       expect(element.querySelector('[role="dialog"]')).toBeNull();
       const consult = [...element.querySelectorAll("button")].find(item => item.textContent === "Consultar")!;

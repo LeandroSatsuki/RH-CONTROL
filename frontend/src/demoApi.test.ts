@@ -5,7 +5,7 @@ import ExcelJS from "exceljs";
 import { demoApi } from "./demoApi";
 import { readFirstExcelSheet } from "./excel";
 import { Company } from "./types";
-import { DemoEmployee, IndicatorSummary } from "./mocks/demoTypes";
+import { DemoEmployee, IndicatorSummary, PayrollRow } from "./mocks/demoTypes";
 import { EmploymentType, ResultCenter } from "./types";
 
 const adminToken = "local-admin";
@@ -16,6 +16,31 @@ beforeEach(() => {
 });
 
 describe("modo local multiempresa", () => {
+  it("soma freelancer extra ao CLT sem encargos, sem duplicar ao editar a folha", async () => {
+    const types = await demoApi<EmploymentType[]>("/employment-types?company_id=1", {}, adminToken);
+    const centers = await demoApi<ResultCenter[]>("/result-centers?company_id=1", {}, adminToken);
+    const employee = await demoApi<DemoEmployee>("/employees?company_id=1", { method: "POST", body: JSON.stringify({
+      full_name: "CLT COM EXTRA", cpf: "52998224725", employee_code: "ADM-EXTRA", admission_date: "2026-08-01",
+      job_title: "PROMOTOR", employment_type_id: types.find(item => item.name === "CLT")!.id,
+      result_center_id: centers.find(item => item.code === "ADM")!.id, salary_base: 3000, pix_key_type: "CPF", pix_key: "52998224725"
+    }) }, adminToken);
+    const rows = () => demoApi<PayrollRow[]>("/demo/payroll?company_id=1&competency=2026-08", {}, adminToken);
+    const before = (await rows()).find(item => item.employee_id === employee.id)!;
+    const batch = await demoApi<any>("/demo/launches?company_id=1", { method: "POST", body: JSON.stringify({ kind: "FREELANCER", competency: "2026-08" }) }, adminToken);
+    expect(batch.employees.some((item: any) => item.employment_id === employee.id)).toBe(true);
+    await demoApi(`/demo/launches/${batch.id}?company_id=1`, { method: "PATCH", body: JSON.stringify({ items: [{ employment_id: employee.id, amount: 500.55, note: "Extra" }] }) }, adminToken);
+    await demoApi(`/demo/launches/${batch.id}/confirm?company_id=1`, { method: "POST" }, adminToken);
+    const after = (await rows()).find(item => item.employee_id === employee.id)!;
+    expect(after.salary).toBe(before.salary + 500.55);
+    expect(after.freelancer_extra).toBe(500.55);
+    expect(after.charges).toBe(before.charges);
+    expect(after.total_provisions).toBe(before.total_provisions);
+    expect(after.grand_total).toBeCloseTo(before.grand_total + 500.55, 2);
+    await demoApi(`/demo/payroll/${employee.id}?company_id=1&competency=2026-08`, { method: "PATCH", body: JSON.stringify({ salary: after.salary, freelancer_extra: 500.55 }) }, adminToken);
+    expect((await rows()).find(item => item.employee_id === employee.id)).toEqual(after);
+    await expect(demoApi(`/demo/payroll/${employee.id}?company_id=1&competency=2026-08`, { method: "PATCH", body: JSON.stringify({ salary: before.salary, freelancer_extra: 0 }) }, adminToken)).rejects.toThrow("outra operação");
+  });
+
   it("responde a todos os contratos usados pelas telas principais", async () => {
     const endpoints = [
       "/companies",

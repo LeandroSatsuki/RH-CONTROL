@@ -80,6 +80,8 @@ export interface PayrollRow {
   result_center: ResultCenter;
   employment_type: EmploymentType;
   salary: number;
+  /** Breakdown already included in salary, not an additional total. */
+  freelancer_extra?: number;
   gratification: number;
   pro_labore: number;
   profit_distribution: number;

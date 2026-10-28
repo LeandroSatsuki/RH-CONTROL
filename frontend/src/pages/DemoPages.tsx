@@ -16,6 +16,7 @@ import { EmployeeImportReport } from "../components/EmployeeImportReport";
 import { DateInput } from "../components/DateInput";
 import { FamilyAllowanceSettings } from "../components/FamilyAllowanceSettings";
 import { activeDuring, monthDates } from "../competencyCalculations";
+import { contractSemesterEnd, contractDisplayStatus } from "../meiContracts";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const percent = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDigits: 1 });
@@ -140,7 +141,7 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
   const [contracts, setContracts] = useState<DemoMeiContract[]>([]);
   const [employeeId, setEmployeeId] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
-  const [endDate, setEndDate] = useState(contractYearEnd(new Date().toISOString().slice(0, 10)));
+  const [endDate, setEndDate] = useState(contractSemesterEnd(new Date().toISOString().slice(0, 10)));
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<DemoMeiContract | null>(null);
@@ -190,18 +191,18 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
     setSelectedEndDate(selected.end_date);
     const renewalStart = addCalendarDays(selected.end_date, 1);
     setRenewStartDate(renewalStart);
-    setRenewEndDate(contractYearEnd(renewalStart));
+    setRenewEndDate(contractSemesterEnd(renewalStart));
     setAttachmentName("");
     setAttachmentDataUrl("");
     setTerminationDate(new Date().toISOString().slice(0, 10));
   }, [selected?.id]);
 
   const meis = useMemo(() => employees.filter(item => item.status === "ACTIVE" && item.employment_type.name === "MEI"), [employees]);
-  const filtered = useMemo(() => contracts.filter(contract => (status ? contract.status === status : contract.status !== "Cancelado") && (!query || `${contract.employee_name} ${contract.employee_code} ${contract.result_center.code} ${contract.end_date}`.toLowerCase().includes(query.toLowerCase()))), [contracts, query, status]);
+  const filtered = useMemo(() => contracts.filter(contract => (status ? contractDisplayStatus(contract) === status : contract.status !== "Cancelado") && (!query || `${contract.employee_name} ${contract.employee_code} ${contract.result_center.code} ${contract.end_date}`.toLowerCase().includes(query.toLowerCase()))), [contracts, query, status]);
   const summary = useMemo(() => ({
     pending: contracts.filter(item => item.status === "Pendente de assinatura").length,
-    active: contracts.filter(item => item.status === "Ativo").length,
-    due5: contracts.filter(item => item.status === "Ativo" && meiDaysLeft(item.end_date) <= 5).length
+    active: contracts.filter(item => contractDisplayStatus(item) === "Ativo").length,
+    due5: contracts.filter(item => item.status === "Ativo" && meiDaysLeft(item.end_date) >= 0 && meiDaysLeft(item.end_date) <= 5).length
   }), [contracts]);
 
   async function createContract() {
@@ -306,13 +307,13 @@ export function MeiContractsPage({ token, user }: { token: string; user: User })
   }
 
   return <PageShell title="Contratos MEI" subtitle="Acompanhe pendências, documentos assinados e renovações sem perder o histórico." error={fb.error} success={fb.success}>
-    <div className="summary-grid mei-summary"><Summary label="Total" value={String(contracts.length)} /><Summary label="Ação necessária" value={String(summary.pending)} /><Summary label="Ativos" value={String(summary.active)} /><Summary label="Vencendo / vencidos" value={String(summary.due5)} strong /></div>
-    <div className="panel mei-contract-form"><h2>Novo contrato</h2><div className="filters-panel mei-contract-filters"><select value={employeeId} onChange={event => setEmployeeId(event.target.value)} disabled={selectedCompany.id === 0}><option value="">Selecione um MEI</option>{meis.map(employee => <option key={employee.id} value={employee.id}>{employee.employee.full_name} • {employee.employee_code} • {employee.result_center.code}</option>)}</select><label>Vigência inicial<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label>Vigência final<input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></label><button className="primary" type="button" onClick={() => void createContract()} disabled={selectedCompany.id === 0 || !employeeId}>Lançar contrato</button></div><p className="note">O contrato será criado em “Ação necessária” até o documento assinado ser anexado.</p></div>
-    <div className="panel filters-panel mei-contract-filters"><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar colaborador, CR ou data" /><select value={status} onChange={event => setStatus(event.target.value)}><option value="">Todos os status</option><option value="Pendente de assinatura">Ação necessária</option><option value="Ativo">Ativo</option><option value="Renovado">Renovado</option><option value="Distratado">Distratado</option><option value="Cancelado">Excluído (histórico)</option></select></div>
-    <DataTable loading={loading} empty="Nenhum contrato MEI encontrado."><table><thead><tr><th>Colaborador</th><th>CR</th><th>Vigência</th><th>Status</th><th>Dias</th><th>Anexo</th><th>Ações</th></tr></thead><tbody>{filtered.map(contract => { const daysLeft = meiDaysLeft(contract.end_date); return <tr key={contract.id} className="clickable" onClick={() => setSelected(contract)}><td>{contract.employee_name}<small>{contract.employee_code}</small></td><td><span className="color-dot" style={{ background: contract.result_center.color }} />{contract.result_center.code}</td><td>{date(contract.start_date)} a {date(contract.end_date)}</td><td><span className={meiStatusClass(contract, daysLeft)}>{contract.status === "Pendente de assinatura" ? "Ação necessária" : contract.status === "Ativo" && daysLeft < 0 ? "Vencido" : contract.status}</span></td><td>{contract.status === "Ativo" ? daysLeft : "-"}</td><td>{contract.attachment_name ?? "-"}</td><td><div className="actions table-actions"><button type="button" className="secondary compact-button" onClick={event => { event.stopPropagation(); setSelected(contract); }}>Consultar</button>{contract.status === "Pendente de assinatura" && <button type="button" className="primary compact-button" onClick={event => { event.stopPropagation(); setSelected(contract); }}>Assinar</button>}{contract.status === "Ativo" && contract.attachment_data_url && <button type="button" className="secondary compact-button" onClick={event => { event.stopPropagation(); downloadAttachment(contract); }}>Baixar</button>}</div></td></tr>; })}</tbody></table>{!filtered.length && !loading && <Empty>Nenhum contrato MEI encontrado.</Empty>}</DataTable>
-    {selected && <div className="modal-backdrop"><section className="modal mei-contract-modal" role="dialog" aria-modal="true" aria-label="Consultar contrato MEI"><ErrorMessage message={fb.error} /><div className="panel mei-contract-drawer"><div className="selected-panel-head"><div><span className="eyebrow">Contrato selecionado</span><h2>{selected.employee_name}</h2></div><button className="ghost" type="button" onClick={() => setSelected(null)}>Fechar</button></div><div className="detail-grid"><Summary label="Status" value={selected.status === "Pendente de assinatura" ? "Ação necessária" : selected.status} /><Summary label="Vigência" value={`${date(selected.start_date)} a ${date(selected.end_date)}`} /><Summary label="Dias restantes" value={selected.status === "Ativo" ? String(meiDaysLeft(selected.end_date)) : "-"} /><Summary label="Anexo" value={selected.attachment_name ?? "Pendente"} /></div>
+    <div className="summary-grid mei-summary"><Summary label="Total" value={String(contracts.length)} /><Summary label="Ação necessária" value={String(summary.pending)} /><Summary label="Ativos" value={String(summary.active)} /><Summary label="Vencendo em até 5 dias" value={String(summary.due5)} strong /></div>
+    <div className="panel mei-contract-form"><h2>Novo contrato</h2><div className="filters-panel mei-contract-filters"><select value={employeeId} onChange={event => setEmployeeId(event.target.value)} disabled={selectedCompany.id === 0}><option value="">Selecione um MEI</option>{meis.map(employee => <option key={employee.id} value={employee.id}>{employee.employee.full_name} • {employee.employee_code} • {employee.result_center.code}</option>)}</select><label>Vigência inicial<input type="date" value={startDate} onChange={event => { setStartDate(event.target.value); setEndDate(contractSemesterEnd(event.target.value)); }} /></label><label>Vigência final<input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></label><button className="primary" type="button" onClick={() => void createContract()} disabled={selectedCompany.id === 0 || !employeeId}>Lançar contrato</button></div><p className="note">Vigência padrão de 6 meses, com data final ajustável. O contrato ficará em “Ação necessária” até anexar o documento assinado.</p></div>
+    <div className="panel filters-panel mei-contract-filters"><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar colaborador, CR ou data" /><select value={status} onChange={event => setStatus(event.target.value)}><option value="">Todos os status</option><option value="Ação necessária">Ação necessária</option><option value="Ativo">Ativo</option><option value="Finalizado">Finalizado</option><option value="Finalizado / não renovado">Finalizado / não renovado</option><option value="Distratado">Distratado</option><option value="Cancelado">Excluído (histórico)</option></select></div>
+    <DataTable loading={loading} empty="Nenhum contrato MEI encontrado."><table><thead><tr><th>Colaborador</th><th>CR</th><th>Vigência</th><th>Status</th><th>Dias</th><th>Anexo</th><th>Ações</th></tr></thead><tbody>{filtered.map(contract => { const daysLeft = meiDaysLeft(contract.end_date); return <tr key={contract.id} className="clickable" onClick={() => setSelected(contract)}><td>{contract.employee_name}<small>{contract.employee_code}</small></td><td><span className="color-dot" style={{ background: contract.result_center.color }} />{contract.result_center.code}</td><td>{date(contract.start_date)} a {date(contract.end_date)}</td><td><span className={meiStatusClass(contract, daysLeft)}>{contractDisplayStatus(contract)}</span></td><td>{contract.status === "Ativo" ? daysLeft : "-"}</td><td>{contract.attachment_name ?? "-"}</td><td><div className="actions table-actions"><button type="button" className="secondary compact-button" onClick={event => { event.stopPropagation(); setSelected(contract); }}>Consultar</button>{contract.status === "Pendente de assinatura" && <button type="button" className="primary compact-button" onClick={event => { event.stopPropagation(); setSelected(contract); }}>Assinar</button>}{contract.status === "Ativo" && contract.attachment_data_url && <button type="button" className="secondary compact-button" onClick={event => { event.stopPropagation(); downloadAttachment(contract); }}>Baixar</button>}</div></td></tr>; })}</tbody></table>{!filtered.length && !loading && <Empty>Nenhum contrato MEI encontrado.</Empty>}</DataTable>
+    {selected && <div className="modal-backdrop"><section className="modal mei-contract-modal" role="dialog" aria-modal="true" aria-label="Consultar contrato MEI"><ErrorMessage message={fb.error} /><div className="panel mei-contract-drawer"><div className="selected-panel-head"><div><span className="eyebrow">Contrato selecionado</span><h2>{selected.employee_name}</h2></div><button className="ghost" type="button" onClick={() => setSelected(null)}>Fechar</button></div><div className="detail-grid"><Summary label="Status" value={contractDisplayStatus(selected)} /><Summary label="Vigência" value={`${date(selected.start_date)} a ${date(selected.end_date)}`} /><Summary label="Dias restantes" value={selected.status === "Ativo" ? String(meiDaysLeft(selected.end_date)) : "-"} /><Summary label="Anexo" value={selected.attachment_name ?? "Pendente"} /></div>
       {selected.status === "Pendente de assinatura" ? <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">1. Conferir dados</span><h3>Editar contrato pendente</h3><div className="form-grid compact"><label className="span-2">MEI<select value={selectedEmployeeId} onChange={event => setSelectedEmployeeId(event.target.value)}>{meis.map(employee => <option key={employee.id} value={employee.id}>{employee.employee.full_name} • {employee.employee_code}</option>)}</select></label><label>Vigência inicial<input type="date" value={selectedStartDate} onChange={event => setSelectedStartDate(event.target.value)} /></label><label>Vigência final<input type="date" value={selectedEndDate} onChange={event => setSelectedEndDate(event.target.value)} /></label></div><div className="actions"><button className="secondary" type="button" onClick={() => void editContract()} disabled={savingContract}>Salvar alterações</button><button className="danger" type="button" onClick={() => void deleteContract()} disabled={savingContract}>Excluir pendente</button></div></section><section className="panel mei-action-panel mei-sign-panel"><span className="eyebrow">2. Concluir pendência</span><h3>Anexar e ativar</h3><p>O alerta desaparecerá quando o contrato assinado for anexado.</p><label>Contrato assinado<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={handleAttachment} /></label>{attachmentName && <p className="note">Arquivo: <strong>{attachmentName}</strong></p>}<button className="primary" type="button" onClick={() => void signContract()} disabled={savingContract || !attachmentName}>Assinar e ativar</button></section></div>
-      : <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">Documento vigente</span><h3>Contrato assinado</h3><p>Assinado por <strong>{selected.signed_by ?? "-"}</strong> em {selected.signed_at ? dateTime(selected.signed_at) : "-"}.</p><button className="secondary" type="button" onClick={() => downloadAttachment(selected)} disabled={!selected.attachment_data_url}>Baixar contrato</button></section>{selected.status === "Ativo" && <section className="panel mei-action-panel"><span className="eyebrow">Próxima vigência</span><h3>Renovar sem alterar o histórico</h3><div className="form-grid compact"><label>Início<input type="date" value={renewStartDate} onChange={event => setRenewStartDate(event.target.value)} /></label><label>Fim<input type="date" value={renewEndDate} onChange={event => setRenewEndDate(event.target.value)} /></label></div><p className="note">A renovação cria um novo contrato pendente e preserva este documento assinado.</p><button className="primary" type="button" onClick={() => void renewContract()} disabled={savingContract}>Criar renovação</button></section>}</div>}
+      : <div className="mei-contract-workflow"><section className="panel mei-action-panel"><span className="eyebrow">Documento vigente</span><h3>Contrato assinado</h3><p>Assinado por <strong>{selected.signed_by ?? "-"}</strong> em {selected.signed_at ? dateTime(selected.signed_at) : "-"}.</p><button className="secondary" type="button" onClick={() => downloadAttachment(selected)} disabled={!selected.attachment_data_url}>Baixar contrato</button></section>{selected.status === "Ativo" && <section className="panel mei-action-panel"><span className="eyebrow">Próxima vigência</span><h3>Renovar sem alterar o histórico</h3><div className="form-grid compact"><label>Início<input type="date" value={renewStartDate} onChange={event => { setRenewStartDate(event.target.value); setRenewEndDate(contractSemesterEnd(event.target.value)); }} /></label><label>Fim<input type="date" value={renewEndDate} onChange={event => setRenewEndDate(event.target.value)} /></label></div><p className="note">A renovação cria um novo contrato pendente e preserva este documento assinado.</p><button className="primary" type="button" onClick={() => void renewContract()} disabled={savingContract}>Criar renovação</button></section>}</div>}
     </div>
     {selected.status === "Ativo" && user.role === "ADMIN" && <section className="panel">
       <h3>Registrar distrato</h3>
@@ -438,6 +439,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
         method: "PATCH",
         body: JSON.stringify({
           salary: row.salary,
+          freelancer_extra: row.freelancer_extra ?? 0,
           gratification: row.gratification,
           pro_labore: row.pro_labore,
           profit_distribution: row.profit_distribution,
@@ -546,7 +548,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
             <th rowSpan={2}>Memória</th>
           </tr>
           <tr>
-            <th className="group-earnings">Salário</th>
+            <th className="group-earnings">Salários / serviços</th>
             <th className="group-earnings">Gratificação</th>
             <th className="group-earnings">Prolabore</th>
             <th className="group-earnings">Distribuição de Lucro</th>
@@ -584,6 +586,7 @@ export function CostDistributionPage({ token, user }: { token: string; user: Use
               <td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td>
               <EditablePayrollCell
                 value={item.salary}
+                detail={item.freelancer_extra ? `Inclui freelancer sem encargos: ${money.format(item.freelancer_extra)}` : undefined}
                 editing={editMode}
                 onChange={value => updateRowField(item.employee_id, "salary", value)}
                 className="group-earnings"
@@ -2876,14 +2879,6 @@ function addCalendarDays(value: string, days: number) {
   return result.toISOString().slice(0, 10);
 }
 
-function contractYearEnd(startDate: string) {
-  if (!startDate) return "";
-  const result = new Date(`${startDate}T12:00:00`);
-  result.setFullYear(result.getFullYear() + 1);
-  result.setDate(result.getDate() - 1);
-  return result.toISOString().slice(0, 10);
-}
-
 function dateTime(value: string) {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("pt-BR");
@@ -2916,6 +2911,7 @@ function meiDaysLeft(endDate: string) {
 
 function meiStatusClass(contract: DemoMeiContract, daysLeft: number) {
   if (contract.status === "Renovado") return "status-active";
+  if (contract.status === "Ativo" && daysLeft < 0) return "status-inactive";
   if (["Distratado", "Cancelado"].includes(contract.status)) return "status-inactive";
   if (contract.status === "Pendente de assinatura") return "status-inactive";
   if (daysLeft <= 5) return "severity-pill severity-high";
@@ -2936,7 +2932,7 @@ function Summary({ label, value, strong }: { label: string; value: string | numb
   return <div className={`summary-card ${strong ? "strong" : ""}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function EditablePayrollCell({ value, editing, onChange, className }: { value: number; editing: boolean; onChange: (value: number) => void; className: string }) {
+function EditablePayrollCell({ value, editing, onChange, className, detail }: { value: number; editing: boolean; onChange: (value: number) => void; className: string; detail?: string }) {
   return (
     <td className={className}>
       {editing ? (
@@ -2951,6 +2947,7 @@ function EditablePayrollCell({ value, editing, onChange, className }: { value: n
       ) : (
         money.format(value)
       )}
+      {detail && <small>{detail}</small>}
     </td>
   );
 }

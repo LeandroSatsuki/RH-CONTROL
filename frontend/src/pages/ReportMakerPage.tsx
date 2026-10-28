@@ -91,7 +91,8 @@ const fieldLibrary: FieldMeta[] = [
 
   { id: "payroll_employee", source: "Custo / Folha", label: "Colaborador", extractor: row => row.employee_name ?? "" },
   { id: "payroll_center", source: "Custo / Folha", label: "Centro de Resultado", extractor: row => row.result_center?.code ?? "" },
-  { id: "payroll_salary", source: "Custo / Folha", label: "Salário", display: "currency", extractor: row => Number(row.salary ?? 0) },
+  { id: "payroll_salary", source: "Custo / Folha", label: "Salários / serviços (inclui freelancer)", display: "currency", extractor: row => Number(row.salary ?? 0) },
+  { id: "payroll_freelancer_extra", source: "Custo / Folha", label: "Freelancer sem encargos (já incluído nos salários/serviços)", display: "currency", extractor: row => Number(row.freelancer_extra ?? 0) },
   { id: "payroll_gratification", source: "Custo / Folha", label: "Gratificação", display: "currency", extractor: row => Number(row.gratification ?? 0) },
   { id: "payroll_transport", source: "Custo / Folha", label: "Vale transporte", display: "currency", extractor: row => Number(row.transport ?? 0) },
   { id: "payroll_meal", source: "Custo / Folha", label: "Alimentação", display: "currency", extractor: row => Number(row.meal ?? 0) },

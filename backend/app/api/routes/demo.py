@@ -4,7 +4,7 @@ import calendar
 import unicodedata
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -75,7 +75,7 @@ DEFAULT_BENEFITS = [
     ("SV", "Seguro de vida", "MONTHLY", "Valor mensal recorrente por colaborador."),
 ]
 PERIOD_MOVEMENT_TYPES = {"atestado", "afastamento", "férias"}
-LAUNCH_FIELDS = {"MEI": "salary", "FREELANCER": "salary", "BONUS": "bonus", "COST_AID": "cost_aid", "LODGING": "lodging"}
+LAUNCH_FIELDS = {"MEI": "salary", "FREELANCER": "freelancer_extra", "BONUS": "bonus", "COST_AID": "cost_aid", "LODGING": "lodging"}
 LAUNCH_KINDS = {*LAUNCH_FIELDS, "BASIC_BASKET"}
 
 
@@ -111,7 +111,7 @@ def launch_eligible(
     if not employment_active_in_period(employment, period_start, period_end):
         return False
     if kind == "FREELANCER":
-        return normalized(employment.employment_type.name) == "FREELANCER"
+        return True  # Extra service, independent of the employment modality.
     if kind == "BASIC_BASKET":
         return any(normalized(value) == "CESTA BASICA" for value in (employment.benefits or []))
     return kind in {"BONUS", "COST_AID", "LODGING"}
@@ -124,7 +124,7 @@ def launch_batch_to_dict(
     eligible = [
         item for item in employments
         if (batch.status == "CONFIRMED" and item.id in stored)
-        or (batch.status != "CONFIRMED" and launch_eligible(item, batch.kind, valid_mei_ids, batch.competency))
+        or ((batch.status != "CONFIRMED" or batch.kind == "MEI") and launch_eligible(item, batch.kind, valid_mei_ids, batch.competency))
     ]
     return {
         "id": batch.id,
@@ -402,6 +402,13 @@ def movement_to_dict(item: Movement) -> dict[str, Any]:
     }
 
 
+def default_contract_end(start: date) -> date:
+    month_index = start.year * 12 + start.month - 1 + 6
+    year, month = divmod(month_index, 12)
+    anniversary = date(year, month + 1, min(start.day, calendar.monthrange(year, month + 1)[1]))
+    return anniversary - timedelta(days=1)
+
+
 def mei_contract_to_dict(item: MeiContract) -> dict[str, Any]:
     employment = item.employment
     return {
@@ -413,6 +420,11 @@ def mei_contract_to_dict(item: MeiContract) -> dict[str, Any]:
         "result_center": result_center_to_dict(employment),
         "employment_type": employment.employment_type.name,
         "status": item.status,
+        "display_status": (
+            "Finalizado" if item.status == "Renovado"
+            else "Finalizado / não renovado" if item.status == "Ativo" and item.end_date < date.today()
+            else item.status
+        ),
         "renewed_from_id": item.renewed_from_id,
         "terminated_on": item.terminated_on.isoformat() if item.terminated_on else None,
         "termination_attachment_name": item.termination_attachment_name,
@@ -1006,7 +1018,7 @@ def create_mei_contract(
             status_code=422, detail="Selecione apenas colaboradores da modalidade MEI."
         )
     start_date = parse_date(payload.get("start_date"))
-    end_date = parse_date(payload.get("end_date"))
+    end_date = parse_date(payload.get("end_date"), default_contract_end(start_date))
     if end_date < start_date:
         raise HTTPException(
             status_code=422, detail="A vigência final não pode ser anterior à inicial."
@@ -1207,7 +1219,7 @@ def renew_mei_contract(
     if source.status != "Ativo":
         raise HTTPException(status_code=409, detail="Somente contratos ativos podem ser renovados.")
     start_date = parse_date(payload.get("start_date"))
-    end_date = parse_date(payload.get("end_date"))
+    end_date = parse_date(payload.get("end_date"), default_contract_end(start_date))
     if start_date <= source.end_date:
         raise HTTPException(status_code=422, detail="A renovação deve começar depois do fim do contrato anterior.")
     if end_date < start_date:
@@ -1615,12 +1627,13 @@ def launch_response(db: DbSession, batch: LaunchBatch) -> dict[str, Any]:
     )
 
 
-def load_launch_batch(db: DbSession, batch_id: int, company_id: int) -> LaunchBatch:
-    batch = db.scalar(
+def load_launch_batch(db: DbSession, batch_id: int, company_id: int, *, lock: bool = False) -> LaunchBatch:
+    query = (
         select(LaunchBatch)
         .options(selectinload(LaunchBatch.items))
         .where(LaunchBatch.id == batch_id, LaunchBatch.company_id == company_id)
     )
+    batch = db.scalar(query.with_for_update() if lock else query)
     if not batch:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
     return batch
@@ -1698,27 +1711,69 @@ def save_launch_draft(
     user: AdminUser,
     company_id: int = 1,
 ) -> dict[str, Any]:
-    batch = load_launch_batch(db, batch_id, company_id)
-    if batch.status != "PENDING":
+    batch = load_launch_batch(db, batch_id, company_id, lock=True)
+    correcting = batch.status == "CONFIRMED" and batch.kind == "MEI"
+    if batch.status != "PENDING" and not correcting:
         raise HTTPException(status_code=409, detail="Lançamento já confirmado e bloqueado para edição.")
     if is_competency_closed(db, company_id, batch.competency):
         raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para editar.")
+    if payload.get("updated_at") and batch.updated_at:
+        try:
+            expected = datetime.fromisoformat(str(payload["updated_at"]).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Revisão do lote inválida.") from exc
+        current = batch.updated_at
+        if (expected if expected.tzinfo else expected.replace(tzinfo=timezone.utc)) != (
+            current if current.tzinfo else current.replace(tzinfo=timezone.utc)
+        ):
+            raise HTTPException(status_code=409, detail="Este lote foi alterado por outra sessão. Reabra e confira antes de salvar.")
     employments = launch_employments(db, company_id)
     valid_mei_ids = valid_mei_contract_ids(db, company_id, batch.competency)
     eligible_ids = {
         item.id for item in employments
         if launch_eligible(item, batch.kind, valid_mei_ids, batch.competency)
     }
+    previous_items = {item.employment_id: money(item.amount) for item in batch.items}
+    if correcting:
+        eligible_ids.update(previous_items)
     incoming: dict[int, tuple[Decimal, str]] = {}
     for raw in payload.get("items") or []:
         employment_id = int(raw.get("employment_id") or 0)
-        amount = money(raw.get("amount") or 0)
+        try:
+            amount = money(raw.get("amount") or 0)
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail="Informe um valor monetário válido.") from exc
         if employment_id not in eligible_ids:
             raise HTTPException(status_code=422, detail="Há colaborador inelegível neste lançamento.")
-        if amount < 0:
-            raise HTTPException(status_code=422, detail="O valor não pode ser negativo.")
+        if not amount.is_finite() or amount < 0 or amount > Decimal("999999999999.99"):
+            raise HTTPException(status_code=422, detail="Informe um valor não negativo, dentro do limite permitido.")
         if amount > 0:
             incoming[employment_id] = (amount, str(raw.get("note") or "")[:240])
+    if correcting:
+        # Replace the amounts owned by this batch, never add them again or overwrite a manual edit.
+        for employment_id in previous_items.keys() | incoming.keys():
+            override = db.scalar(select(PayrollOverride).where(
+                PayrollOverride.company_id == company_id,
+                PayrollOverride.competency == batch.competency,
+                PayrollOverride.employment_id == employment_id,
+            ).with_for_update())
+            values = dict(override.values or {}) if override else {}
+            if money(values.get("salary", 0)) != previous_items.get(employment_id, Decimal("0")):
+                raise HTTPException(status_code=409, detail="O Custo/Folha foi alterado fora deste lote. Confira os valores antes de corrigir.")
+            if employment_id not in previous_items and money(values.get("pro_labore", 0)) != 0:
+                raise HTTPException(status_code=409, detail="Já existe pró-labore no Custo/Folha deste MEI. Confira o ajuste antes de incluir no lote.")
+            if not override:
+                override = PayrollOverride(company_id=company_id, competency=batch.competency,
+                                           employment_id=employment_id, values={}, updated_by=user.full_name)
+                db.add(override)
+            values["salary"] = as_float(incoming.get(employment_id, (Decimal("0"), ""))[0])
+            override.values = values
+            override.updated_by = user.full_name
+        old_total = sum(previous_items.values(), Decimal("0"))
+        new_total = sum((amount for amount, _ in incoming.values()), Decimal("0"))
+        db.add(AuditEntry(company_id=company_id, module="Lançamentos", action="Lançamento MEI corrigido",
+                          performed_by=user.full_name, performed_role=user.role.value,
+                          details=f"Lote #{batch.id} | {batch.competency} | R$ {old_total:.2f} -> R$ {new_total:.2f}"))
     for item in list(batch.items):
         db.delete(item)
     db.flush()
@@ -1726,7 +1781,10 @@ def save_launch_draft(
         db.add(LaunchItem(batch_id=batch.id, employment_id=employment_id, amount=amount, note=note))
     batch.filters = payload.get("filters") or {}
     batch.updated_by = user.full_name
+    batch.updated_at = datetime.now(timezone.utc)
     db.commit()
+    # expire_on_commit=False otherwise returns deleted items from the identity map.
+    db.expire(batch, ["items"])
     batch = load_launch_batch(db, batch.id, company_id)
     return launch_response(db, batch)
 
@@ -1735,7 +1793,7 @@ def save_launch_draft(
 def confirm_launch(
     batch_id: int, db: DbSession, user: AdminUser, company_id: int = 1
 ) -> dict[str, Any]:
-    batch = load_launch_batch(db, batch_id, company_id)
+    batch = load_launch_batch(db, batch_id, company_id, lock=True)
     if batch.status != "PENDING":
         raise HTTPException(status_code=409, detail="Este lançamento já foi confirmado.")
     if is_competency_closed(db, company_id, batch.competency):
@@ -1762,7 +1820,7 @@ def confirm_launch(
                     PayrollOverride.company_id == company_id,
                     PayrollOverride.competency == batch.competency,
                     PayrollOverride.employment_id.in_([item.employment_id for item in valid_items]),
-                )
+                ).with_for_update()
             )
         }
         conflicts = [
@@ -1969,9 +2027,19 @@ def save_payroll_override(
             PayrollOverride.company_id == employment.company_id,
             PayrollOverride.competency == competency,
             PayrollOverride.employment_id == employment.id,
-        )
+        ).with_for_update()
     )
     if override:
+        previous = override.values or {}
+        extra = money(previous.get("freelancer_extra", 0))
+        if "freelancer_extra" in payload and money(payload["freelancer_extra"]) != extra:
+            raise HTTPException(status_code=409, detail="O freelancer foi atualizado em outra operação. Atualize o Custo/Folha antes de salvar.")
+        # salary is an inclusive presentation total; its stored base stays separate.
+        if "salary" in values and extra:
+            if money(values["salary"]) < extra:
+                raise HTTPException(status_code=422, detail="O total de salários/serviços não pode ser menor que o freelancer já confirmado. Corrija o lançamento de origem.")
+            values["salary"] = as_float(money(values["salary"]) - extra)
+        values = {**previous, **values}
         override.values = values
         override.updated_by = user.full_name
     else:
@@ -2794,6 +2862,9 @@ def payroll_row(
         # Preserve amounts already posted to the legacy pro_labore field.
         salary = money(salary + pro_labore)
         pro_labore = Decimal("0")
+    # Keep legacy freelancer salary overrides intact. Only new launches use this key.
+    freelancer_extra = money(values.get("freelancer_extra", 0))
+    salary = money(salary + freelancer_extra)
     cost_aid = money(values.get("cost_aid", employment.cost_aid * allocation_factor))
     gratification = money(values.get("gratification", employment.gratification * allocation_factor))
     transport = money(values.get("transport", benefits.get("VT", Decimal("0.00"))))
@@ -2809,7 +2880,7 @@ def payroll_row(
         salary + gratification + pro_labore + profit_distribution + bonus + cost_aid
     )
     benefit_total = money(transport + meal + basic_basket + lodging + insurance + health_plan + dental_plan)
-    charge_base = subtotal if employment.employment_type.has_charges and normalized(employment.employment_type.name) not in {"MEI", "FREELANCER"} else Decimal("0")
+    charge_base = money(subtotal - freelancer_extra) if employment.employment_type.has_charges and normalized(employment.employment_type.name) not in {"MEI", "FREELANCER"} else Decimal("0")
     inss = money(charge_base * Decimal(str(rates["inss"])) / 100)
     rat = money(charge_base * Decimal(str(rates["rat"])) / 100)
     terceiros = money(charge_base * Decimal(str(rates["terceiros"])) / 100)
@@ -2856,6 +2927,7 @@ def payroll_row(
         "result_center": result_center_to_dict(employment),
         "employment_type": employment_type_to_dict(employment),
         "salary": as_float(salary),
+        "freelancer_extra": as_float(freelancer_extra),
         "gratification": as_float(gratification),
         "pro_labore": as_float(pro_labore),
         "profit_distribution": as_float(profit_distribution),

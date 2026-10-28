@@ -1,4 +1,5 @@
 import { EmploymentType, ResultCenter, User } from "./types";
+import { contractSemesterEnd } from "./meiContracts";
 import { activeDuring, businessDates, effectiveEmployees, monthDates, monthlyOperational, movementInMonth, shiftDay } from "./competencyCalculations";
 import { consolidatedIndicators, dashboardCards, payrollRows, recalculatePayrollRow } from "./mocks/demoCalculations";
 import { createDemoBenefitDistributions, createDemoCostAllocations, createDemoEmployees, createDemoMeiContracts, createDemoMovements, demoBenefitDefinitions, demoCompanies, demoCompetencies, demoEmploymentTypes, demoResultCenters } from "./mocks/demoData";
@@ -410,7 +411,9 @@ function localPayrollRows(state: DemoState, employees: DemoEmployee[], competenc
   return payrollRows(effectiveEmployees(employees, state.movements), competency, benefits, settings).map(row => {
     const employee = employees.find(item => item.id === row.employee_id)!;
     const override = state.payrollOverrides[`${employee.company_id}:${competency}:${employee.id}`];
-    return override ? recalculatePayrollRow({ ...row, ...override }, settings[employee.company_id].payroll_rates) : row;
+    return override ? recalculatePayrollRow({ ...row, ...override,
+      salary: roundMoney((override.salary ?? row.salary) + (override.freelancer_extra ?? 0))
+    }, settings[employee.company_id].payroll_rates) : row;
   });
 }
 
@@ -445,14 +448,14 @@ function localLaunchEligible(
   }
   const period = monthDates(competency);
   if (!activeDuring(employee, period.start, period.end)) return false;
-  if (kind === "FREELANCER") return normalizeText(employee.employment_type.name) === "freelancer";
+  if (kind === "FREELANCER") return true;
   if (kind === "BASIC_BASKET") return employee.benefits.some(value => normalizeText(value) === "cesta basica");
   return true;
 }
 
 function localLaunchResponse(state: DemoState, batch: DemoLaunchBatch) {
   const stored = new Map(batch.items.map(item => [item.employment_id, item]));
-  const eligible = state.employees.filter(item => item.company_id === batch.company_id && (batch.status === "CONFIRMED" ? stored.has(item.id) : localLaunchEligible(state, item, batch.kind, batch.competency)));
+  const eligible = state.employees.filter(item => item.company_id === batch.company_id && ((batch.status === "CONFIRMED" && stored.has(item.id)) || ((batch.status !== "CONFIRMED" || batch.kind === "MEI") && localLaunchEligible(state, item, batch.kind, batch.competency))));
   return {
     ...batch,
     total: roundMoney(batch.items.reduce((sum, item) => sum + item.amount, 0)),
@@ -1243,7 +1246,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     if (!employee) throw new Error("Selecione um MEI cadastrado.");
     if (employee.employment_type.name !== "MEI") throw new Error("Selecione apenas colaboradores da modalidade MEI.");
     const startDate = String(payload.start_date ?? "").trim();
-    const endDate = String(payload.end_date ?? "").trim();
+    const endDate = String(payload.end_date || contractSemesterEnd(startDate)).trim();
     if (!startDate || !endDate) throw new Error("Informe a vigência do contrato.");
     const contract: DemoMeiContract = {
       id: nextId(state.meiContracts),
@@ -1330,7 +1333,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     if (state.meiContracts.some(item => item.company_id === source.company_id && item.employee_id === source.employee_id && item.status === "Pendente de assinatura")) throw new Error("Já existe uma renovação pendente de assinatura para este MEI.");
     const payload = body<{ start_date?: string; end_date?: string }>(options);
     const startDate = String(payload.start_date ?? "");
-    const endDate = String(payload.end_date ?? "");
+    const endDate = String(payload.end_date || contractSemesterEnd(startDate));
     if (!startDate || !endDate || endDate < startDate || startDate <= source.end_date) throw new Error("A renovação deve começar após a vigência anterior.");
     const renewed: DemoMeiContract = { ...source, id: nextId(state.meiContracts), status: "Pendente de assinatura", start_date: startDate, end_date: endDate, attachment_name: null, attachment_data_url: null, created_at: new Date().toLocaleString("pt-BR"), signed_at: null, signed_by: null, notified_not_signed: false, notified_15: false, notified_10: false, notified_5: false, movement_created_5: false };
     renewed.renewed_from_id = source.id;
@@ -2193,11 +2196,31 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     assertAdmin(token);
     const batch = state.launchBatches.find(item => item.id === Number(launchMatch[1]) && item.company_id === companyId);
     if (!batch) throw new Error("Lançamento não encontrado.");
-    if (batch.status !== "PENDING") throw new Error("Lançamento já confirmado e bloqueado para edição.");
-    const payload = body<{ filters?: Record<string, string>; items?: DemoLaunchItem[] }>(options);
+    const correcting = batch.status === "CONFIRMED" && batch.kind === "MEI";
+    if (batch.status !== "PENDING" && !correcting) throw new Error("Lançamento já confirmado e bloqueado para edição.");
+    if (isCompetencyClosed(state, companyId, batch.competency)) throw new Error("Competência fechada. Reabra o mês para editar.");
+    const payload = body<{ filters?: Record<string, string>; items?: DemoLaunchItem[]; updated_at?: string }>(options);
+    if (payload.updated_at && payload.updated_at !== batch.updated_at) throw new Error("Este lote foi alterado por outra sessão. Reabra e confira antes de salvar.");
     const eligible = new Set(state.employees.filter(item => item.company_id === companyId && localLaunchEligible(state, item, batch.kind, batch.competency)).map(item => item.id));
+    if (correcting) batch.items.forEach(item => eligible.add(item.employment_id));
+    if ((payload.items ?? []).some(item => !eligible.has(item.employment_id) || !Number.isFinite(Number(item.amount)) || Number(item.amount) < 0)) throw new Error("Colaborador inelegível ou valor inválido.");
+    const incoming = (payload.items ?? []).filter(item => Number(item.amount) > 0).map(item => ({ ...item, amount: roundMoney(Number(item.amount)) }));
+    if (correcting) {
+      const previous = new Map(batch.items.map(item => [item.employment_id, item.amount]));
+      const ids = new Set([...previous.keys(), ...incoming.map(item => item.employment_id)]);
+      for (const id of ids) {
+        const values = state.payrollOverrides[`${companyId}:${batch.competency}:${id}`] ?? {};
+        if (Number(values.salary ?? 0) !== (previous.get(id) ?? 0)) throw new Error("O Custo/Folha foi alterado fora deste lote. Confira os valores antes de corrigir.");
+        if (!previous.has(id) && Number(values.pro_labore ?? 0) !== 0) throw new Error("Já existe pró-labore no Custo/Folha deste MEI. Confira o ajuste antes de incluir no lote.");
+      }
+      for (const id of ids) {
+        const key = `${companyId}:${batch.competency}:${id}`;
+        state.payrollOverrides[key] = { ...(state.payrollOverrides[key] ?? {}), salary: incoming.find(item => item.employment_id === id)?.amount ?? 0 };
+      }
+      appendAudit(state, { company_id: companyId, module: "Lançamentos", action: "Lançamento MEI corrigido", performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Lote #${batch.id} | ${batch.competency} | ${batch.items.reduce((sum, item) => sum + item.amount, 0)} -> ${incoming.reduce((sum, item) => sum + item.amount, 0)}` });
+    }
     batch.filters = payload.filters ?? {};
-    batch.items = (payload.items ?? []).filter(item => eligible.has(item.employment_id) && Number(item.amount) > 0).map(item => ({ ...item, amount: roundMoney(Number(item.amount)) }));
+    batch.items = incoming;
     batch.updated_by = currentUser.full_name;
     batch.updated_at = new Date().toISOString();
     saveState(state);
@@ -2226,7 +2249,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
         });
       }
     } else {
-      const field = ({ MEI: "salary", FREELANCER: "salary", BONUS: "bonus", COST_AID: "cost_aid", LODGING: "lodging" } as const)[batch.kind];
+      const field = ({ MEI: "salary", FREELANCER: "freelancer_extra", BONUS: "bonus", COST_AID: "cost_aid", LODGING: "lodging" } as const)[batch.kind];
       for (const item of batch.items) {
         const values = state.payrollOverrides[`${companyId}:${batch.competency}:${item.employment_id}`] ?? {};
         if (Number(values[field] ?? 0) !== 0 || (batch.kind === "MEI" && Number(values.pro_labore ?? 0) !== 0)) throw new Error("Já existe valor no Custo/Folha. Remova o ajuste anterior antes de confirmar.");
@@ -2253,7 +2276,16 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     const employmentId = Number(route.split("/").at(-1));
     const competency = params.get("competency") ?? "2026-06";
     if (isCompetencyClosed(state, companyId, competency)) throw new Error("Competência fechada. Reabra o mês para editar o custo.");
-    state.payrollOverrides[`${companyId}:${competency}:${employmentId}`] = body<Record<string, number>>(options);
+    const key = `${companyId}:${competency}:${employmentId}`;
+    const previous = state.payrollOverrides[key] ?? {};
+    const payload = body<Record<string, number>>(options);
+    if (payload.freelancer_extra !== undefined && payload.freelancer_extra !== (previous.freelancer_extra ?? 0)) throw new Error("O freelancer foi atualizado em outra operação. Atualize o Custo/Folha antes de salvar.");
+    delete payload.freelancer_extra; // Only a confirmed launch can set the extra.
+    if (payload.salary !== undefined && previous.freelancer_extra) {
+      if (payload.salary < previous.freelancer_extra) throw new Error("O total de salários/serviços não pode ser menor que o freelancer já confirmado.");
+      payload.salary = roundMoney(payload.salary - previous.freelancer_extra);
+    }
+    state.payrollOverrides[key] = { ...previous, ...payload };
     saveState(state);
     return { saved: true, employment_id: employmentId, competency } as T;
   }

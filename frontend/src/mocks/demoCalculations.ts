@@ -88,7 +88,7 @@ export function recalculatePayrollRow(row: PayrollRow, rates: DemoSettings["payr
   if (normalizeLabel(row.employment_type.name) === "mei") row = { ...row, salary: roundMoney(row.salary + row.pro_labore), pro_labore: 0 };
   const subtotalEarnings = roundMoney(row.salary + row.gratification + row.pro_labore + row.profit_distribution + row.bonus + row.cost_aid);
   const benefitTotal = roundMoney(row.transport + row.meal + row.basic_basket + row.lodging + row.insurance + row.health_plan + (row.dental_plan ?? 0));
-  const chargeBase = row.employment_type.has_charges && !["mei", "freelancer"].includes(normalizeLabel(row.employment_type.name)) ? subtotalEarnings : 0;
+  const chargeBase = row.employment_type.has_charges && !["mei", "freelancer"].includes(normalizeLabel(row.employment_type.name)) ? Math.max(roundMoney(subtotalEarnings - (row.freelancer_extra ?? 0)), 0) : 0;
   const inss = roundMoney(chargeBase * (rates.inss / 100));
   const rat = roundMoney(chargeBase * (rates.rat / 100));
   const terceiros = roundMoney(chargeBase * (rates.terceiros / 100));

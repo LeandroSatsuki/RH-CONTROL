@@ -4,9 +4,9 @@ Este pacote deve ser instalado em apenas um computador Windows da empresa. Esse 
 
 ## Instalacao recomendada
 
-Para a primeira instalacao, use `Nexo-Servidor-Setup-1.2.0.exe` como Administrador. O instalador baixa e configura automaticamente Python e PostgreSQL quando estiverem ausentes.
+Para a primeira instalacao, use `Nexo-Servidor-Setup-1.2.1.exe` como Administrador. O instalador baixa e configura automaticamente Python e PostgreSQL quando estiverem ausentes.
 
-Para servidor ja instalado, use `Nexo-Servidor-Atualizador-1.2.0.exe`. Nao desinstale PostgreSQL nem apague `C:\Nexo`.
+Para servidor ja instalado, use `Nexo-Servidor-Atualizador-1.2.1.exe`. Nao desinstale PostgreSQL nem apague `C:\Nexo`.
 
 As instrucoes manuais abaixo sao mantidas como alternativa tecnica.
 
@@ -77,9 +77,9 @@ Antes de restaurar, o Nexo cria automaticamente uma cópia de segurança do esta
 
 ## Atualizar o backend
 
-Na versao 1.2.0, atualize primeiro o servidor e depois os clientes para habilitar Ferias consultivas. Reserve uma breve janela sem lancamentos, pois a API sera reiniciada.
+Na versao 1.2.1, atualize primeiro o servidor e depois os clientes para aplicar as correcoes de contratos, lancamentos e freelancer extra sem encargos. Reserve uma breve janela sem lancamentos, pois a API sera reiniciada.
 
-Execute `Nexo-Servidor-Atualizador-1.2.0.exe` como Administrador no computador do servidor e aguarde a conclusao. Confirme o resultado com `C:\Nexo\scripts\server-status.bat`.
+Execute `Nexo-Servidor-Atualizador-1.2.1.exe` como Administrador no computador do servidor e aguarde a conclusao. Confirme o resultado com `C:\Nexo\scripts\server-status.bat`.
 
 Alternativa tecnica: extraia o novo pacote do servidor e execute como Administrador:
 
@@ -89,7 +89,7 @@ Alternativa tecnica: extraia o novo pacote do servidor e execute como Administra
 
 Toda atualização do servidor cria e valida um backup antes de aplicar arquivos ou migrations. Se o backup falhar, a atualização é cancelada sem alterar o banco.
 
-A migracao `20261014_0025` cria tres tabelas para fichas, lancamentos e historico de ferias. Nao reescreve cadastros anteriores e nao altera folha ou custos. O cliente atualiza pelo aplicativo; isso nao atualiza o servidor automaticamente.
+A versao 1.2.1 nao adiciona migrations nem dependencias; a revisao de banco permanece `20261014_0025`, da versao 1.2.0. Lancamentos historicos sao preservados. O cliente atualiza pelo aplicativo; isso nao atualiza o servidor automaticamente.
 
 ## Clientes
 
