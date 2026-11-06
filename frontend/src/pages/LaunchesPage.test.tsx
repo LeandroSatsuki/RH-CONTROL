@@ -23,7 +23,7 @@ async function blur(input: HTMLInputElement) {
 }
 async function mount(batch: ReturnType<typeof newBatch>) {
   await act(async () => root.render(<CompanyScopeProvider companies={[{ id: 1, name: "Empresa", code: "E1", kind: "MATRIZ", group: "", parent_company_id: null, active: true }]}><LaunchesPage token="token" user={{ id: 1, username: "admin", full_name: "Admin", role: "ADMIN", active: true }} /></CompanyScopeProvider>));
-  const title = batch.kind === "BASIC_BASKET" ? "Cesta básica" : "MEI";
+  const title = ({ BASIC_BASKET: "Cesta básica", FREELANCER: "Freelancer", BONUS: "Premiação", COST_AID: "Ajuda de custo", LODGING: "Hospedagem" } as Record<string, string>)[batch.kind] ?? "MEI";
   const button = [...element.querySelectorAll<HTMLButtonElement>(".launch-kind-card")].find(item => item.querySelector("strong")?.textContent === title)!;
   await act(async () => button.click());
 }
@@ -79,11 +79,20 @@ describe("edição de lançamentos", () => {
     expect(element.querySelector(".launch-totals")?.textContent).toContain("500,00");
   });
 
-  it("permite corrigir MEI confirmado", async () => {
-    const batch = newBatch("MEI", "CONFIRMED");
+  it.each(["MEI", "FREELANCER", "BONUS", "BASIC_BASKET", "COST_AID", "LODGING"])("permite corrigir %s confirmado", async kind => {
+    const batch = newBatch(kind, "CONFIRMED");
     vi.mocked(api).mockImplementation(async path => (path.startsWith("/demo/launches?") ? [batch] : batch) as any);
     await mount(batch);
     expect(element.querySelector<HTMLInputElement>('[aria-label="Valor de Pessoa 1"]')!.disabled).toBe(false);
     expect(element.textContent).toContain("Salvar correções");
+  });
+
+  it("bloqueia os campos quando o mês está fechado", async () => {
+    const batch = { ...newBatch("FREELANCER", "CONFIRMED"), competency_closed: true };
+    vi.mocked(api).mockImplementation(async path => (path.startsWith("/demo/launches?") ? [batch] : batch) as any);
+    await mount(batch);
+    expect(element.querySelector<HTMLInputElement>('[aria-label="Valor de Pessoa 1"]')!.disabled).toBe(true);
+    expect(element.textContent).not.toContain("Salvar correções");
+    expect(element.textContent).toContain("Reabra o mês em Fechamento");
   });
 });

@@ -124,7 +124,7 @@ def launch_batch_to_dict(
     eligible = [
         item for item in employments
         if (batch.status == "CONFIRMED" and item.id in stored)
-        or ((batch.status != "CONFIRMED" or batch.kind == "MEI") and launch_eligible(item, batch.kind, valid_mei_ids, batch.competency))
+        or launch_eligible(item, batch.kind, valid_mei_ids, batch.competency)
     ]
     return {
         "id": batch.id,
@@ -1620,11 +1620,13 @@ def valid_mei_contract_ids(
 
 
 def launch_response(db: DbSession, batch: LaunchBatch) -> dict[str, Any]:
-    return launch_batch_to_dict(
+    response = launch_batch_to_dict(
         batch,
         launch_employments(db, batch.company_id),
         valid_mei_contract_ids(db, batch.company_id, batch.competency),
     )
+    response["competency_closed"] = is_competency_closed(db, batch.company_id, batch.competency)
+    return response
 
 
 def load_launch_batch(db: DbSession, batch_id: int, company_id: int, *, lock: bool = False) -> LaunchBatch:
@@ -1712,9 +1714,7 @@ def save_launch_draft(
     company_id: int = 1,
 ) -> dict[str, Any]:
     batch = load_launch_batch(db, batch_id, company_id, lock=True)
-    correcting = batch.status == "CONFIRMED" and batch.kind == "MEI"
-    if batch.status != "PENDING" and not correcting:
-        raise HTTPException(status_code=409, detail="Lançamento já confirmado e bloqueado para edição.")
+    correcting = batch.status == "CONFIRMED"
     if is_competency_closed(db, company_id, batch.competency):
         raise HTTPException(status_code=409, detail="Competência fechada. Reabra o mês para editar.")
     if payload.get("updated_at") and batch.updated_at:
@@ -1749,7 +1749,7 @@ def save_launch_draft(
             raise HTTPException(status_code=422, detail="Informe um valor não negativo, dentro do limite permitido.")
         if amount > 0:
             incoming[employment_id] = (amount, str(raw.get("note") or "")[:240])
-    if correcting:
+    if correcting and batch.kind in LAUNCH_FIELDS:
         # Replace the amounts owned by this batch, never add them again or overwrite a manual edit.
         for employment_id in previous_items.keys() | incoming.keys():
             override = db.scalar(select(PayrollOverride).where(
@@ -1758,20 +1758,53 @@ def save_launch_draft(
                 PayrollOverride.employment_id == employment_id,
             ).with_for_update())
             values = dict(override.values or {}) if override else {}
-            if money(values.get("salary", 0)) != previous_items.get(employment_id, Decimal("0")):
+            field = LAUNCH_FIELDS[batch.kind]
+            # Pre-1.2.1 freelancer batches used salary, not freelancer_extra.
+            if (batch.kind == "FREELANCER" and "freelancer_extra" not in values
+                    and previous_items.get(employment_id, 0) > 0
+                    and money(values.get("salary", 0)) == previous_items[employment_id]):
+                field = "salary"
+            if money(values.get(field, 0)) != previous_items.get(employment_id, Decimal("0")):
                 raise HTTPException(status_code=409, detail="O Custo/Folha foi alterado fora deste lote. Confira os valores antes de corrigir.")
-            if employment_id not in previous_items and money(values.get("pro_labore", 0)) != 0:
+            if batch.kind == "MEI" and employment_id not in previous_items and money(values.get("pro_labore", 0)) != 0:
                 raise HTTPException(status_code=409, detail="Já existe pró-labore no Custo/Folha deste MEI. Confira o ajuste antes de incluir no lote.")
             if not override:
                 override = PayrollOverride(company_id=company_id, competency=batch.competency,
                                            employment_id=employment_id, values={}, updated_by=user.full_name)
                 db.add(override)
-            values["salary"] = as_float(incoming.get(employment_id, (Decimal("0"), ""))[0])
+            values[field] = as_float(incoming.get(employment_id, (Decimal("0"), ""))[0])
             override.values = values
             override.updated_by = user.full_name
+    elif correcting:
+        for employment_id in previous_items.keys() | incoming.keys():
+            distributions = list(db.scalars(select(BenefitDistribution).where(
+                BenefitDistribution.company_id == company_id,
+                BenefitDistribution.competency == batch.competency,
+                BenefitDistribution.employee_id == employment_id,
+                BenefitDistribution.benefit_code == "CB",
+            ).with_for_update()))
+            previous = previous_items.get(employment_id, Decimal("0"))
+            if ((previous and (len(distributions) != 1 or distributions[0].source != "Lançamentos"
+                              or money(distributions[0].amount) != previous))
+                    or (not previous and distributions)):
+                raise HTTPException(status_code=409, detail="A Cesta básica foi alterada fora deste lote. Confira os valores antes de corrigir.")
+            amount = incoming.get(employment_id, (Decimal("0"), ""))[0]
+            if distributions:
+                if amount:
+                    distributions[0].amount = amount
+                    distributions[0].monthly_value = amount
+                else:
+                    db.delete(distributions[0])
+            elif amount:
+                db.add(BenefitDistribution(company_id=company_id, competency=batch.competency,
+                    benefit_code="CB", benefit_name="Cesta básica", employee_id=employment_id,
+                    monthly_value=amount, amount=amount, source="Lançamentos",
+                    description="Lançamento mensal confirmado", created_by=user.full_name))
+    if correcting:
         old_total = sum(previous_items.values(), Decimal("0"))
         new_total = sum((amount for amount, _ in incoming.values()), Decimal("0"))
-        db.add(AuditEntry(company_id=company_id, module="Lançamentos", action="Lançamento MEI corrigido",
+        label = {"MEI": "MEI", "FREELANCER": "Freelancer", "BONUS": "Premiação", "COST_AID": "Ajuda de custo", "LODGING": "Hospedagem", "BASIC_BASKET": "Cesta básica"}[batch.kind]
+        db.add(AuditEntry(company_id=company_id, module="Lançamentos", action=f"Lançamento {label} corrigido",
                           performed_by=user.full_name, performed_role=user.role.value,
                           details=f"Lote #{batch.id} | {batch.competency} | R$ {old_total:.2f} -> R$ {new_total:.2f}"))
     for item in list(batch.items):

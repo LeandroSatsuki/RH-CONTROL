@@ -16,6 +16,32 @@ beforeEach(() => {
 });
 
 describe("modo local multiempresa", () => {
+  it.each([
+    ["FREELANCER", "freelancer_extra"], ["BONUS", "bonus"],
+    ["COST_AID", "cost_aid"], ["LODGING", "lodging"], ["BASIC_BASKET", "basic_basket"]
+  ])("corrige %s confirmado e respeita Fechamento", async (kind, field) => {
+    const types = await demoApi<EmploymentType[]>("/employment-types?company_id=1", {}, adminToken);
+    const centers = await demoApi<ResultCenter[]>("/result-centers?company_id=1", {}, adminToken);
+    const employee = await demoApi<DemoEmployee>("/employees?company_id=1", { method: "POST", body: JSON.stringify({
+      full_name: "CLT TESTE", cpf: "52998224725", employee_code: "ADM-TESTE", admission_date: "2026-08-01",
+      job_title: "PROMOTOR", employment_type_id: types.find(item => item.name === "CLT")!.id,
+      result_center_id: centers[0].id, salary_base: 3000, benefits: kind === "BASIC_BASKET" ? ["Cesta básica"] : [], pix_key_type: "CPF", pix_key: "52998224725"
+    }) }, adminToken);
+    const batch = await demoApi<any>("/demo/launches?company_id=1", { method: "POST", body: JSON.stringify({ kind, competency: "2026-08" }) }, adminToken);
+    const path = `/demo/launches/${batch.id}?company_id=1`;
+    const save = (amount: number) => demoApi<any>(path, { method: "PATCH", body: JSON.stringify({ items: [{ employment_id: employee.id, amount }] }) }, adminToken);
+    await save(100);
+    await demoApi(`/demo/launches/${batch.id}/confirm?company_id=1`, { method: "POST" }, adminToken);
+    for (const amount of [150, 0, 80]) {
+      expect((await save(amount)).status).toBe("CONFIRMED");
+      const rows = await demoApi<any[]>("/demo/payroll?company_id=1&competency=2026-08", {}, adminToken);
+      expect(rows.find(item => item.employee_id === employee.id)[field]).toBe(amount);
+    }
+    await demoApi("/demo/closing?company_id=1", { method: "POST", body: JSON.stringify({ competency: "2026-08", status: "CLOSED" }) }, adminToken);
+    expect((await demoApi<any>(path, {}, adminToken)).competency_closed).toBe(true);
+    await expect(save(90)).rejects.toThrow("Competência fechada");
+  }, 15000);
+
   it("soma freelancer extra ao CLT sem encargos, sem duplicar ao editar a folha", async () => {
     const types = await demoApi<EmploymentType[]>("/employment-types?company_id=1", {}, adminToken);
     const centers = await demoApi<ResultCenter[]>("/result-centers?company_id=1", {}, adminToken);
@@ -36,6 +62,13 @@ describe("modo local multiempresa", () => {
     expect(after.charges).toBe(before.charges);
     expect(after.total_provisions).toBe(before.total_provisions);
     expect(after.grand_total).toBeCloseTo(before.grand_total + 500.55, 2);
+    for (const amount of [800, 0, 500.55]) {
+      await demoApi(`/demo/launches/${batch.id}?company_id=1`, { method: "PATCH", body: JSON.stringify({ items: [{ employment_id: employee.id, amount }] }) }, adminToken);
+      const corrected = (await rows()).find(item => item.employee_id === employee.id)!;
+      expect(corrected.salary).toBe(before.salary + amount);
+      expect(corrected.charges).toBe(before.charges);
+      expect(corrected.total_provisions).toBe(before.total_provisions);
+    }
     await demoApi(`/demo/payroll/${employee.id}?company_id=1&competency=2026-08`, { method: "PATCH", body: JSON.stringify({ salary: after.salary, freelancer_extra: 500.55 }) }, adminToken);
     expect((await rows()).find(item => item.employee_id === employee.id)).toEqual(after);
     await expect(demoApi(`/demo/payroll/${employee.id}?company_id=1&competency=2026-08`, { method: "PATCH", body: JSON.stringify({ salary: before.salary, freelancer_extra: 0 }) }, adminToken)).rejects.toThrow("outra operação");

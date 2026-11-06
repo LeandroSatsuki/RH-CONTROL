@@ -5,6 +5,8 @@ import pytest
 from app.api.routes.demo import default_contract_end
 from app.core.database import get_db
 from app.models.monthly_closing import MonthlyClosing
+from app.models.launch import LaunchBatch, LaunchItem
+from app.models.payroll_override import PayrollOverride
 from test_api_flow import auth_header, client  # noqa: F401
 
 
@@ -102,3 +104,61 @@ def test_invalid_amount_is_rejected_without_destroying_draft(client, launch_setu
     path = f"/api/demo/launches/{batch['id']}"
     assert client.patch(path, headers=headers, json={"items": [{"employment_id": person, "amount": amount}]}).status_code == 422
     assert client.get(path, headers=headers).json()["total"] == 0
+
+
+@pytest.mark.parametrize("kind,field", [
+    ("MEI", "salary"), ("FREELANCER", "freelancer_extra"),
+    ("BONUS", "bonus"), ("COST_AID", "cost_aid"),
+    ("LODGING", "lodging"), ("BASIC_BASKET", "basic_basket"),
+])
+def test_all_confirmed_launches_edit_until_closing(client, launch_setup, kind, field):  # noqa: F811
+    headers, person, _, _ = launch_setup
+    batch = client.post("/api/demo/launches", headers=headers,
+                        json={"kind": kind, "competency": "2025-03"}).json()
+    path = f"/api/demo/launches/{batch['id']}"
+
+    def save(amount):
+        return client.patch(path, headers=headers, json={"items": [{"employment_id": person, "amount": amount}]})
+
+    assert save(100).status_code == 200
+    assert client.post(path + "/confirm", headers=headers).status_code == 200
+    for amount in (150.50, 150.50, 0, 80):
+        response = save(amount)
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "CONFIRMED"
+        assert response.json()["total"] == amount
+        assert response.json()["eligible_count"] == 1  # Clearing does not hide the person.
+        row = client.get("/api/demo/payroll?competency=2025-03", headers=headers).json()[0]
+        assert row[field] == amount
+    session = next(client.app.dependency_overrides[get_db]())
+    closing = MonthlyClosing(company_id=1, competency="2025-03", status="CLOSED")
+    session.add(closing)
+    session.commit()
+    assert client.get(path, headers=headers).json()["competency_closed"] is True
+    assert save(90).status_code == 409
+    assert client.get(path, headers=headers).json()["total"] == 80
+    closing.status = "OPEN"
+    session.commit()
+    assert client.get(path, headers=headers).json()["competency_closed"] is False
+    assert save(90).status_code == 200
+    logs = client.get("/api/demo/audit-logs?module=Lançamentos", headers=headers).json()
+    assert len([row for row in logs if "corrigido" in row["action"]]) == 5
+
+
+def test_edit_legacy_freelancer_keeps_original_cost_field(client, launch_setup):  # noqa: F811
+    headers, person, _, _ = launch_setup
+    session = next(client.app.dependency_overrides[get_db]())
+    batch = LaunchBatch(company_id=1, competency="2025-03", kind="FREELANCER",
+                        status="CONFIRMED", created_by="Admin", updated_by="Admin")
+    session.add(batch)
+    session.flush()
+    session.add(LaunchItem(batch_id=batch.id, employment_id=person, amount=100))
+    session.add(PayrollOverride(company_id=1, competency="2025-03", employment_id=person,
+                                values={"salary": 100}, updated_by="Admin"))
+    session.commit()
+    response = client.patch(f"/api/demo/launches/{batch.id}", headers=headers,
+                            json={"items": [{"employment_id": person, "amount": 150}]})
+    assert response.status_code == 200, response.text
+    row = client.get("/api/demo/payroll?competency=2025-03", headers=headers).json()[0]
+    assert row["salary"] == 150
+    assert row["freelancer_extra"] == 0

@@ -455,9 +455,10 @@ function localLaunchEligible(
 
 function localLaunchResponse(state: DemoState, batch: DemoLaunchBatch) {
   const stored = new Map(batch.items.map(item => [item.employment_id, item]));
-  const eligible = state.employees.filter(item => item.company_id === batch.company_id && ((batch.status === "CONFIRMED" && stored.has(item.id)) || ((batch.status !== "CONFIRMED" || batch.kind === "MEI") && localLaunchEligible(state, item, batch.kind, batch.competency))));
+  const eligible = state.employees.filter(item => item.company_id === batch.company_id && ((batch.status === "CONFIRMED" && stored.has(item.id)) || localLaunchEligible(state, item, batch.kind, batch.competency)));
   return {
     ...batch,
+    competency_closed: isCompetencyClosed(state, batch.company_id, batch.competency),
     total: roundMoney(batch.items.reduce((sum, item) => sum + item.amount, 0)),
     filled_count: batch.items.filter(item => item.amount > 0).length,
     eligible_count: eligible.length,
@@ -2196,8 +2197,7 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     assertAdmin(token);
     const batch = state.launchBatches.find(item => item.id === Number(launchMatch[1]) && item.company_id === companyId);
     if (!batch) throw new Error("Lançamento não encontrado.");
-    const correcting = batch.status === "CONFIRMED" && batch.kind === "MEI";
-    if (batch.status !== "PENDING" && !correcting) throw new Error("Lançamento já confirmado e bloqueado para edição.");
+    const correcting = batch.status === "CONFIRMED";
     if (isCompetencyClosed(state, companyId, batch.competency)) throw new Error("Competência fechada. Reabra o mês para editar.");
     const payload = body<{ filters?: Record<string, string>; items?: DemoLaunchItem[]; updated_at?: string }>(options);
     if (payload.updated_at && payload.updated_at !== batch.updated_at) throw new Error("Este lote foi alterado por outra sessão. Reabra e confira antes de salvar.");
@@ -2208,16 +2208,41 @@ export async function demoApi<T>(path: string, options: RequestInit = {}, token?
     if (correcting) {
       const previous = new Map(batch.items.map(item => [item.employment_id, item.amount]));
       const ids = new Set([...previous.keys(), ...incoming.map(item => item.employment_id)]);
+      const fields = new Map<number, string>();
       for (const id of ids) {
+        if (batch.kind === "BASIC_BASKET") {
+          const rows = state.benefitDistributions.filter(item => item.company_id === companyId && item.competency === batch.competency && item.employee_id === id && item.benefit_code === "CB");
+          if (previous.has(id) ? rows.length !== 1 || rows[0].source !== "Lançamentos" || rows[0].amount !== previous.get(id) : rows.length > 0) throw new Error("A Cesta básica foi alterada fora deste lote. Confira os valores antes de corrigir.");
+          continue;
+        }
         const values = state.payrollOverrides[`${companyId}:${batch.competency}:${id}`] ?? {};
-        if (Number(values.salary ?? 0) !== (previous.get(id) ?? 0)) throw new Error("O Custo/Folha foi alterado fora deste lote. Confira os valores antes de corrigir.");
-        if (!previous.has(id) && Number(values.pro_labore ?? 0) !== 0) throw new Error("Já existe pró-labore no Custo/Folha deste MEI. Confira o ajuste antes de incluir no lote.");
+        let field: string = ({ MEI: "salary", FREELANCER: "freelancer_extra", BONUS: "bonus", COST_AID: "cost_aid", LODGING: "lodging" } as const)[batch.kind];
+        if (batch.kind === "FREELANCER" && !("freelancer_extra" in values) && previous.has(id) && values.salary === previous.get(id)) field = "salary";
+        fields.set(id, field);
+        if (Number(values[field] ?? 0) !== (previous.get(id) ?? 0)) throw new Error("O Custo/Folha foi alterado fora deste lote. Confira os valores antes de corrigir.");
+        if (batch.kind === "MEI" && !previous.has(id) && Number(values.pro_labore ?? 0) !== 0) throw new Error("Já existe pró-labore no Custo/Folha deste MEI. Confira o ajuste antes de incluir no lote.");
       }
       for (const id of ids) {
+        const amount = incoming.find(item => item.employment_id === id)?.amount ?? 0;
+        if (batch.kind === "BASIC_BASKET") {
+          const row = state.benefitDistributions.find(item => item.company_id === companyId && item.competency === batch.competency && item.employee_id === id && item.benefit_code === "CB");
+          if (row && amount) { row.amount = amount; row.monthly_value = amount; }
+          else if (row) state.benefitDistributions = state.benefitDistributions.filter(item => item.id !== row.id);
+          else if (amount) {
+            const employee = state.employees.find(item => item.id === id)!;
+            state.benefitDistributions.push({ id: nextId(state.benefitDistributions), company_id: companyId, competency: batch.competency,
+              benefit_code: "CB", benefit_name: "Cesta básica", employee_id: id, employee_name: employee.employee.full_name,
+              result_center: employee.result_center, supervisor_name: employee.supervisor_name, employment_type: employee.employment_type.name,
+              state: employee.state, days_worked: 0, value_per_day: 0, monthly_value: amount, amount,
+              source: "Lançamentos", description: "Lançamento mensal confirmado", created_at: new Date().toLocaleString("pt-BR"), created_by: currentUser.full_name });
+          }
+          continue;
+        }
         const key = `${companyId}:${batch.competency}:${id}`;
-        state.payrollOverrides[key] = { ...(state.payrollOverrides[key] ?? {}), salary: incoming.find(item => item.employment_id === id)?.amount ?? 0 };
+        state.payrollOverrides[key] = { ...(state.payrollOverrides[key] ?? {}), [fields.get(id)!]: amount };
       }
-      appendAudit(state, { company_id: companyId, module: "Lançamentos", action: "Lançamento MEI corrigido", performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Lote #${batch.id} | ${batch.competency} | ${batch.items.reduce((sum, item) => sum + item.amount, 0)} -> ${incoming.reduce((sum, item) => sum + item.amount, 0)}` });
+      const label = { MEI: "MEI", FREELANCER: "Freelancer", BONUS: "Premiação", COST_AID: "Ajuda de custo", LODGING: "Hospedagem", BASIC_BASKET: "Cesta básica" }[batch.kind];
+      appendAudit(state, { company_id: companyId, module: "Lançamentos", action: `Lançamento ${label} corrigido`, performed_by: currentUser.full_name, performed_role: currentUser.role, details: `Lote #${batch.id} | ${batch.competency} | ${batch.items.reduce((sum, item) => sum + item.amount, 0)} -> ${incoming.reduce((sum, item) => sum + item.amount, 0)}` });
     }
     batch.filters = payload.filters ?? {};
     batch.items = incoming;

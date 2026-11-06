@@ -26,6 +26,7 @@ type LaunchBatch = {
   competency: string;
   kind: LaunchKind;
   status: "PENDING" | "CONFIRMED";
+  competency_closed?: boolean;
   filters: Record<string, string>;
   total: number;
   filled_count: number;
@@ -171,7 +172,7 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
       setBatches(current => [saved, ...current.filter(item => item.id !== saved.id)]);
       dirty.current = false;
       setImportPreview(null);
-      setSuccess("Linhas válidas importadas e salvas como rascunho. Confira antes de confirmar.");
+      setSuccess(saved.status === "CONFIRMED" ? "Correções importadas e atualizadas no Custo/Folha e na Auditoria." : "Linhas válidas importadas e salvas como rascunho. Confira antes de confirmar.");
     } catch (err) { setError(err instanceof Error ? err.message : "Não foi possível salvar a importação."); }
     finally { setSaving(false); setImporting(false); }
   }
@@ -189,7 +190,8 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
       return dirty.current ? saveDraft(showMessage) : activeRef.current;
     }
     const snapshot = activeRef.current;
-    if (!snapshot || (snapshot.status !== "PENDING" && snapshot.kind !== "MEI")) return snapshot;
+    if (!snapshot) return snapshot;
+    if (snapshot.competency_closed) { setError("Competência fechada. Reabra o mês em Fechamento para editar."); return null; }
     if (snapshot.employees.some(item => item.amount_error)) {
       setError("Corrija os valores destacados. Use reais com até duas casas decimais, por exemplo 1.250,50.");
       return null;
@@ -268,7 +270,7 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
   });
   const draftTotal = (active?.employees ?? []).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const draftCount = (active?.employees ?? []).filter(item => Number(item.amount) > 0).length;
-  const editable = user.role === "ADMIN" && (active?.status === "PENDING" || active?.kind === "MEI");
+  const editable = user.role === "ADMIN" && Boolean(active) && !active?.competency_closed;
 
   function distributeBasket() {
     const amount = parseLaunchAmount(fixedBasket);
@@ -315,7 +317,7 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
           <select value={active.filters.center ?? ""} onChange={event => patchFilter("center", event.target.value)}><option value="">Todos os CRs</option>{options.centers.map(value => <option key={value.code} value={value.code}>{value.code} - {value.name}</option>)}</select>
         </>}
       </div>
-      {["MEI", "FREELANCER"].includes(active.kind) && active.status === "PENDING" && user.role === "ADMIN" && <section className="panel">
+      {["MEI", "FREELANCER"].includes(active.kind) && editable && <section className="panel">
         <h3>Importar valores</h3><p className="note">Use o modelo desta empresa e competência. Aplique apenas após conferir; valores das matrículas importadas substituirão os valores do rascunho.</p>
         <div className="actions"><button className="secondary" disabled={saving || importing} onClick={() => void downloadExcel(active.employees.map(item => ({ Matrícula: item.employee_code, Colaborador: item.employee_name, Competência: active.competency, Tipo: active.kind, Valor: item.amount || "", Observação: item.note })), "Lançamentos", `lancamentos-${active.company_id}-${active.kind}-${active.competency}.xlsx`)}>Baixar modelo com elegíveis</button><label>Selecionar planilha<input type="file" accept=".xlsx" disabled={saving || importing} onChange={event => { void importFile(event.target.files?.[0]); event.target.value = ""; }} /></label></div>
         {importing && <p>Lendo planilha…</p>}
@@ -330,12 +332,12 @@ export function LaunchesPage({ token, user }: { token: string; user: User }) {
         {visible.map(item => <tr key={item.employment_id}><td><strong>{item.employee_name}</strong><small>{item.employee_code}</small></td><td>{item.supervisor_name || "—"}</td><td>{item.employment_type}</td><td><span className="color-dot" style={{ background: item.result_center.color }} />{item.result_center.code}</td><td><input className="money-input" type="text" inputMode="decimal" aria-label={`Valor de ${item.employee_name}`} aria-invalid={Boolean(item.amount_error)} value={item.amount_text ?? (item.amount ? item.amount.toFixed(2).replace(".", ",") : "")} disabled={importing || loading || confirmOpen || !editable} onChange={event => { const amount = parseLaunchAmount(event.target.value); patchEmployee(item.employment_id, { amount: amount ?? item.amount, amount_text: event.target.value, amount_error: amount === null }); }} onBlur={() => { if (dirty.current) void saveDraft(false); }} placeholder="0,00" /></td><td><input value={item.note} disabled={importing || loading || confirmOpen || !editable} onChange={event => patchEmployee(item.employment_id, { note: event.target.value })} onBlur={() => { if (dirty.current) void saveDraft(false); }} placeholder="Opcional" /></td></tr>)}
         {!visible.length && <tr><td colSpan={6}>Nenhum colaborador corresponde aos filtros.</td></tr>}
       </tbody></table></div>
-      {active.status === "PENDING" && user.role === "ADMIN" && <div className="launch-actions"><span>{saving ? "Salvando…" : "Os valores são salvos como rascunho ao sair do campo."}</span><button className="secondary" type="button" onClick={() => void saveDraft()} disabled={saving}>Salvar e continuar depois</button><button className="primary" type="button" onClick={() => setConfirmOpen(true)} disabled={saving || draftCount === 0}>Revisar e confirmar</button></div>}
+      {active.status === "PENDING" && editable && <div className="launch-actions"><span>{saving ? "Salvando…" : "Os valores são salvos como rascunho ao sair do campo."}</span><button className="secondary" type="button" onClick={() => void saveDraft()} disabled={saving}>Salvar e continuar depois</button><button className="primary" type="button" onClick={() => setConfirmOpen(true)} disabled={saving || draftCount === 0}>Revisar e confirmar</button></div>}
       {active.status === "PENDING" && user.role !== "ADMIN" && <p className="note">Consulta do rascunho. Somente administradores podem alterar ou confirmar valores.</p>}
-      {active.status === "CONFIRMED" && active.kind === "MEI" && user.role === "ADMIN" && <div className="launch-actions"><span>{saving ? "Salvando correção…" : "Correções são salvas ao sair do campo."}</span><button className="secondary" type="button" onClick={() => void saveDraft()} disabled={saving || importing}>Salvar correções</button></div>}
-      {active.status === "CONFIRMED" && <p className="feedback success">{active.kind === "MEI" ? "Confirmado no Custo/Folha. As correções substituem os valores anteriores e ficam registradas na Auditoria; a competência precisa estar aberta." : "Confirmado e enviado ao Custo/Folha. O registro está bloqueado para evitar duplicidade."}</p>}
+      {active.status === "CONFIRMED" && editable && <div className="launch-actions"><span>{saving ? "Salvando correção…" : "Correções são salvas ao sair do campo."}</span><button className="secondary" type="button" onClick={() => void saveDraft()} disabled={saving || importing}>Salvar correções</button></div>}
+      {active.status === "CONFIRMED" && <p className="feedback success">{active.competency_closed ? "Competência fechada. Reabra o mês em Fechamento para corrigir os lançamentos." : "Confirmado no Custo/Folha. Você pode corrigir os valores enquanto o mês estiver aberto; as alterações substituem os valores anteriores e ficam na Auditoria."}</p>}
     </div>}
 
-    {confirmOpen && active && <div className="modal-backdrop" onClick={() => setConfirmOpen(false)}><div className="modal-card" onClick={event => event.stopPropagation()}><span className="eyebrow">Conferência final</span><h2>Confirmar {labels[active.kind].title}?</h2><p>Serão enviados <strong>{draftCount} valores</strong>, totalizando <strong>{currency.format(draftTotal)}</strong>, para o Custo/Folha de {active.competency}.</p><p className="note">{active.kind === "MEI" ? "Após confirmar, será possível corrigir os valores sem duplicá-los, enquanto a competência estiver aberta." : "Após confirmar, este lote será bloqueado para impedir lançamento duplicado."}</p><div className="modal-actions"><button className="secondary" type="button" onClick={() => setConfirmOpen(false)}>Voltar e revisar</button><button className="primary" type="button" onClick={() => void confirmLaunch()} disabled={saving}>Confirmar lançamento</button></div></div></div>}
+    {confirmOpen && active && <div className="modal-backdrop" onClick={() => setConfirmOpen(false)}><div className="modal-card" onClick={event => event.stopPropagation()}><span className="eyebrow">Conferência final</span><h2>Confirmar {labels[active.kind].title}?</h2><p>Serão enviados <strong>{draftCount} valores</strong>, totalizando <strong>{currency.format(draftTotal)}</strong>, para o Custo/Folha de {active.competency}.</p><p className="note">Após confirmar, será possível corrigir os valores sem duplicá-los, enquanto o mês estiver aberto em Fechamento.</p><div className="modal-actions"><button className="secondary" type="button" onClick={() => setConfirmOpen(false)}>Voltar e revisar</button><button className="primary" type="button" onClick={() => void confirmLaunch()} disabled={saving}>Confirmar lançamento</button></div></div></div>}
   </section>;
 }

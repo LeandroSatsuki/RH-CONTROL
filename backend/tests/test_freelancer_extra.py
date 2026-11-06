@@ -37,7 +37,14 @@ def test_clt_extra_preserves_salary_charges_and_all_analysis_totals(client, laun
         return client.get("/api/demo/payroll?competency=2025-03", headers=headers).json()
     before_rows = rows()
     before = next(row for row in before_rows if row["employee_id"] == person)
-    post_extra(client, headers, person)
+    path = post_extra(client, headers, person)
+    for amount in (800, 0, 500.55):
+        response = client.patch(path, headers=headers, json={"items": [{"employment_id": person, "amount": amount}]})
+        assert response.status_code == 200, response.text
+        corrected = next(row for row in rows() if row["employee_id"] == person)
+        assert Decimal(str(corrected["salary"])) == Decimal(str(before["salary"])) + Decimal(str(amount))
+        assert corrected["charges"] == before["charges"]
+        assert corrected["total_provisions"] == before["total_provisions"]
     after_rows = rows()
     after = next(row for row in after_rows if row["employee_id"] == person)
     assert Decimal(str(after["salary"])) == Decimal(str(before["salary"])) + Decimal("500.55")
